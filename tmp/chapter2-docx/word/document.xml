@@ -1,0 +1,469 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:o="urn:schemas-microsoft-com:office:office"
+    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"
+    xmlns:v="urn:schemas-microsoft-com:vml"
+    xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing"
+    xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+    xmlns:w10="urn:schemas-microsoft-com:office:word"
+    xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"
+    xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"
+    xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk"
+    xmlns:wne="http://schemas.microsoft.com/office/word/2006/wordml"
+    xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
+    mc:Ignorable="w14 wp14">
+  <w:body>
+    <w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="120"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    <w:b/><w:bCs/>
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">2. RELATED LITERATURE</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">This chapter presents the local and foreign literature related to the proposed web-based repair service management system. The reviewed studies are important because they provide ideas and information about management information systems, inventory monitoring, record tracking, and digital solutions used in improving business operations. These studies also help show the gap that the present study aims to address.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="60"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    <w:b/><w:bCs/>
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">2.1 Local Literature</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Quinco-Cadosales and Famacion-Quinco (2022) discussed the use of management control systems in small and medium-sized enterprises. Their study showed that many businesses already apply different control practices, but these are not always fully organized or consistently used in daily operations. This is related to the present study because electronics repair shops, as small businesses, also need a more organized way of handling records, transactions, and service activities.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Simbulan (2022) developed a centralized web-based information management system for the local government of Quezon City. The study emphasized the importance of using a centralized platform for storing, updating, and retrieving records more efficiently. This supports the present study because a repair service management system also needs centralized information for customer details, device records, repair status, and payment monitoring.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Jaca (2022) developed an electronic document management and tracking system to improve productivity and record handling. The study showed that digital tracking helps users monitor and retrieve records more easily. This is relevant to the current study because repair shops also deal with many service records and transactions that need proper organization and monitoring.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Tanaman et al. (2023) developed a web-based inventory management system for a small business enterprise in Pagadian City. Their study found that the system improved inventory management and helped address common problems caused by manual recording, such as inaccurate data and inefficient reporting. This is highly relevant to the present study because spare parts monitoring is also one of the key features of the proposed repair service management system.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Quinco (2023) examined management control system practices among small and medium enterprises and found that while many businesses use different control practices, these are not always deeply applied in actual daily operations. This supports the idea that small businesses still need more reliable and structured digital tools. In the case of electronics repair shops, a web-based system can help improve monitoring, organization, and workflow.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="60"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    <w:b/><w:bCs/>
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">2.2 Foreign Literature</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Erameh and Odoh (2021) developed a web-based inventory control system for a small and medium enterprise. Their study showed that the system improved inventory visibility and gave users better access to updated information. This is related to the proposed study because repair shops also need accurate and updated records, especially when monitoring spare parts used in repairs.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Roffia and DabiÄ‡ (2024) explained that integrated information systems and management control tools play an important role in strengthening the operations of small and medium enterprises. Their study highlighted that digital systems help improve coordination, monitoring, and decision-making. This supports the current study because the proposed system is also intended to make repair shop operations more organized and easier to manage.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Sagala and Åri (2024) discussed how digital transformation helps improve business processes in small and medium enterprises. Their review showed that digital tools can make business operations more efficient and adaptable. This is relevant to the present study because the proposed system is also part of the shift from manual methods to a more efficient web-based process in repair shop management.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Rakhmawati and Mada (2025) described management information systems as important tools for organizing data and helping businesses make better decisions. Their study showed that these systems contribute to improved strategy and business performance. This is connected to the present study because the proposed repair service management system is also meant to help repair shops manage information better and support daily operations.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Lim et al. (2025) developed a web-based inventory management system for small businesses and found that it improved data accuracy, saved time, and increased user satisfaction. Their findings support the value of using web-based systems in small business operations. This is highly relevant to the present study because the proposed system also includes inventory-related features and aims to improve efficiency in repair shop management.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="60"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    <w:b/><w:bCs/>
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">2.3 Synthesis</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">The reviewed local and foreign literature shows that digital and web-based systems are useful in improving business operations, especially in record management, monitoring, inventory control, and decision-making. The local literature shows that many organizations and small businesses in the Philippines still need more organized and centralized systems for managing their daily processes. The foreign literature also supports the idea that digital systems help businesses improve efficiency, coordination, and overall performance.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="both"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:firstLine="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">However, most of the studies reviewed focus on general management systems, inventory systems, document tracking, or SME operations in broader settings. There are still limited studies that focus specifically on a web-based repair service management system for electronics repair shops, especially in the local setting of Surigao City. Because of this gap, the present study is proposed to provide a more focused solution that combines job order management, repair status tracking, technician assignment, spare parts monitoring, payment recording, and customer repair tracking in one system.</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="60"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    <w:b/><w:bCs/>
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">References</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:hanging="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Erameh, K. B., &amp; Odoh, B. I. (2021). Design and implementation of a web-based inventory control system using a small medium enterprise (SME) as a case study. https://doi.org/10.37933/nipes/3.3.2021.21</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:hanging="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Jaca, V. (2022). Electronic document management and tracking system. https://repository.upou.edu.ph/items/3e202c4a-350b-4c42-8a35-a0eeea0c763d/full</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:hanging="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Lim, H. Q., Rahmat, A. R., &amp; Suban@Ani, S. (2025). An inventory management system for small businesses. https://doi.org/10.32890/jdsd2025.3.1.3</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:hanging="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Quinco, D. (2023). Management control systems practices in small and medium enterprises. https://doi.org/10.52631/jemds.v3i4.226</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:hanging="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Quinco-Cadosales, M. N., &amp; Famacion-Quinco, D. F. (2022). Management control systems in small and medium-sized enterprises: A case study. https://doi.org/10.18535/ijsrm/v10i5.em09</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:hanging="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Rakhmawati, &amp; Mada, Y. P. (2025). Management information systems on small business startups and their strategy and performance. https://doi.org/10.26662/ijiert.v12i1.pp27-35</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:hanging="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Roffia, P., &amp; DabiÄ‡, M. (2024). The role of management control and integrated information systems for the resilience of SMEs. https://doi.org/10.1007/s11846-023-00657-6</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:hanging="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Sagala, G. H., &amp; Åri, D. (2024). Toward SMEs digital transformation success: A systematic literature review. https://doi.org/10.1007/s10257-024-00682-2</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:hanging="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Simbulan, M. J. W. (2022). 1KYUSI: A centralized web-based information management system for the local government of Quezon City. https://repository.upou.edu.ph/items/e0381d2e-38f5-4838-9aae-46f39b7d6a5a</w:t>
+</w:r>
+</w:p>
+<w:p>
+  <w:pPr>
+  <w:jc w:val="left"/>
+  <w:spacing w:line="360" w:lineRule="auto" w:before="0" w:after="0"/>
+  <w:ind w:hanging="720"/>
+</w:pPr>
+  <w:r>
+  <w:rPr>
+    <w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman" w:cs="Times New Roman"/>
+    
+    <w:sz w:val="24"/>
+    <w:szCs w:val="24"/>
+  </w:rPr>
+  <w:t xml:space="preserve">Tanaman, M. T., Baylosis, J. L. A., Abiles, B. J. A., Catungal, M. L. P., &amp; Encarnacion, P. C. (2023). Web-based inventory management system. https://doi.org/10.30534/ijsait/2023/021252023</w:t>
+</w:r>
+</w:p>
+    <w:sectPr>
+      <w:pgSz w:w="12240" w:h="15840"/>
+      <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="2160" w:header="720" w:footer="720" w:gutter="0"/>
+      <w:cols w:space="720"/>
+      <w:docGrid w:linePitch="360"/>
+    </w:sectPr>
+  </w:body>
+</w:document>
