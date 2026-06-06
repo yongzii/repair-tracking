@@ -142,57 +142,64 @@ onMounted(() => loadUsers());
     <div v-else-if="forbidden" class="card p-6 border border-rose-200 bg-rose-50 text-rose-700">{{ errorMessage || 'You do not have access to this page.' }}</div>
 
     <div v-else class="space-y-6">
-      <div v-if="successMessage" class="p-3 rounded border border-emerald-200 bg-emerald-50 text-emerald-700">{{ successMessage }}</div>
-      <div v-if="errorMessage" class="p-3 rounded border border-rose-200 bg-rose-50 text-rose-700">{{ errorMessage }}</div>
-      <div v-if="generatedPassword" class="p-3 rounded border border-amber-200 bg-amber-50 text-amber-800">
+      <section class="admin-hero p-6">
+        <p class="text-xs font-bold uppercase text-teal-300">Access control</p>
+        <h3 class="mt-2 font-display text-3xl">User Management</h3>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Create staff and technician accounts, manage access status, and reset temporary passwords.</p>
+      </section>
+
+      <div v-if="successMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{{ successMessage }}</div>
+      <div v-if="errorMessage" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{{ errorMessage }}</div>
+      <div v-if="generatedPassword" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800">
         Temporary password: <span class="font-mono font-semibold">{{ generatedPassword }}</span>
       </div>
 
-      <div class="card p-6">
+      <div class="admin-panel p-6">
         <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-slate-900">Create User Account</h3>
+          <h3 class="text-lg font-bold text-slate-950">Create User Account</h3>
         </div>
         <p class="text-sm text-slate-500 mb-4">
           For technician accounts, use the same email address as the technician record in the roster so the workspace can match assigned jobs correctly.
         </p>
 
         <form class="grid grid-cols-1 md:grid-cols-5 gap-3" @submit.prevent="createUser">
-          <input v-model="form.name" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Full name" required />
-          <input v-model="form.email" type="email" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Email" required />
-          <select v-model="form.role" class="px-4 py-2 border border-slate-300 rounded-lg">
+          <input v-model="form.name" class="border border-slate-300 px-4 py-3" placeholder="Full name" required />
+          <input v-model="form.email" type="email" class="border border-slate-300 px-4 py-3" placeholder="Email" required />
+          <select v-model="form.role" class="border border-slate-300 px-4 py-3">
             <option v-for="role in roles" :key="role" :value="role">{{ role }}</option>
           </select>
-          <input v-model="form.password" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Temporary password (optional)" />
-          <label class="flex items-center gap-2 px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-700">
+          <input v-model="form.password" class="border border-slate-300 px-4 py-3" placeholder="Temporary password (optional)" />
+          <label class="flex items-center gap-2 rounded-lg border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700">
             <input v-model="form.is_active" type="checkbox" />
             Active
           </label>
-          <button type="submit" class="md:col-span-5 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Create User</button>
+          <button type="submit" class="btn-primary md:col-span-5 py-3">Create User</button>
         </form>
       </div>
 
-      <div class="card p-5">
+      <div class="admin-panel p-5">
         <form class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="loadUsers(1)">
-          <input v-model="filters.search" class="md:col-span-2 px-4 py-2 border border-slate-300 rounded-lg" placeholder="Search name, email, role..." />
-          <select v-model="filters.role" class="px-4 py-2 border border-slate-300 rounded-lg">
+          <input v-model="filters.search" class="md:col-span-2 border border-slate-300 px-4 py-3" placeholder="Search name, email, role..." />
+          <select v-model="filters.role" class="border border-slate-300 px-4 py-3">
             <option value="">All roles</option>
             <option v-for="role in roles" :key="role" :value="role">{{ role }}</option>
           </select>
-          <select v-model="filters.is_active" class="px-4 py-2 border border-slate-300 rounded-lg">
+          <select v-model="filters.is_active" class="border border-slate-300 px-4 py-3">
             <option value="">All statuses</option>
             <option value="1">Active</option>
             <option value="0">Inactive</option>
           </select>
           <div class="md:col-span-4 flex justify-end gap-3">
-            <button type="button" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold" @click="clearFilters">Clear</button>
-            <button type="submit" class="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 font-semibold">Apply Filters</button>
+            <button type="button" class="btn-soft px-4 py-2" @click="clearFilters">Clear</button>
+            <button type="submit" class="btn-primary px-4 py-2">Apply Filters</button>
           </div>
         </form>
       </div>
 
-      <div class="card overflow-hidden">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-100 border-b">
+      <div class="admin-panel overflow-hidden">
+        <div class="overflow-x-auto">
+        <table class="data-table">
+          <thead>
             <tr>
               <th class="px-4 py-3 text-left text-slate-600">Name</th>
               <th class="px-4 py-3 text-left text-slate-600">Email</th>
@@ -202,7 +209,7 @@ onMounted(() => loadUsers());
               <th class="px-4 py-3 text-left text-slate-600">Actions</th>
             </tr>
           </thead>
-          <tbody class="divide-y">
+          <tbody>
             <tr v-for="user in users.data" :key="user.id">
               <td class="px-4 py-3">
                 <p class="font-semibold text-slate-900">{{ user.name }}</p>
@@ -211,16 +218,16 @@ onMounted(() => loadUsers());
               <td class="px-4 py-3 text-slate-700">{{ user.email }}</td>
               <td class="px-4 py-3 text-slate-700 uppercase">{{ user.role }}</td>
               <td class="px-4 py-3">
-                <span class="text-xs font-semibold" :class="user.is_active ? 'text-emerald-700' : 'text-rose-700'">
+                <span class="rounded-full px-3 py-1 text-xs font-bold ring-1" :class="user.is_active ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-rose-50 text-rose-700 ring-rose-200'">
                   {{ user.is_active ? 'Active' : 'Inactive' }}
                 </span>
               </td>
               <td class="px-4 py-3 text-slate-700">{{ user.last_login_at_formatted || 'Never' }}</td>
               <td class="px-4 py-3">
-                <div class="flex flex-wrap gap-3">
-                  <AppLink :to="`/admin/users/${user.id}/edit`" class="text-slate-900 font-semibold">Edit</AppLink>
-                  <button type="button" class="text-indigo-700 font-semibold" @click="resetPassword(user)">Reset Password</button>
-                  <button type="button" class="font-semibold" :class="user.is_active ? 'text-rose-600' : 'text-emerald-700'" @click="toggleUser(user)">
+                <div class="flex flex-wrap gap-2">
+                  <AppLink :to="`/admin/users/${user.id}/edit`" class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Edit</AppLink>
+                  <button type="button" class="rounded-lg border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-50" @click="resetPassword(user)">Reset Password</button>
+                  <button type="button" class="rounded-lg border px-3 py-1.5 text-xs font-bold" :class="user.is_active ? 'border-rose-200 text-rose-600 hover:bg-rose-50' : 'border-emerald-200 text-emerald-700 hover:bg-emerald-50'" @click="toggleUser(user)">
                     {{ user.is_active ? 'Deactivate' : 'Activate' }}
                   </button>
                 </div>
@@ -231,6 +238,7 @@ onMounted(() => loadUsers());
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
 
       <div class="flex flex-wrap gap-2">
@@ -238,8 +246,8 @@ onMounted(() => loadUsers());
           v-for="link in users.links"
           :key="link.label + String(link.url)"
           type="button"
-          class="px-3 py-2 rounded text-sm"
-          :class="link.active ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 disabled:text-slate-300'"
+          class="rounded-lg px-3 py-2 text-sm font-bold"
+          :class="link.active ? 'bg-slate-950 text-white' : 'bg-white text-slate-600 ring-1 ring-slate-200 disabled:text-slate-300'"
           :disabled="!link.url"
           @click="gotoPage(link.url)"
           v-html="link.label"

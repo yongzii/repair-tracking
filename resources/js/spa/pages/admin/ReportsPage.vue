@@ -60,12 +60,26 @@ onMounted(loadReport);
     <div v-else-if="forbidden" class="card p-6 border border-rose-200 bg-rose-50 text-rose-700">You do not have access to this page.</div>
 
     <div v-else class="space-y-6">
-      <div class="card p-6">
-        <h3 class="text-lg font-semibold text-slate-900 mb-4">Filters</h3>
+      <section class="admin-hero p-6">
+        <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p class="text-xs font-bold uppercase text-teal-300">Operational reporting</p>
+            <h3 class="mt-2 font-display text-3xl">Reports and financial summaries</h3>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Filter repair performance, revenue, receivables, and turnaround data for shop management.</p>
+          </div>
+          <div class="flex flex-wrap gap-3">
+            <button type="button" class="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-400" @click="downloadCsv">Export CSV</button>
+            <button type="button" class="rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-white hover:bg-white/15" @click="downloadPdf">Export PDF</button>
+          </div>
+        </div>
+      </section>
+
+      <div class="admin-panel p-6">
+        <h3 class="text-lg font-bold text-slate-950 mb-4">Filters</h3>
         <form class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="loadReport">
-          <input v-model="filters.start_date" type="date" class="px-4 py-2 border border-slate-300 rounded-lg" />
-          <input v-model="filters.end_date" type="date" class="px-4 py-2 border border-slate-300 rounded-lg" />
-          <select v-model="filters.status" class="px-4 py-2 border border-slate-300 rounded-lg">
+          <input v-model="filters.start_date" type="date" class="border border-slate-300 px-4 py-3" />
+          <input v-model="filters.end_date" type="date" class="border border-slate-300 px-4 py-3" />
+          <select v-model="filters.status" class="border border-slate-300 px-4 py-3">
             <option value="">All Statuses</option>
             <option value="RECEIVED">RECEIVED</option>
             <option value="DIAGNOSING">DIAGNOSING</option>
@@ -75,13 +89,8 @@ onMounted(loadReport);
             <option value="PICKED_UP">PICKED_UP</option>
             <option value="UNREPAIRABLE">UNREPAIRABLE</option>
           </select>
-          <button type="submit" class="bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Apply</button>
+          <button type="submit" class="btn-primary py-3">Apply</button>
         </form>
-
-        <div class="mt-4 flex gap-3">
-          <button type="button" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold" @click="downloadCsv">Export CSV</button>
-          <button type="button" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold" @click="downloadPdf">Export PDF</button>
-        </div>
       </div>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4" v-if="report">

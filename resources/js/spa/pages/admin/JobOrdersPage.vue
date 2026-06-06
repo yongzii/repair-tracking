@@ -35,6 +35,15 @@ const invoiceData = ref(null);
 const qrContainer = ref(null);
 const canManageTrash = computed(() => adminRoles.includes(authState.user?.role));
 
+const activeFilterCount = computed(() => [
+    filters.search.trim(),
+    filters.status,
+    filters.priority,
+    filters.payment_status,
+    filters.technician_id,
+    filters.overdue_only,
+].filter(Boolean).length);
+
 const { location } = useNavigation();
 
 const form = reactive({
@@ -151,6 +160,20 @@ const gotoPage = (url) => {
 const formatCurrency = (value) => {
     const amount = Number(value || 0);
     return `PHP ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
+const statusClass = (status, overdue = false) => {
+    if (overdue) return 'bg-rose-50 text-rose-700 ring-rose-200';
+    if (status === 'READY_FOR_PICKUP' || status === 'PICKED_UP') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
+    if (status === 'WAITING_PARTS') return 'bg-amber-50 text-amber-700 ring-amber-200';
+    if (status === 'UNREPAIRABLE') return 'bg-slate-100 text-slate-700 ring-slate-200';
+    return 'bg-teal-50 text-teal-700 ring-teal-200';
+};
+
+const paymentClass = (status) => {
+    if (status === 'PAID') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
+    if (status === 'PARTIAL') return 'bg-amber-50 text-amber-700 ring-amber-200';
+    return 'bg-rose-50 text-rose-700 ring-rose-200';
 };
 
 const buildFilterQuery = (includePage = false) => {
@@ -362,99 +385,138 @@ watch(
     <div v-else-if="forbidden" class="card p-6 border border-rose-200 bg-rose-50 text-rose-700">You do not have access to this page.</div>
 
     <div v-else class="space-y-6">
-      <div v-if="successMessage" class="p-3 rounded border border-emerald-200 bg-emerald-50 text-emerald-700">{{ successMessage }}</div>
-      <div v-if="invoiceError" class="p-3 rounded border border-amber-200 bg-amber-50 text-amber-700">{{ invoiceError }}</div>
-      <div v-if="errorMessage" class="p-3 rounded border border-rose-200 bg-rose-50 text-rose-700">{{ errorMessage }}</div>
+      <div v-if="successMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{{ successMessage }}</div>
+      <div v-if="invoiceError" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-700">{{ invoiceError }}</div>
+      <div v-if="errorMessage" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{{ errorMessage }}</div>
 
-      <div class="flex gap-3 justify-end">
-        <AppLink v-if="canManageTrash" to="/admin/job-orders/trash" class="px-4 py-2 rounded-lg border border-slate-200 text-slate-600 font-semibold hover:bg-slate-100">Trash</AppLink>
-        <button type="button" class="px-5 py-2 rounded-lg bg-slate-900 text-white font-semibold hover:bg-slate-800" @click="openCreateModal">New Job Order</button>
-      </div>
+      <section class="rounded-2xl border border-slate-200 bg-slate-950 p-6 text-white shadow-xl shadow-slate-900/10">
+        <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p class="text-xs font-bold uppercase text-teal-300">Repair queue</p>
+            <h3 class="mt-2 font-display text-3xl leading-tight">Job order workspace</h3>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+              Search, filter, review, and update repair transactions from the shop queue.
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-3">
+            <AppLink v-if="canManageTrash" to="/admin/job-orders/trash" class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white hover:bg-white/10">Trash</AppLink>
+            <button type="button" class="rounded-lg bg-amber-400 px-5 py-2 text-sm font-bold text-slate-950 shadow-lg shadow-amber-400/15 hover:bg-amber-300" @click="openCreateModal">New Job Order</button>
+          </div>
+        </div>
+      </section>
 
-      <div class="card p-5">
-        <form class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3" @submit.prevent="applyFilters">
-          <input v-model="filters.search" class="lg:col-span-2 px-4 py-2 border border-slate-300 rounded-lg" placeholder="Search job #, customer, phone, device..." />
-          <select v-model="filters.status" class="px-4 py-2 border border-slate-300 rounded-lg">
+      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <form class="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-6" @submit.prevent="applyFilters">
+          <div class="lg:col-span-2">
+            <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Search</label>
+            <input v-model="filters.search" class="w-full rounded-lg border border-slate-300 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100" placeholder="Job #, customer, phone, device..." />
+          </div>
+          <div>
+            <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Status</label>
+            <select v-model="filters.status" class="w-full rounded-lg border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100">
             <option value="">All statuses</option>
             <option v-for="status in filterOptions.statuses" :key="status" :value="status">{{ status.replaceAll('_', ' ') }}</option>
           </select>
-          <select v-model="filters.priority" class="px-4 py-2 border border-slate-300 rounded-lg">
+          </div>
+          <div>
+            <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Priority</label>
+            <select v-model="filters.priority" class="w-full rounded-lg border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100">
             <option value="">All priorities</option>
             <option v-for="priority in filterOptions.priorities" :key="priority" :value="priority">{{ priority }}</option>
           </select>
-          <select v-model="filters.payment_status" class="px-4 py-2 border border-slate-300 rounded-lg">
+          </div>
+          <div>
+            <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Payment</label>
+            <select v-model="filters.payment_status" class="w-full rounded-lg border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100">
             <option value="">All payment states</option>
             <option v-for="status in filterOptions.paymentStatuses" :key="status" :value="status">{{ status }}</option>
           </select>
-          <select v-model="filters.technician_id" class="px-4 py-2 border border-slate-300 rounded-lg">
+          </div>
+          <div>
+            <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Technician</label>
+            <select v-model="filters.technician_id" class="w-full rounded-lg border border-slate-300 px-4 py-3 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100">
             <option value="">All technicians</option>
             <option v-for="tech in technicians" :key="tech.id" :value="String(tech.id)">{{ tech.name }}</option>
           </select>
-          <label class="md:col-span-2 lg:col-span-2 flex items-center gap-3 text-sm text-slate-600">
-            <input v-model="filters.overdue_only" type="checkbox" class="rounded border-slate-300" />
+          </div>
+          <label class="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-600 md:col-span-2 lg:col-span-2">
+            <input v-model="filters.overdue_only" type="checkbox" class="rounded border-slate-300 text-teal-600 focus:ring-teal-500" />
             Show overdue repairs only
           </label>
-          <div class="md:col-span-3 lg:col-span-4 flex flex-wrap justify-end gap-3">
-            <button type="button" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold" @click="clearFilters">Clear</button>
-            <button type="submit" class="px-4 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 font-semibold">Apply Filters</button>
+          <div class="flex flex-wrap items-center justify-end gap-3 md:col-span-3 lg:col-span-4">
+            <span v-if="activeFilterCount" class="mr-auto rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-700 ring-1 ring-teal-200">{{ activeFilterCount }} active filter{{ activeFilterCount > 1 ? 's' : '' }}</span>
+            <button type="button" class="rounded-lg border border-slate-300 px-4 py-2 font-bold text-slate-700 hover:bg-slate-100" @click="clearFilters">Clear</button>
+            <button type="submit" class="rounded-lg bg-slate-950 px-5 py-2 font-bold text-white hover:bg-slate-800">Apply Filters</button>
           </div>
         </form>
       </div>
 
-      <div class="card overflow-hidden">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-100 border-b">
-            <tr>
-              <th class="px-6 py-3 text-left font-semibold text-slate-600">Job Order</th>
-              <th class="px-6 py-3 text-left font-semibold text-slate-600">Customer</th>
-              <th class="px-6 py-3 text-left font-semibold text-slate-600">Device</th>
-              <th class="px-6 py-3 text-left font-semibold text-slate-600">Status</th>
-              <th class="px-6 py-3 text-left font-semibold text-slate-600">Payment</th>
-              <th class="px-6 py-3 text-left font-semibold text-slate-600">Due</th>
-              <th class="px-6 py-3 text-left font-semibold text-slate-600">Actions</th>
+      <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+          <div>
+            <h3 class="text-lg font-bold text-slate-950">Repair Jobs</h3>
+            <p class="text-sm text-slate-500">{{ jobOrders.total || jobOrders.data.length }} record{{ (jobOrders.total || jobOrders.data.length) === 1 ? '' : 's' }} found</p>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[1060px] text-sm">
+            <thead>
+              <tr class="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
+                <th class="px-6 py-3 text-left font-bold">Job Order</th>
+                <th class="px-6 py-3 text-left font-bold">Customer</th>
+                <th class="px-6 py-3 text-left font-bold">Device</th>
+                <th class="px-6 py-3 text-left font-bold">Status</th>
+                <th class="px-6 py-3 text-left font-bold">Payment</th>
+                <th class="px-6 py-3 text-left font-bold">Due</th>
+                <th class="px-6 py-3 text-left font-bold">Actions</th>
             </tr>
           </thead>
-          <tbody class="divide-y">
-            <tr v-for="job in jobOrders.data" :key="job.id" class="hover:bg-slate-50">
+          <tbody class="divide-y divide-slate-100">
+            <tr v-for="job in jobOrders.data" :key="job.id" class="hover:bg-slate-50/80">
               <td class="px-6 py-4">
-                <p class="font-semibold text-slate-900">{{ job.job_order_number }}</p>
+                <AppLink :to="`/admin/job-orders/${job.id}`" class="font-bold text-slate-950 hover:text-teal-700">{{ job.job_order_number }}</AppLink>
                 <p class="text-xs text-slate-500">{{ job.created_at_formatted }}</p>
               </td>
               <td class="px-6 py-4">
-                <p class="text-slate-700">{{ job.customer_name }}</p>
+                <p class="font-semibold text-slate-800">{{ job.customer_name }}</p>
                 <p v-if="job.customer_phone" class="text-xs text-slate-500">{{ job.customer_phone }}</p>
               </td>
               <td class="px-6 py-4">
-                <p class="text-slate-700">{{ [job.brand, job.model].filter(Boolean).join(' ') || job.device_type }}</p>
+                <p class="font-semibold text-slate-800">{{ [job.brand, job.model].filter(Boolean).join(' ') || job.device_type }}</p>
                 <p class="text-xs text-slate-500">{{ job.device_type }}</p>
                 <p v-if="job.technician_name" class="text-xs text-slate-500">Tech: {{ job.technician_name }}</p>
               </td>
               <td class="px-6 py-4">
-                <p class="text-slate-700">{{ job.current_status.replaceAll('_', ' ') }}</p>
-                <p class="text-xs" :class="job.is_overdue ? 'text-rose-600 font-semibold' : 'text-slate-500'">
+                <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="statusClass(job.current_status, job.is_overdue)">
+                  {{ job.current_status.replaceAll('_', ' ') }}
+                </span>
+                <p class="mt-2 text-xs" :class="job.is_overdue ? 'font-bold text-rose-600' : 'text-slate-500'">
                   {{ job.is_overdue ? 'Overdue' : job.priority }}
                 </p>
               </td>
               <td class="px-6 py-4">
-                <p class="text-slate-700">{{ job.payment_status }}</p>
-                <p class="text-xs text-slate-500">Balance: {{ formatCurrency(job.balance) }}</p>
+                <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="paymentClass(job.payment_status)">
+                  {{ job.payment_status }}
+                </span>
+                <p class="mt-2 text-xs text-slate-500">Balance: {{ formatCurrency(job.balance) }}</p>
               </td>
               <td class="px-6 py-4">
-                <p class="text-slate-700">{{ job.estimated_completion_formatted || 'Not set' }}</p>
+                <p class="font-semibold text-slate-700">{{ job.estimated_completion_formatted || 'Not set' }}</p>
               </td>
               <td class="px-6 py-4">
-                <div class="flex flex-wrap items-center gap-3">
-                  <AppLink :to="`/admin/job-orders/${job.id}`" class="text-slate-900 hover:text-slate-700 font-semibold">View</AppLink>
+                <div class="flex flex-wrap items-center gap-2">
+                  <AppLink :to="`/admin/job-orders/${job.id}`" class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">View</AppLink>
                   <button
                     v-if="!['READY_FOR_PICKUP', 'PICKED_UP', 'UNREPAIRABLE'].includes(job.current_status)"
                     type="button"
-                    class="text-emerald-700 hover:text-emerald-800 font-semibold disabled:opacity-60"
+                    class="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
                     :disabled="quickUpdatingId === job.id"
                     @click="markReadyForPickup(job)"
                   >
                     {{ quickUpdatingId === job.id ? 'Saving...' : 'Set Ready' }}
                   </button>
-                  <button v-if="canManageTrash" type="button" class="text-rose-600 hover:text-rose-700 font-semibold" @click="deleteJobOrder(job.id)">Delete</button>
+                  <button v-if="canManageTrash" type="button" class="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" @click="deleteJobOrder(job.id)">Delete</button>
                 </div>
               </td>
             </tr>
@@ -462,7 +524,8 @@ watch(
               <td colspan="7" class="px-6 py-12 text-center text-slate-500">No job orders found.</td>
             </tr>
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       <div class="flex flex-wrap gap-2">

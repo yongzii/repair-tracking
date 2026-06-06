@@ -99,70 +99,76 @@ onMounted(loadShop);
     <div v-else-if="forbidden" class="card p-6 border border-rose-200 bg-rose-50 text-rose-700">{{ errorMessage || 'You do not have access to this page.' }}</div>
 
     <div v-else class="space-y-6">
-      <div v-if="successMessage" class="p-3 rounded border border-emerald-200 bg-emerald-50 text-emerald-700">{{ successMessage }}</div>
-      <div v-if="errorMessage" class="p-3 rounded border border-rose-200 bg-rose-50 text-rose-700">{{ errorMessage }}</div>
+      <section class="admin-hero p-6">
+        <p class="text-xs font-bold uppercase text-teal-300">Workspace configuration</p>
+        <h3 class="mt-2 font-display text-3xl">Shop Settings</h3>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Manage business profile details and public customer links for tracking, drop-off booking, and consultation.</p>
+      </section>
+
+      <div v-if="successMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{{ successMessage }}</div>
+      <div v-if="errorMessage" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{{ errorMessage }}</div>
 
       <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div class="xl:col-span-2 card p-6">
+        <div class="admin-panel p-6 xl:col-span-2">
           <div class="flex items-center justify-between mb-4">
             <div>
-              <h3 class="text-lg font-semibold text-slate-900">Business Profile</h3>
+              <h3 class="text-lg font-bold text-slate-950">Business Profile</h3>
               <p class="text-sm text-slate-500">This information will represent your shop across the SaaS workspace.</p>
             </div>
           </div>
 
           <form class="grid grid-cols-1 md:grid-cols-2 gap-4" @submit.prevent="saveShop">
             <label class="space-y-2">
-              <span class="text-sm font-medium text-slate-700">Shop Name</span>
+              <span class="text-sm font-bold text-slate-700">Shop Name</span>
               <input v-model="form.name" class="w-full px-4 py-2 border border-slate-300 rounded-lg" required />
             </label>
 
             <label class="space-y-2">
-              <span class="text-sm font-medium text-slate-700">Shop Code / Slug</span>
+              <span class="text-sm font-bold text-slate-700">Shop Code / Slug</span>
               <input v-model="form.slug" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="repair-hub" required />
             </label>
 
             <label class="space-y-2">
-              <span class="text-sm font-medium text-slate-700">Email</span>
+              <span class="text-sm font-bold text-slate-700">Email</span>
               <input v-model="form.email" type="email" class="w-full px-4 py-2 border border-slate-300 rounded-lg" />
             </label>
 
             <label class="space-y-2">
-              <span class="text-sm font-medium text-slate-700">Phone</span>
+              <span class="text-sm font-bold text-slate-700">Phone</span>
               <input v-model="form.phone" class="w-full px-4 py-2 border border-slate-300 rounded-lg" />
             </label>
 
             <label class="space-y-2 md:col-span-2">
-              <span class="text-sm font-medium text-slate-700">Address</span>
+              <span class="text-sm font-bold text-slate-700">Address</span>
               <input v-model="form.address" class="w-full px-4 py-2 border border-slate-300 rounded-lg" />
             </label>
 
             <label class="space-y-2">
-              <span class="text-sm font-medium text-slate-700">Primary Color</span>
+              <span class="text-sm font-bold text-slate-700">Primary Color</span>
               <input v-model="form.primary_color" type="color" class="h-11 w-full px-2 py-2 border border-slate-300 rounded-lg" />
             </label>
 
             <label class="space-y-2">
-              <span class="text-sm font-medium text-slate-700">Default Warranty Days</span>
+              <span class="text-sm font-bold text-slate-700">Default Warranty Days</span>
               <input v-model.number="form.default_warranty_days" type="number" min="0" max="3650" class="w-full px-4 py-2 border border-slate-300 rounded-lg" required />
             </label>
 
             <div class="space-y-2">
-              <span class="text-sm font-medium text-slate-700">Subscription Plan</span>
+              <span class="text-sm font-bold text-slate-700">Subscription Plan</span>
               <div class="h-11 flex items-center px-4 rounded-lg border border-slate-200 bg-slate-50 text-slate-700 uppercase">
                 {{ shop?.subscription_plan || 'starter' }}
               </div>
             </div>
 
             <div class="md:col-span-2 flex justify-end">
-              <button type="submit" class="px-5 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800 font-semibold">Save Shop Settings</button>
+              <button type="submit" class="btn-primary px-5 py-3">Save Shop Settings</button>
             </div>
           </form>
         </div>
 
         <div class="space-y-6">
-          <div class="card p-6">
-            <h3 class="text-lg font-semibold text-slate-900">Public Tracking</h3>
+          <div class="admin-panel p-6">
+            <h3 class="text-lg font-bold text-slate-950">Public Tracking</h3>
             <p class="text-sm text-slate-500 mt-2">Share this link or print the shop code on receipts so customers can track repairs in your own workspace.</p>
             <div class="mt-4 p-3 rounded-lg border border-slate-200 bg-slate-50 break-all text-sm text-slate-700">
               {{ trackingUrl || 'Tracking link unavailable.' }}
@@ -170,22 +176,22 @@ onMounted(loadShop);
             <p class="text-xs text-slate-500 mt-3">Shop code: <span class="font-semibold text-slate-700">{{ shop?.slug }}</span></p>
           </div>
 
-          <div class="card p-6">
-            <h3 class="text-lg font-semibold text-slate-900">Public Drop-off Booking</h3>
+          <div class="admin-panel p-6">
+            <h3 class="text-lg font-bold text-slate-950">Public Drop-off Booking</h3>
             <div class="mt-4 p-3 rounded-lg border border-slate-200 bg-slate-50 break-all text-sm text-slate-700">
               {{ bookingUrl || 'Drop-off booking link unavailable.' }}
             </div>
           </div>
 
-          <div class="card p-6">
-            <h3 class="text-lg font-semibold text-slate-900">Public Free Consultation</h3>
+          <div class="admin-panel p-6">
+            <h3 class="text-lg font-bold text-slate-950">Public Free Consultation</h3>
             <div class="mt-4 p-3 rounded-lg border border-slate-200 bg-slate-50 break-all text-sm text-slate-700">
               {{ consultationUrl || 'Consultation link unavailable.' }}
             </div>
           </div>
 
-          <div class="card p-6">
-            <h3 class="text-lg font-semibold text-slate-900">Workspace Status</h3>
+          <div class="admin-panel p-6">
+            <h3 class="text-lg font-bold text-slate-950">Workspace Status</h3>
             <div class="mt-4 space-y-3 text-sm">
               <div class="flex items-center justify-between">
                 <span class="text-slate-500">Workspace</span>

@@ -222,8 +222,14 @@ onMounted(loadInventory);
     <div v-else-if="forbidden" class="card p-6 border border-rose-200 bg-rose-50 text-rose-700">You do not have access to this page.</div>
 
     <div v-else class="space-y-6">
-      <div v-if="successMessage" class="card p-4 border border-emerald-200 bg-emerald-50 text-emerald-900">{{ successMessage }}</div>
-      <div v-if="errorMessage" class="card p-4 border border-rose-200 bg-rose-50 text-rose-900">{{ errorMessage }}</div>
+      <section class="admin-hero p-6">
+        <p class="text-xs font-bold uppercase text-teal-300">Spare parts control</p>
+        <h3 class="mt-2 font-display text-3xl">Inventory</h3>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Monitor spare parts, low stock, unit costs, and stock movements used in repair jobs.</p>
+      </section>
+
+      <div v-if="successMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{{ successMessage }}</div>
+      <div v-if="errorMessage" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{{ errorMessage }}</div>
 
       <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div class="metric-card">
@@ -240,42 +246,42 @@ onMounted(loadInventory);
         </div>
       </div>
 
-      <div v-if="canWriteInventory" class="card p-6">
-        <h3 class="text-lg font-semibold text-slate-900 mb-4">Add Spare Part</h3>
+      <div v-if="canWriteInventory" class="admin-panel p-6">
+        <h3 class="text-lg font-bold text-slate-950 mb-4">Add Spare Part</h3>
         <form class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="createPart">
-          <input v-model="createForm.name" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Part name" required />
-          <input v-model="createForm.part_number" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Part number (optional)" />
-          <input v-model="createForm.category" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Category" />
-          <input v-model="createForm.unit" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Unit (pcs)" />
-          <input v-model.number="createForm.stock_quantity" type="number" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Initial stock" required />
-          <input v-model.number="createForm.reorder_level" type="number" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Reorder level" required />
-          <input v-model.number="createForm.unit_cost" type="number" min="0" step="0.01" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Unit cost" required />
-          <label class="flex items-center gap-2 text-sm text-slate-700 px-2">
+          <input v-model="createForm.name" class="border border-slate-300 px-4 py-3" placeholder="Part name" required />
+          <input v-model="createForm.part_number" class="border border-slate-300 px-4 py-3" placeholder="Part number (optional)" />
+          <input v-model="createForm.category" class="border border-slate-300 px-4 py-3" placeholder="Category" />
+          <input v-model="createForm.unit" class="border border-slate-300 px-4 py-3" placeholder="Unit (pcs)" />
+          <input v-model.number="createForm.stock_quantity" type="number" min="0" class="border border-slate-300 px-4 py-3" placeholder="Initial stock" required />
+          <input v-model.number="createForm.reorder_level" type="number" min="0" class="border border-slate-300 px-4 py-3" placeholder="Reorder level" required />
+          <input v-model.number="createForm.unit_cost" type="number" min="0" step="0.01" class="border border-slate-300 px-4 py-3" placeholder="Unit cost" required />
+          <label class="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
             <input v-model="createForm.is_active" type="checkbox" />
             Active
           </label>
-          <input v-model="createForm.description" class="md:col-span-3 px-4 py-2 border border-slate-300 rounded-lg" placeholder="Description (optional)" />
-          <button type="submit" class="md:col-span-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Save Part</button>
+          <input v-model="createForm.description" class="md:col-span-3 border border-slate-300 px-4 py-3" placeholder="Description (optional)" />
+          <button type="submit" class="btn-primary md:col-span-1 py-3">Save Part</button>
         </form>
       </div>
 
-      <div class="card p-6">
+      <div class="admin-panel p-6">
         <div class="flex flex-wrap items-center gap-3 mb-4">
-          <input v-model="filters.search" class="flex-1 min-w-[200px] px-4 py-2 border border-slate-300 rounded-lg" placeholder="Search part name, number, category" />
-          <label class="flex items-center gap-2 text-sm text-slate-700">
+          <input v-model="filters.search" class="flex-1 min-w-[200px] border border-slate-300 px-4 py-3" placeholder="Search part name, number, category" />
+          <label class="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
             <input v-model="filters.active_only" type="checkbox" />
             Active only
           </label>
-          <label class="flex items-center gap-2 text-sm text-slate-700">
+          <label class="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
             <input v-model="filters.low_stock" type="checkbox" />
             Low stock only
           </label>
-          <button type="button" class="bg-slate-900 hover:bg-slate-800 text-white font-semibold px-4 py-2 rounded-lg" @click="loadInventory">Apply</button>
+          <button type="button" class="btn-primary px-4 py-3" @click="loadInventory">Apply</button>
         </div>
 
         <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="bg-slate-100 border-b">
+          <table class="data-table">
+            <thead>
               <tr>
                 <th class="px-4 py-3 text-left text-slate-600">Part</th>
                 <th class="px-4 py-3 text-left text-slate-600">Stock</th>
@@ -284,7 +290,7 @@ onMounted(loadInventory);
                 <th class="px-4 py-3 text-left text-slate-600">Actions</th>
               </tr>
             </thead>
-            <tbody class="divide-y">
+            <tbody>
               <tr v-for="item in inventory.data" :key="item.id">
                 <td class="px-4 py-3">
                   <p class="font-semibold text-slate-900">{{ item.name }}</p>
@@ -304,14 +310,14 @@ onMounted(loadInventory);
                 </td>
                 <td class="px-4 py-3">
                   <div v-if="isAdmin" class="flex flex-wrap items-center gap-2">
-                    <button type="button" class="text-slate-900 font-semibold" @click="startEdit(item)">Edit</button>
-                    <button type="button" class="text-emerald-700 font-semibold" @click="openAdjust(item, 'in')">+Stock</button>
-                    <button type="button" class="text-amber-700 font-semibold" @click="openAdjust(item, 'out')">-Stock</button>
-                    <button type="button" class="text-blue-700 font-semibold" @click="openAdjust(item, 'set')">Set</button>
-                    <button type="button" class="text-rose-600 font-semibold" @click="deletePart(item.id)">Delete</button>
+                    <button type="button" class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700" @click="startEdit(item)">Edit</button>
+                    <button type="button" class="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50" @click="openAdjust(item, 'in')">+Stock</button>
+                    <button type="button" class="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-50" @click="openAdjust(item, 'out')">-Stock</button>
+                    <button type="button" class="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50" @click="openAdjust(item, 'set')">Set</button>
+                    <button type="button" class="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" @click="deletePart(item.id)">Delete</button>
                   </div>
                   <div v-else-if="canWriteInventory" class="flex flex-wrap items-center gap-2">
-                    <button type="button" class="text-emerald-700 font-semibold" @click="openAdjust(item, 'in')">+Stock</button>
+                    <button type="button" class="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50" @click="openAdjust(item, 'in')">+Stock</button>
                   </div>
                   <span v-else class="text-sm text-slate-500">Read-only</span>
                 </td>

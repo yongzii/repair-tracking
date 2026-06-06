@@ -150,8 +150,14 @@ onMounted(() => loadAppointments());
     <div v-else-if="forbidden" class="card border border-rose-200 bg-rose-50 p-6 text-rose-700">You do not have access to this page.</div>
 
     <div v-else class="space-y-6">
-      <div v-if="successMessage" class="card border border-emerald-200 bg-emerald-50 p-4 text-emerald-800">{{ successMessage }}</div>
-      <div v-if="errorMessage" class="card border border-rose-200 bg-rose-50 p-4 text-rose-700">{{ errorMessage }}</div>
+      <section class="admin-hero p-6">
+        <p class="text-xs font-bold uppercase text-teal-300">Customer intake</p>
+        <h3 class="mt-2 font-display text-3xl">Customer Requests</h3>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Review consultations and drop-off requests, respond to customers, and convert approved requests into job orders.</p>
+      </section>
+
+      <div v-if="successMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{{ successMessage }}</div>
+      <div v-if="errorMessage" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{{ errorMessage }}</div>
 
       <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
         <div class="metric-card">
@@ -168,33 +174,33 @@ onMounted(() => loadAppointments());
         </div>
       </div>
 
-      <div class="card p-5">
+      <div class="admin-panel p-5">
         <form class="grid grid-cols-1 gap-3 md:grid-cols-4" @submit.prevent="loadAppointments(1)">
-          <input v-model="filters.search" class="md:col-span-2 rounded-lg border border-slate-300 px-4 py-2" placeholder="Search customer requests..." />
-          <select v-model="filters.status" class="rounded-lg border border-slate-300 px-4 py-2">
+          <input v-model="filters.search" class="md:col-span-2 border border-slate-300 px-4 py-3" placeholder="Search customer requests..." />
+          <select v-model="filters.status" class="border border-slate-300 px-4 py-3">
             <option value="">All statuses</option>
             <option v-for="status in statuses" :key="status" :value="status">{{ formatStatus(status) }}</option>
           </select>
-          <select v-model="filters.booking_type" class="rounded-lg border border-slate-300 px-4 py-2">
+          <select v-model="filters.booking_type" class="border border-slate-300 px-4 py-3">
             <option value="">All request types</option>
             <option v-for="type in bookingTypes" :key="type" :value="type">{{ formatStatus(type) }}</option>
           </select>
           <div class="md:col-span-4 flex justify-end gap-3">
-            <button type="button" class="rounded-lg border border-slate-300 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-100" @click="clearFilters">Clear</button>
-            <button type="submit" class="rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-800">Apply Filters</button>
+            <button type="button" class="btn-soft px-4 py-2" @click="clearFilters">Clear</button>
+            <button type="submit" class="btn-primary px-4 py-2">Apply Filters</button>
           </div>
         </form>
       </div>
 
       <div class="space-y-4">
-        <div v-for="appointment in appointments.data" :key="appointment.id" class="card p-5">
+        <div v-for="appointment in appointments.data" :key="appointment.id" class="admin-panel p-5">
           <div class="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
             <div class="space-y-3">
               <div>
                 <div class="flex flex-wrap items-center gap-3">
                   <h3 class="text-lg font-semibold text-slate-900">{{ appointment.customer_name }}</h3>
-                  <span class="rounded bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">{{ appointment.confirmation_code }}</span>
-                  <span class="rounded px-2 py-1 text-xs font-semibold" :class="appointment.status === 'PENDING' ? 'bg-amber-100 text-amber-800' : appointment.status === 'CANCELLED' ? 'bg-rose-100 text-rose-700' : 'bg-emerald-100 text-emerald-800'">
+                  <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-700 ring-1 ring-slate-200">{{ appointment.confirmation_code }}</span>
+                  <span class="rounded-full px-3 py-1 text-xs font-bold ring-1" :class="appointment.status === 'PENDING' ? 'bg-amber-50 text-amber-700 ring-amber-200' : appointment.status === 'CANCELLED' ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-emerald-50 text-emerald-700 ring-emerald-200'">
                     {{ formatStatus(appointment.status) }}
                   </span>
                 </div>
@@ -266,18 +272,18 @@ onMounted(() => loadAppointments());
             </div>
 
             <div class="flex flex-wrap gap-2 xl:justify-end">
-              <button type="button" class="rounded-lg bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800" :disabled="updatingId === appointment.id" @click="updateStatus(appointment, 'CONFIRMED')">Confirm</button>
-              <button type="button" class="rounded-lg bg-indigo-700 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-800" :disabled="updatingId === appointment.id" @click="updateStatus(appointment, 'RESCHEDULED')">Reschedule</button>
-              <button type="button" class="rounded-lg bg-slate-800 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-900" :disabled="updatingId === appointment.id" @click="updateStatus(appointment, 'COMPLETED')">Complete</button>
-              <button type="button" class="rounded-lg bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800" :disabled="convertingId === appointment.id || Boolean(appointment.converted_job_order_id)" @click="convertToJobOrder(appointment)">
+              <button type="button" class="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-bold text-white hover:bg-emerald-700" :disabled="updatingId === appointment.id" @click="updateStatus(appointment, 'CONFIRMED')">Confirm</button>
+              <button type="button" class="rounded-lg bg-teal-600 px-3 py-2 text-sm font-bold text-white hover:bg-teal-700" :disabled="updatingId === appointment.id" @click="updateStatus(appointment, 'RESCHEDULED')">Reschedule</button>
+              <button type="button" class="rounded-lg bg-slate-950 px-3 py-2 text-sm font-bold text-white hover:bg-slate-800" :disabled="updatingId === appointment.id" @click="updateStatus(appointment, 'COMPLETED')">Complete</button>
+              <button type="button" class="rounded-lg bg-amber-400 px-3 py-2 text-sm font-bold text-slate-950 hover:bg-amber-300" :disabled="convertingId === appointment.id || Boolean(appointment.converted_job_order_id)" @click="convertToJobOrder(appointment)">
                 {{ appointment.converted_job_order_id ? 'Converted' : 'Create Job Order' }}
               </button>
-              <button type="button" class="rounded-lg bg-rose-700 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-800" :disabled="updatingId === appointment.id" @click="updateStatus(appointment, 'CANCELLED')">Cancel</button>
+              <button type="button" class="rounded-lg bg-rose-600 px-3 py-2 text-sm font-bold text-white hover:bg-rose-700" :disabled="updatingId === appointment.id" @click="updateStatus(appointment, 'CANCELLED')">Cancel</button>
             </div>
           </div>
         </div>
 
-        <div v-if="!appointments.data.length" class="card p-8 text-center text-slate-500">No customer requests found.</div>
+        <div v-if="!appointments.data.length" class="admin-panel p-8 text-center text-slate-500">No customer requests found.</div>
       </div>
 
       <div class="flex flex-wrap gap-2">
@@ -285,8 +291,8 @@ onMounted(() => loadAppointments());
           v-for="link in appointments.links"
           :key="link.label + String(link.url)"
           type="button"
-          class="rounded px-3 py-2 text-sm"
-          :class="link.active ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 disabled:text-slate-300'"
+          class="rounded-lg px-3 py-2 text-sm font-bold"
+          :class="link.active ? 'bg-slate-950 text-white' : 'bg-white text-slate-600 ring-1 ring-slate-200 disabled:text-slate-300'"
           :disabled="!link.url"
           @click="gotoPage(link.url)"
           v-html="link.label"

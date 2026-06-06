@@ -36,7 +36,7 @@ class PartRequestController extends Controller
             ->where('current_status', 'WAITING_PARTS')
             ->latest()
             ->get()
-            ->map(function (JobOrder $jobOrder) {
+            ->map(function (JobOrder $jobOrder) use ($shopId) {
                 $history = $jobOrder->statusHistories->first();
                 if (!$history) {
                     return null;

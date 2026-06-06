@@ -159,20 +159,22 @@ const lookupStatus = async () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50 py-10 px-4">
-    <div class="mx-auto max-w-5xl space-y-6">
-      <div class="flex flex-wrap items-center justify-between gap-3">
+  <div class="public-shell px-4 py-10">
+    <div class="mx-auto max-w-6xl space-y-6">
+      <div class="admin-hero p-6 sm:p-8">
+        <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
-          <p class="text-xs uppercase tracking-[0.2em] text-slate-500">{{ pageLabel }}</p>
-          <h1 class="mt-2 text-3xl font-bold text-slate-900">{{ pageTitle }}</h1>
-          <p v-if="isConsultationMode" class="mt-2 max-w-2xl text-sm text-slate-600">
+          <p class="text-xs font-bold uppercase tracking-[0.2em] text-teal-300">{{ pageLabel }}</p>
+          <h1 class="mt-3 font-display text-4xl leading-tight text-white">{{ pageTitle }}</h1>
+          <p v-if="isConsultationMode" class="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
             Submit your device concern first so the shop can review it, recommend the next step, and tell you whether to bring the unit in.
           </p>
-          <p v-else class="mt-2 max-w-2xl text-sm text-slate-600">
+          <p v-else class="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
             Schedule when you plan to bring the device to the shop so staff can prepare the intake queue.
           </p>
         </div>
-        <AppLink :to="shopSlug ? `/shops/${shopSlug}/track` : '/track'" class="rounded-lg bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200">Track Repair</AppLink>
+        <AppLink :to="shopSlug ? `/shops/${shopSlug}/track` : '/track'" class="rounded-lg bg-white px-4 py-2 text-sm font-bold text-slate-950 hover:bg-slate-100">Track Repair</AppLink>
+        </div>
       </div>
 
       <div v-if="errorMessage" class="card border border-rose-200 bg-rose-50 p-4 text-rose-700">{{ errorMessage }}</div>
@@ -182,79 +184,84 @@ const lookupStatus = async () => {
       </div>
 
       <div class="grid grid-cols-1 gap-6 xl:grid-cols-3">
-      <div class="card p-6 xl:col-span-2">
+      <div class="public-card p-6 xl:col-span-2">
+        <div class="mb-5">
+          <p class="text-xs font-bold uppercase text-teal-700">Customer request form</p>
+          <h2 class="mt-2 text-xl font-bold text-slate-950">Service Details</h2>
+        </div>
         <form class="grid grid-cols-1 gap-4 md:grid-cols-2" @submit.prevent="submitRequest">
           <label class="space-y-2 md:col-span-2">
-            <span class="text-sm font-medium text-slate-700">Shop Code</span>
+            <span class="text-sm font-bold text-slate-700">Shop Code</span>
             <input v-model="shopSlug" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="default-shop" required />
           </label>
 
           <label class="space-y-2">
-            <span class="text-sm font-medium text-slate-700">Customer Name</span>
+            <span class="text-sm font-bold text-slate-700">Customer Name</span>
             <input v-model="form.customer_name" class="w-full rounded-lg border border-slate-300 px-4 py-2" required />
           </label>
 
           <label class="space-y-2">
-            <span class="text-sm font-medium text-slate-700">Email</span>
+            <span class="text-sm font-bold text-slate-700">Email</span>
             <input v-model="form.customer_email" type="email" class="w-full rounded-lg border border-slate-300 px-4 py-2" />
           </label>
 
           <label class="space-y-2">
-            <span class="text-sm font-medium text-slate-700">Phone</span>
+            <span class="text-sm font-bold text-slate-700">Phone</span>
             <input v-model="form.customer_phone" class="w-full rounded-lg border border-slate-300 px-4 py-2" />
           </label>
 
           <label class="space-y-2">
-            <span class="text-sm font-medium text-slate-700">Device Type</span>
+            <span class="text-sm font-bold text-slate-700">Device Type</span>
             <input v-model="form.device_type" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="Laptop, phone, desktop..." required />
           </label>
 
           <label class="space-y-2">
-            <span class="text-sm font-medium text-slate-700">{{ preferredTimeLabel }}</span>
+            <span class="text-sm font-bold text-slate-700">{{ preferredTimeLabel }}</span>
             <input v-model="form.preferred_at" type="datetime-local" class="w-full rounded-lg border border-slate-300 px-4 py-2" required />
           </label>
 
           <label class="space-y-2">
-            <span class="text-sm font-medium text-slate-700">Brand</span>
+            <span class="text-sm font-bold text-slate-700">Brand</span>
             <input v-model="form.brand" class="w-full rounded-lg border border-slate-300 px-4 py-2" />
           </label>
 
           <label class="space-y-2">
-            <span class="text-sm font-medium text-slate-700">Model</span>
+            <span class="text-sm font-bold text-slate-700">Model</span>
             <input v-model="form.model" class="w-full rounded-lg border border-slate-300 px-4 py-2" />
           </label>
 
           <label class="space-y-2 md:col-span-2">
-            <span class="text-sm font-medium text-slate-700">{{ concernLabel }}</span>
+            <span class="text-sm font-bold text-slate-700">{{ concernLabel }}</span>
             <textarea v-model="form.concern" rows="5" class="w-full rounded-lg border border-slate-300 px-4 py-2" required></textarea>
           </label>
 
           <label v-if="isConsultationMode" class="space-y-2 md:col-span-2">
-            <span class="text-sm font-medium text-slate-700">Photo of Device or Issue</span>
+            <span class="text-sm font-bold text-slate-700">Photo of Device or Issue</span>
             <input ref="photoInput" type="file" accept="image/jpeg,image/png,image/webp" class="w-full rounded-lg border border-slate-300 px-4 py-2" @change="onPhotoChange" />
             <span class="block text-xs text-slate-500">Optional. JPG, PNG, or WebP up to 5 MB.</span>
           </label>
 
           <div class="md:col-span-2 flex justify-end">
-            <button type="submit" class="rounded-lg bg-slate-900 px-6 py-2 font-semibold text-white hover:bg-slate-800" :disabled="loading">
+            <button type="submit" class="btn-primary px-6 py-3" :disabled="loading">
               {{ loading ? 'Submitting...' : submitLabel }}
             </button>
           </div>
         </form>
       </div>
 
-      <div class="card p-6">
-        <h2 class="text-lg font-semibold text-slate-900">Check Request Status</h2>
+      <div class="public-card p-6">
+        <p class="text-xs font-bold uppercase text-teal-700">Lookup</p>
+        <h2 class="mt-2 text-lg font-bold text-slate-950">Check Request Status</h2>
         <form class="mt-4 space-y-3" @submit.prevent="lookupStatus">
           <label class="space-y-2 block">
-            <span class="text-sm font-medium text-slate-700">Shop Code</span>
+            <span class="text-sm font-bold text-slate-700">Shop Code</span>
             <input v-model="statusForm.shop_slug" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="default-shop" required />
           </label>
           <label class="space-y-2 block">
-            <span class="text-sm font-medium text-slate-700">Confirmation Code</span>
+            <span class="text-sm font-bold text-slate-700">Confirmation Code</span>
             <input v-model="statusForm.confirmation_code" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="APT-2026-ABC123" required />
           </label>
-          <button type="submit" class="w-full rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white hover:bg-slate-800" :disabled="lookupLoading">
+          <button type="submit" class="btn-primary w-full px-4 py-3" :disabled="lookupLoading">
             {{ lookupLoading ? 'Checking...' : 'Check Status' }}
           </button>
         </form>

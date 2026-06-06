@@ -43,14 +43,19 @@ const onLogout = async () => {
 
 <template>
   <div class="app-shell flex min-h-screen">
-    <aside class="sidebar flex min-h-screen w-72 flex-col overflow-hidden">
-      <div class="p-6 border-b border-white/10">
-        <h1 class="text-2xl font-semibold sidebar-title text-white">{{ shopName }}</h1>
-        <p class="text-blue-100 text-sm mt-1">{{ appConfig.tagline }}</p>
-        <p v-if="shopSlug" class="text-blue-200 text-xs mt-2 uppercase tracking-[0.15em]">Shop Code: {{ shopSlug }}</p>
+    <aside class="sidebar app-scrollbar flex min-h-screen w-72 shrink-0 flex-col overflow-hidden">
+      <div class="border-b border-white/10 p-5">
+        <AppLink to="/admin" class="flex items-start gap-3">
+          <span class="mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-sm font-bold text-slate-950">RS</span>
+          <span class="min-w-0">
+            <span class="block truncate text-xl font-semibold sidebar-title text-white">{{ shopName }}</span>
+            <span class="mt-1 block text-sm text-slate-300">{{ appConfig.tagline }}</span>
+          </span>
+        </AppLink>
+        <p v-if="shopSlug" class="mt-4 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold uppercase tracking-[0.15em] text-teal-200">Shop Code: {{ shopSlug }}</p>
       </div>
 
-      <nav class="mt-6 flex-1 space-y-1 overflow-y-auto pb-6">
+      <nav class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto pb-6">
         <AppLink to="/admin" class="nav-link" :class="isExactActive('/admin') ? 'nav-link-active' : ''">
           <i class="fas fa-chart-line w-5"></i>
           <span>Dashboard</span>
@@ -112,33 +117,33 @@ const onLogout = async () => {
         </AppLink>
       </nav>
 
-      <div class="mt-auto border-t border-white/10 bg-black/20 p-6">
-        <div class="mb-4" v-if="user">
-          <p class="text-blue-100 text-xs">Logged in as</p>
-          <p class="text-white font-semibold text-sm">{{ user.name }}</p>
-          <p class="text-blue-200 text-xs">{{ user.email }}</p>
-          <p class="text-blue-200 text-xs uppercase mt-1">{{ user.role }}</p>
-          <p v-if="user.shop?.name" class="text-blue-200 text-xs mt-1">{{ user.shop.name }}</p>
+      <div class="mt-auto border-t border-white/10 bg-black/20 p-5">
+        <div class="mb-4 rounded-xl border border-white/10 bg-white/5 p-3" v-if="user">
+          <p class="text-xs text-slate-300">Logged in as</p>
+          <p class="mt-1 truncate text-sm font-bold text-white">{{ user.name }}</p>
+          <p class="truncate text-xs text-slate-300">{{ user.email }}</p>
+          <p class="mt-2 inline-flex rounded-full bg-teal-400/15 px-2 py-1 text-xs font-bold uppercase text-teal-200">{{ user.role }}</p>
+          <p v-if="user.shop?.name" class="mt-2 truncate text-xs text-slate-300">{{ user.shop.name }}</p>
         </div>
-        <button type="button" class="w-full bg-white/10 hover:bg-white/20 text-white font-semibold py-2 rounded-lg transition flex items-center justify-center" @click="onLogout">
+        <button type="button" class="flex w-full items-center justify-center rounded-lg bg-white/10 py-2 font-bold text-white hover:bg-white/20" @click="onLogout">
           <i class="fas fa-sign-out-alt mr-2"></i>
           Logout
         </button>
       </div>
     </aside>
 
-    <div class="flex-1 flex flex-col overflow-hidden">
+    <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
       <div class="content-header px-6 py-4">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-xs uppercase tracking-[0.2em] text-slate-400">Operations</p>
-            <h2 class="text-2xl font-semibold text-slate-900">{{ title }}</h2>
+            <p class="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">Operations</p>
+            <h2 class="text-2xl font-bold text-slate-950">{{ title }}</h2>
           </div>
         </div>
       </div>
 
-      <div class="flex-1 overflow-auto">
-        <div class="p-6 space-y-4">
+      <div class="app-scrollbar flex-1 overflow-auto">
+        <div class="space-y-4 p-6">
           <slot />
         </div>
       </div>

@@ -64,7 +64,13 @@ onMounted(loadDashboard);
     <div v-else-if="forbidden" class="card p-6 border border-rose-200 bg-rose-50 text-rose-700">{{ errorMessage || 'You do not have access to this page.' }}</div>
 
     <div v-else class="space-y-6">
-      <div v-if="errorMessage" class="p-3 rounded border border-rose-200 bg-rose-50 text-rose-700">{{ errorMessage }}</div>
+      <section class="admin-hero p-6">
+        <p class="text-xs font-bold uppercase text-teal-300">Technician workspace</p>
+        <h3 class="mt-2 font-display text-3xl">My Assigned Jobs</h3>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Update repair progress, add notes, and open job details for parts and status work.</p>
+      </section>
+
+      <div v-if="errorMessage" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{{ errorMessage }}</div>
 
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div class="metric-card">
@@ -85,9 +91,10 @@ onMounted(loadDashboard);
         </div>
       </div>
 
-      <div class="card overflow-hidden">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-100 border-b">
+      <div class="admin-panel overflow-hidden">
+        <div class="overflow-x-auto">
+        <table class="data-table">
+          <thead>
             <tr>
               <th class="px-4 py-3 text-left text-slate-600">Job Order</th>
               <th class="px-4 py-3 text-left text-slate-600">Device</th>
@@ -97,7 +104,7 @@ onMounted(loadDashboard);
               <th class="px-4 py-3 text-left text-slate-600">Details</th>
             </tr>
           </thead>
-          <tbody class="divide-y">
+          <tbody>
             <tr v-for="job in jobs" :key="job.id">
               <td class="px-4 py-3">
                 <AppLink :to="`/technician/job-orders/${job.id}`" class="font-semibold text-slate-900">{{ job.job_order_number }}</AppLink>
@@ -108,23 +115,23 @@ onMounted(loadDashboard);
                 <p class="text-xs text-slate-500">{{ job.device_type }}</p>
               </td>
               <td class="px-4 py-3">
-                <p class="text-slate-700">{{ job.current_status.replaceAll('_', ' ') }}</p>
-                <p v-if="job.is_overdue" class="text-xs font-semibold text-rose-600">Overdue</p>
+                <span class="rounded-full px-3 py-1 text-xs font-bold ring-1" :class="job.is_overdue ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-teal-50 text-teal-700 ring-teal-200'">{{ job.current_status.replaceAll('_', ' ') }}</span>
+                <p v-if="job.is_overdue" class="mt-2 text-xs font-semibold text-rose-600">Overdue</p>
               </td>
               <td class="px-4 py-3 text-slate-700">{{ job.estimated_completion_formatted || 'Not set' }}</td>
               <td class="px-4 py-3">
                 <form class="space-y-2" @submit.prevent="updateStatus(job)">
-                  <select v-model="statusDrafts[job.id]" class="w-full px-3 py-2 border border-slate-300 rounded-lg">
+                  <select v-model="statusDrafts[job.id]" class="w-full border border-slate-300 px-3 py-2">
                     <option v-for="status in allowedStatuses" :key="status" :value="status">{{ status.replaceAll('_', ' ') }}</option>
                   </select>
-                  <input v-model="notesDrafts[job.id]" class="w-full px-3 py-2 border border-slate-300 rounded-lg" placeholder="Note (optional)" />
-                  <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Save</button>
+                  <input v-model="notesDrafts[job.id]" class="w-full border border-slate-300 px-3 py-2" placeholder="Note (optional)" />
+                  <button type="submit" class="btn-primary w-full py-2">Save</button>
                 </form>
               </td>
               <td class="px-4 py-3 align-top">
                 <AppLink
                   :to="`/technician/job-orders/${job.id}`"
-                  class="inline-flex items-center justify-center rounded-lg border border-slate-300 px-4 py-2 font-semibold text-slate-900 hover:bg-slate-50"
+                  class="btn-soft inline-flex items-center justify-center px-4 py-2"
                 >
                   Open Job
                 </AppLink>
@@ -136,6 +143,7 @@ onMounted(loadDashboard);
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   </TechnicianLayout>

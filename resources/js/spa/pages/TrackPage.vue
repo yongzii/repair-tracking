@@ -74,64 +74,78 @@ const onSearch = () => {
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-50 py-10 px-4">
-    <div class="max-w-4xl mx-auto space-y-6">
-      <div class="card p-6">
-        <div class="flex items-center justify-between gap-4 mb-5">
-          <h1 class="text-2xl font-bold text-slate-900">Track Your Repair</h1>
-          <div class="flex flex-wrap gap-3">
-            <AppLink :to="consultationPath" class="text-slate-600 hover:text-slate-900 text-sm font-semibold">Free Consultation</AppLink>
-            <AppLink :to="bookingPath" class="text-slate-600 hover:text-slate-900 text-sm font-semibold">Book Drop-off</AppLink>
-            <AppLink to="/" class="text-slate-600 hover:text-slate-900 text-sm font-semibold">Back to Home</AppLink>
+  <div class="public-shell px-4 py-8">
+    <div class="mx-auto max-w-5xl space-y-6">
+      <div class="public-card overflow-hidden">
+        <div class="border-b border-slate-200 bg-slate-950 p-6 text-white sm:p-8">
+          <div class="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p class="text-xs font-bold uppercase text-teal-300">Customer repair tracking</p>
+              <h1 class="mt-3 font-display text-4xl leading-tight">Track Your Repair</h1>
+              <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+                Enter your shop code and job order number to view the latest repair status and service history.
+              </p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <AppLink :to="consultationPath" class="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/15">Consultation</AppLink>
+              <AppLink :to="bookingPath" class="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/15">Book Drop-off</AppLink>
+              <AppLink to="/" class="rounded-lg bg-white px-3 py-2 text-sm font-bold text-slate-950 hover:bg-slate-100">Home</AppLink>
+            </div>
           </div>
         </div>
 
-        <form class="flex flex-col sm:flex-row gap-3" @submit.prevent="onSearch">
+        <form class="grid gap-3 p-6 sm:grid-cols-[0.8fr_1.2fr_auto]" @submit.prevent="onSearch">
           <input
             v-model="shopSlug"
             type="text"
             placeholder="Shop code (recommended)"
-            class="sm:max-w-xs px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-500 focus:border-transparent"
+            class="w-full border border-slate-300 px-4 py-3"
           />
           <input
             v-model="jobOrderNumber"
             type="text"
             placeholder="Enter Job Order Number"
-            class="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-500 focus:border-transparent"
+            class="w-full border border-slate-300 px-4 py-3"
             required
           />
-          <button type="submit" class="bg-slate-900 hover:bg-slate-800 text-white font-semibold px-5 py-2 rounded-lg">
+          <button type="submit" class="btn-primary px-6 py-3">
             Search
           </button>
         </form>
       </div>
 
-      <div v-if="loading" class="card p-6 text-slate-600">Loading tracking details...</div>
-      <div v-if="errorMessage" class="card p-6 border border-rose-200 bg-rose-50 text-rose-700">{{ errorMessage }}</div>
-      <div v-if="shopOptions.length" class="card p-6">
-        <h3 class="text-lg font-semibold text-slate-900 mb-3">Choose Your Shop</h3>
+      <div v-if="loading" class="public-card p-6 text-slate-600">Loading tracking details...</div>
+      <div v-if="errorMessage" class="rounded-xl border border-rose-200 bg-rose-50 p-6 text-rose-700">{{ errorMessage }}</div>
+      <div v-if="shopOptions.length" class="public-card p-6">
+        <h3 class="text-lg font-bold text-slate-950 mb-3">Choose Your Shop</h3>
         <div class="space-y-3">
           <AppLink
             v-for="option in shopOptions"
             :key="option.slug"
             :to="`/shops/${option.slug}/track/${encodeURIComponent(jobOrderNumber.trim().toUpperCase())}`"
-            class="block rounded-lg border border-slate-200 px-4 py-3 hover:bg-slate-50"
+            class="block rounded-xl border border-slate-200 px-4 py-3 hover:border-teal-200 hover:bg-teal-50"
           >
-            <p class="font-semibold text-slate-900">{{ option.name }}</p>
+            <p class="font-bold text-slate-950">{{ option.name }}</p>
             <p class="text-sm text-slate-500">Shop code: {{ option.slug }}</p>
           </AppLink>
         </div>
       </div>
 
       <div v-if="jobOrder" class="space-y-6">
-        <div v-if="shop" class="card p-6">
-          <h2 class="text-xl font-bold text-slate-900 mb-2">{{ shop.name }}</h2>
+        <div v-if="shop" class="public-card p-6">
+          <h2 class="text-xl font-bold text-slate-950 mb-2">{{ shop.name }}</h2>
           <p v-if="shop.phone" class="text-sm text-slate-600">{{ shop.phone }}</p>
           <p v-if="shop.address" class="text-sm text-slate-500">{{ shop.address }}</p>
         </div>
 
-        <div class="card p-6">
-          <h2 class="text-xl font-bold text-slate-900 mb-4">{{ jobOrder.job_order_number }}</h2>
+        <div class="public-card p-6">
+          <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p class="text-xs font-bold uppercase text-slate-400">Job Order</p>
+              <h2 class="mt-1 text-2xl font-bold text-slate-950">{{ jobOrder.job_order_number }}</h2>
+            </div>
+            <span class="rounded-full bg-teal-50 px-3 py-1 text-xs font-bold text-teal-700 ring-1 ring-teal-200">{{ formatStatus(jobOrder.current_status) }}</span>
+          </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <div>
               <p class="text-slate-500">Customer</p>
@@ -152,11 +166,12 @@ const onSearch = () => {
           </div>
         </div>
 
-        <div class="card p-6">
-          <h3 class="text-lg font-bold text-slate-900 mb-4">Timeline</h3>
+        <div class="public-card p-6">
+          <h3 class="text-lg font-bold text-slate-950 mb-4">Timeline</h3>
           <div class="space-y-4">
-            <div v-for="entry in timeline" :key="entry.id || entry.created_at" class="border-b border-slate-100 pb-3 last:border-0 last:pb-0">
-              <p class="font-semibold text-slate-900">{{ formatStatus(entry.status) }}</p>
+            <div v-for="entry in timeline" :key="entry.id || entry.created_at" class="relative border-l-2 border-teal-200 pb-5 pl-5 last:pb-0">
+              <span class="absolute -left-[7px] top-1 h-3 w-3 rounded-full bg-teal-500 ring-4 ring-teal-50"></span>
+              <p class="font-bold text-slate-950">{{ formatStatus(entry.status) }}</p>
               <p class="text-sm text-slate-500">{{ entry.created_at_formatted }}</p>
               <p v-if="entry.note" class="text-sm text-slate-700 mt-1">{{ entry.note }}</p>
             </div>

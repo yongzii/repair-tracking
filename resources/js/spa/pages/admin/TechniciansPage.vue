@@ -78,26 +78,35 @@ onMounted(loadTechnicians);
     <div v-else-if="forbidden" class="card p-6 border border-rose-200 bg-rose-50 text-rose-700">You do not have access to this page.</div>
 
     <div v-else class="space-y-6">
-      <div class="card p-6">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-lg font-semibold text-slate-900">Add Technician</h3>
-          <AppLink to="/admin/technicians/create" class="text-slate-700 hover:text-slate-900 font-semibold">Open Full Form</AppLink>
+      <section class="admin-hero p-6">
+        <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p class="text-xs font-bold uppercase text-teal-300">Repair workforce</p>
+            <h3 class="mt-2 font-display text-3xl">Technicians</h3>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Manage technician profiles, specialties, and access to assigned repair jobs.</p>
+          </div>
+          <AppLink to="/admin/technicians/create" class="rounded-lg bg-white px-4 py-2 text-sm font-bold text-slate-950 hover:bg-slate-100">Open Full Form</AppLink>
         </div>
+      </section>
+
+      <div class="admin-panel p-6">
+        <h3 class="mb-4 text-lg font-bold text-slate-950">Add Technician</h3>
 
         <div v-if="errorMessage" class="mb-3 p-3 border border-rose-200 bg-rose-50 rounded text-rose-700">{{ errorMessage }}</div>
 
         <form class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="createTechnician">
-          <input v-model="form.name" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Name" required />
-          <input v-model="form.email" type="email" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Email" required />
-          <input v-model="form.phone" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Phone" />
-          <input v-model="form.specialties" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Specialties (comma separated)" />
-          <button type="submit" class="md:col-span-4 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Add Technician</button>
+          <input v-model="form.name" class="border border-slate-300 px-4 py-3" placeholder="Name" required />
+          <input v-model="form.email" type="email" class="border border-slate-300 px-4 py-3" placeholder="Email" required />
+          <input v-model="form.phone" class="border border-slate-300 px-4 py-3" placeholder="Phone" />
+          <input v-model="form.specialties" class="border border-slate-300 px-4 py-3" placeholder="Specialties (comma separated)" />
+          <button type="submit" class="btn-primary md:col-span-4 py-3">Add Technician</button>
         </form>
       </div>
 
-      <div class="card p-6">
-        <table class="w-full text-sm">
-          <thead class="bg-slate-100">
+      <div class="admin-panel overflow-hidden">
+        <div class="overflow-x-auto">
+        <table class="data-table">
+          <thead>
             <tr>
               <th class="px-4 py-3 text-left text-slate-600">Name</th>
               <th class="px-4 py-3 text-left text-slate-600">Email</th>
@@ -110,10 +119,12 @@ onMounted(loadTechnicians);
               <td class="px-4 py-3 text-slate-900 font-semibold">{{ tech.name }}</td>
               <td class="px-4 py-3 text-slate-700">{{ tech.email }}</td>
               <td class="px-4 py-3 text-slate-700">{{ tech.is_active ? 'Yes' : 'No' }}</td>
-              <td class="px-4 py-3 flex gap-3">
-                <AppLink :to="`/admin/technicians/${tech.id}`" class="text-slate-900 font-semibold">View</AppLink>
-                <AppLink :to="`/admin/technicians/${tech.id}/edit`" class="text-slate-700 font-semibold">Edit</AppLink>
-                <button type="button" class="text-rose-600 font-semibold" @click="deleteTechnician(tech.id)">Delete</button>
+              <td class="px-4 py-3">
+                <div class="flex gap-2">
+                  <AppLink :to="`/admin/technicians/${tech.id}`" class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">View</AppLink>
+                  <AppLink :to="`/admin/technicians/${tech.id}/edit`" class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Edit</AppLink>
+                  <button type="button" class="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" @click="deleteTechnician(tech.id)">Delete</button>
+                </div>
               </td>
             </tr>
             <tr v-if="!technicians.data.length">
@@ -121,6 +132,7 @@ onMounted(loadTechnicians);
             </tr>
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   </AdminLayout>
