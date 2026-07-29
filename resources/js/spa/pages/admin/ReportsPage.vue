@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import AdminLayout from '../../layouts/AdminLayout.vue';
 import { ensureAdmin } from '../../composables/auth';
 import { navigate } from '../../navigation';
@@ -7,16 +7,42 @@ import { navigate } from '../../navigation';
 const loading = ref(true);
 const forbidden = ref(false);
 const report = ref(null);
+const reportMode = ref('operations');
 
 const filters = reactive({
     start_date: '',
     end_date: '',
     status: '',
+    service_type: '',
+    service_category_id: '',
+    service_item_id: '',
+    payment_method: '',
+    payment_type: '',
+});
+
+const serviceCatalog = computed(() => report.value?.serviceCatalog || []);
+const serviceOptions = computed(() => {
+    const category = serviceCatalog.value.find((item) => String(item.id) === String(filters.service_category_id));
+    return category?.services || [];
 });
 
 const formatCurrency = (value) => {
     const amount = Number(value || 0);
     return `PHP ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
+const setReportMode = (mode) => {
+    reportMode.value = mode;
+
+    if (mode === 'operations') {
+        filters.payment_method = '';
+        filters.payment_type = '';
+    } else {
+        filters.status = '';
+        filters.service_type = '';
+        filters.service_category_id = '';
+        filters.service_item_id = '';
+    }
 };
 
 const loadReport = async () => {
@@ -42,14 +68,50 @@ const loadReport = async () => {
 };
 
 const downloadCsv = () => {
-    const query = new URLSearchParams(filters).toString();
+    const params = {
+        ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== '')),
+        report_type: reportMode.value,
+    };
+    const query = new URLSearchParams(params).toString();
     window.location.href = `/api/admin/reports/export/csv${query ? `?${query}` : ''}`;
 };
 
 const downloadPdf = () => {
-    const query = new URLSearchParams(filters).toString();
+    const params = {
+        ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== '')),
+        report_type: reportMode.value,
+    };
+    const query = new URLSearchParams(params).toString();
     window.location.href = `/api/admin/reports/export/pdf${query ? `?${query}` : ''}`;
 };
+
+const paymentStateClass = (state) => {
+    if (state === 'APPLIED') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
+    if (state === 'NEEDS_REVIEW') return 'bg-amber-50 text-amber-700 ring-amber-200';
+    return 'bg-slate-100 text-slate-700 ring-slate-200';
+};
+
+const formatStatus = (status) => {
+    if (status === 'PICKED_UP') return 'RELEASED';
+    if (status === 'UNREPAIRABLE') return 'RTO';
+    return status ? status.replaceAll('_', ' ') : '';
+};
+
+const formatServiceType = (serviceType) => {
+    if (serviceType === 'WARRANTY_SERVICE') return 'Under Warranty';
+    return 'Standard Repair';
+};
+
+watch(
+    () => filters.service_category_id,
+    () => {
+        if (!filters.service_item_id) return;
+        const stillAvailable = serviceOptions.value.some((service) => String(service.id) === String(filters.service_item_id));
+        if (!stillAvailable) {
+            filters.service_item_id = '';
+        }
+    }
+);
 
 onMounted(loadReport);
 </script>
@@ -65,7 +127,7 @@ onMounted(loadReport);
           <div>
             <p class="text-xs font-bold uppercase text-teal-300">Operational reporting</p>
             <h3 class="mt-2 font-display text-3xl">Reports and financial summaries</h3>
-            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Filter repair performance, revenue, receivables, and turnaround data for shop management.</p>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Switch between repair operations and payment collections, then export only the report you need.</p>
           </div>
           <div class="flex flex-wrap gap-3">
             <button type="button" class="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-400" @click="downloadCsv">Export CSV</button>
@@ -76,24 +138,89 @@ onMounted(loadReport);
 
       <div class="admin-panel p-6">
         <h3 class="text-lg font-bold text-slate-950 mb-4">Filters</h3>
-        <form class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="loadReport">
-          <input v-model="filters.start_date" type="date" class="border border-slate-300 px-4 py-3" />
-          <input v-model="filters.end_date" type="date" class="border border-slate-300 px-4 py-3" />
-          <select v-model="filters.status" class="border border-slate-300 px-4 py-3">
-            <option value="">All Statuses</option>
-            <option value="RECEIVED">RECEIVED</option>
-            <option value="DIAGNOSING">DIAGNOSING</option>
-            <option value="WAITING_PARTS">WAITING_PARTS</option>
-            <option value="IN_PROGRESS">IN_PROGRESS</option>
-            <option value="READY_FOR_PICKUP">READY_FOR_PICKUP</option>
-            <option value="PICKED_UP">PICKED_UP</option>
-            <option value="UNREPAIRABLE">UNREPAIRABLE</option>
-          </select>
-          <button type="submit" class="btn-primary py-3">Apply</button>
+        <div class="mb-5 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1">
+          <button
+            type="button"
+            class="rounded-md px-4 py-2 text-sm font-bold"
+            :class="reportMode === 'operations' ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-600 hover:text-slate-950'"
+            @click="setReportMode('operations')"
+          >
+            Operations
+          </button>
+          <button
+            type="button"
+            class="rounded-md px-4 py-2 text-sm font-bold"
+            :class="reportMode === 'payments' ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-600 hover:text-slate-950'"
+            @click="setReportMode('payments')"
+          >
+            Payments
+          </button>
+        </div>
+        <form class="space-y-5" @submit.prevent="loadReport">
+          <div>
+            <p class="mb-2 text-xs font-bold uppercase text-slate-400">Date Range</p>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <input v-model="filters.start_date" type="date" class="border border-slate-300 px-4 py-3" />
+              <input v-model="filters.end_date" type="date" class="border border-slate-300 px-4 py-3" />
+            </div>
+          </div>
+
+          <div v-if="reportMode === 'operations'">
+            <p class="mb-2 text-xs font-bold uppercase text-slate-400">Job Orders</p>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <select v-model="filters.status" class="border border-slate-300 px-4 py-3">
+                <option value="">All Statuses</option>
+                <option value="OPEN">OPEN / PENDING JOBS</option>
+                <option value="RECEIVED">RECEIVED</option>
+                <option value="DIAGNOSING">DIAGNOSING</option>
+                <option value="WAITING_PARTS">WAITING PARTS</option>
+                <option value="IN_PROGRESS">IN PROGRESS</option>
+                <option value="READY_FOR_PICKUP">READY FOR PICKUP</option>
+                <option value="PICKED_UP">RELEASED</option>
+                <option value="UNREPAIRABLE">RTO</option>
+              </select>
+              <select v-model="filters.service_type" class="border border-slate-300 px-4 py-3">
+                <option value="">All Service Types</option>
+                <option value="STANDARD">Standard Repair</option>
+                <option value="WARRANTY_SERVICE">Under Warranty</option>
+              </select>
+              <select v-model="filters.service_category_id" class="border border-slate-300 px-4 py-3">
+                <option value="">All Categories</option>
+                <option v-for="category in serviceCatalog" :key="category.id" :value="String(category.id)">{{ category.name }}</option>
+              </select>
+              <select v-model="filters.service_item_id" class="border border-slate-300 px-4 py-3" :disabled="!filters.service_category_id">
+                <option value="">All Services</option>
+                <option v-for="service in serviceOptions" :key="service.id" :value="String(service.id)">{{ service.name }}</option>
+              </select>
+            </div>
+          </div>
+
+          <div v-if="reportMode === 'payments'">
+            <p class="mb-2 text-xs font-bold uppercase text-slate-400">Payments</p>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <select v-model="filters.payment_method" class="border border-slate-300 px-4 py-3">
+                <option value="">All Payment Methods</option>
+                <option value="CASH">CASH</option>
+                <option value="GCASH">GCASH</option>
+                <option value="BANK_TRANSFER">BANK TRANSFER</option>
+                <option value="CARD">CARD</option>
+                <option value="OTHER">OTHER</option>
+              </select>
+              <select v-model="filters.payment_type" class="border border-slate-300 px-4 py-3">
+                <option value="">All Payment Types</option>
+                <option value="PARTIAL_PAYMENT">PARTIAL PAYMENT</option>
+                <option value="FINAL_PAYMENT">FINAL PAYMENT</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="flex justify-end">
+            <button type="submit" class="btn-primary px-5 py-3">Apply Filters</button>
+          </div>
         </form>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4" v-if="report">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4" v-if="report && reportMode === 'operations'">
         <div class="metric-card">
           <p class="text-slate-500 text-sm">This Month</p>
           <p class="text-3xl font-bold text-slate-900">{{ report.thisMonth }}</p>
@@ -108,7 +235,7 @@ onMounted(loadReport);
         </div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4" v-if="report">
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4" v-if="report && reportMode === 'payments'">
         <div class="metric-card">
           <p class="text-slate-500 text-sm">Total Revenue</p>
           <p class="text-2xl font-bold text-slate-900">{{ formatCurrency(report.totalRevenue) }}</p>
@@ -129,6 +256,285 @@ onMounted(loadReport);
           <p class="mt-1 text-xs text-slate-500">Margin: {{ report.grossProfitMargin }}%</p>
         </div>
       </div>
+
+      <section v-if="report && reportMode === 'operations'" class="admin-panel overflow-hidden">
+        <div class="border-b border-slate-200 p-5">
+          <h3 class="text-xl font-bold text-slate-950">Filtered Job Orders</h3>
+          <p class="mt-1 text-sm text-slate-500">
+            Detailed list based on the selected date and status filters. Use Export PDF to print this list.
+          </p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th class="px-4 py-3 text-left text-slate-600">Date</th>
+                <th class="px-4 py-3 text-left text-slate-600">Job Order</th>
+                <th class="px-4 py-3 text-left text-slate-600">Customer</th>
+                <th class="px-4 py-3 text-left text-slate-600">Device</th>
+                <th class="px-4 py-3 text-left text-slate-600">Service</th>
+                <th class="px-4 py-3 text-left text-slate-600">Status</th>
+                <th class="px-4 py-3 text-left text-slate-600">Service Type</th>
+                <th class="px-4 py-3 text-left text-slate-600">Technician</th>
+                <th class="px-4 py-3 text-left text-slate-600">Due</th>
+                <th class="px-4 py-3 text-left text-slate-600">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="job in report.filteredJobOrders" :key="job.id">
+                <td class="px-4 py-3 text-slate-700">{{ job.created_at_formatted }}</td>
+                <td class="px-4 py-3 font-semibold text-slate-900">{{ job.job_order_number }}</td>
+                <td class="px-4 py-3 text-slate-700">
+                  <p class="font-semibold text-slate-900">{{ job.customer_name }}</p>
+                  <p class="text-xs text-slate-500">{{ job.customer_phone || 'No phone' }}</p>
+                </td>
+                <td class="px-4 py-3 text-slate-700">{{ job.device_label }}</td>
+                <td class="px-4 py-3 text-slate-700">
+                  <p class="font-semibold text-slate-900">{{ job.service_category_name || job.device_type }}</p>
+                  <p class="text-xs text-slate-500">{{ job.service_item_name || 'Unspecified service' }}</p>
+                </td>
+                <td class="px-4 py-3 text-slate-700">{{ formatStatus(job.current_status) }}</td>
+                <td class="px-4 py-3">
+                  <span
+                    class="inline-flex rounded-full px-2 py-1 text-xs font-bold ring-1"
+                    :class="job.service_type === 'WARRANTY_SERVICE' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-slate-100 text-slate-700 ring-slate-200'"
+                  >
+                    {{ job.service_type_label || formatServiceType(job.service_type) }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-slate-700">{{ job.technician_name || 'Unassigned' }}</td>
+                <td class="px-4 py-3 text-slate-700">{{ job.estimated_completion_formatted || 'Not set' }}</td>
+                <td class="px-4 py-3">
+                  <p class="font-semibold text-slate-900">{{ formatCurrency(job.balance) }}</p>
+                  <p class="text-xs text-slate-500">Paid {{ formatCurrency(job.amount_paid) }} / {{ formatCurrency(job.total_cost) }}</p>
+                </td>
+              </tr>
+              <tr v-if="!report.filteredJobOrders.length">
+                <td colspan="10" class="px-4 py-8 text-center text-slate-500">No job orders match the selected filters.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section v-if="report && reportMode === 'operations'" class="grid grid-cols-1 gap-5 xl:grid-cols-2">
+        <div class="admin-panel overflow-hidden">
+          <div class="border-b border-slate-200 p-5">
+            <h3 class="text-lg font-bold text-slate-950">Top Services</h3>
+            <p class="mt-1 text-sm text-slate-500">Most requested services in the selected report range.</p>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="px-4 py-3 text-left text-slate-600">Category</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Service</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Jobs</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="service in report.topServices" :key="`${service.service_category_id}-${service.service_item_id}`">
+                  <td class="px-4 py-3 font-semibold text-slate-900">{{ service.service_category_name }}</td>
+                  <td class="px-4 py-3 text-slate-700">{{ service.service_item_name }}</td>
+                  <td class="px-4 py-3 font-bold text-slate-900">{{ service.total }}</td>
+                </tr>
+                <tr v-if="!report.topServices.length">
+                  <td colspan="3" class="px-4 py-8 text-center text-slate-500">No service data found.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="admin-panel overflow-hidden">
+          <div class="border-b border-slate-200 p-5">
+            <h3 class="text-lg font-bold text-slate-950">Service Category Breakdown</h3>
+            <p class="mt-1 text-sm text-slate-500">Job count grouped by device/service category.</p>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="px-4 py-3 text-left text-slate-600">Category</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Jobs</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="category in report.serviceCategoryBreakdown" :key="category.service_category_id || category.service_category_name">
+                  <td class="px-4 py-3 font-semibold text-slate-900">{{ category.service_category_name }}</td>
+                  <td class="px-4 py-3 font-bold text-slate-900">{{ category.total }}</td>
+                </tr>
+                <tr v-if="!report.serviceCategoryBreakdown.length">
+                  <td colspan="2" class="px-4 py-8 text-center text-slate-500">No category data found.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="report && reportMode === 'payments'" class="space-y-4">
+        <div>
+          <h3 class="text-xl font-bold text-slate-950">Payment Reports</h3>
+          <p class="mt-1 text-sm text-slate-500">Track collections by method, type, and partial-payment status for bookkeeping checks.</p>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <div class="metric-card">
+            <p class="text-slate-500 text-sm">Payments Recorded</p>
+            <p class="text-2xl font-bold text-slate-900">{{ formatCurrency(report.paymentSummary.total_amount) }}</p>
+            <p class="mt-1 text-xs text-slate-500">{{ report.paymentSummary.total_records }} record{{ report.paymentSummary.total_records === 1 ? '' : 's' }}</p>
+          </div>
+          <div class="metric-card">
+            <p class="text-slate-500 text-sm">Partial Payments</p>
+            <p class="text-2xl font-bold text-slate-900">{{ formatCurrency(report.paymentSummary.partial_payment_total) }}</p>
+          </div>
+          <div class="metric-card">
+            <p class="text-slate-500 text-sm">Held Partial Payments</p>
+            <p class="text-2xl font-bold text-amber-700">{{ formatCurrency(report.paymentSummary.held_partial_payments) }}</p>
+            <p class="mt-1 text-xs text-slate-500">Not released yet</p>
+          </div>
+          <div class="metric-card">
+            <p class="text-slate-500 text-sm">Applied / Review</p>
+            <p class="text-2xl font-bold text-emerald-700">{{ formatCurrency(report.paymentSummary.applied_partial_payments) }}</p>
+            <p class="mt-1 text-xs text-amber-700">Review: {{ formatCurrency(report.paymentSummary.review_partial_payments) }}</p>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+          <div class="admin-panel overflow-hidden">
+            <div class="border-b border-slate-200 p-5">
+              <h4 class="font-bold text-slate-950">Collections by Method</h4>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th class="px-4 py-3 text-left text-slate-600">Method</th>
+                    <th class="px-4 py-3 text-left text-slate-600">Records</th>
+                    <th class="px-4 py-3 text-left text-slate-600">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="method in report.paymentMethodBreakdown" :key="method.payment_method">
+                    <td class="px-4 py-3 font-semibold text-slate-900">{{ method.payment_method.replaceAll('_', ' ') }}</td>
+                    <td class="px-4 py-3 text-slate-700">{{ method.records }}</td>
+                    <td class="px-4 py-3 font-semibold text-slate-900">{{ formatCurrency(method.amount) }}</td>
+                  </tr>
+                  <tr v-if="!report.paymentMethodBreakdown.length">
+                    <td colspan="3" class="px-4 py-8 text-center text-slate-500">No payments found.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="admin-panel overflow-hidden">
+            <div class="border-b border-slate-200 p-5">
+              <h4 class="font-bold text-slate-950">Collections by Type</h4>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th class="px-4 py-3 text-left text-slate-600">Type</th>
+                    <th class="px-4 py-3 text-left text-slate-600">Records</th>
+                    <th class="px-4 py-3 text-left text-slate-600">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="type in report.paymentTypeBreakdown" :key="type.payment_type">
+                    <td class="px-4 py-3 font-semibold text-slate-900">{{ type.payment_type.replaceAll('_', ' ') }}</td>
+                    <td class="px-4 py-3 text-slate-700">{{ type.records }}</td>
+                    <td class="px-4 py-3 font-semibold text-slate-900">{{ formatCurrency(type.amount) }}</td>
+                  </tr>
+                  <tr v-if="!report.paymentTypeBreakdown.length">
+                    <td colspan="3" class="px-4 py-8 text-center text-slate-500">No payments found.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="admin-panel overflow-hidden">
+          <div class="border-b border-slate-200 p-5">
+            <h4 class="font-bold text-slate-950">Partial Payment Watchlist</h4>
+            <p class="mt-1 text-sm text-slate-500">Held means the unit is not yet released. Needs review means the job was marked RTO.</p>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="px-4 py-3 text-left text-slate-600">Date</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Job Order</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Customer</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Method</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Amount</th>
+                  <th class="px-4 py-3 text-left text-slate-600">State</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="payment in report.partialPaymentRecords" :key="payment.id">
+                  <td class="px-4 py-3 text-slate-700">{{ payment.received_at_formatted }}</td>
+                  <td class="px-4 py-3 font-semibold text-slate-900">{{ payment.job_order_number }}</td>
+                  <td class="px-4 py-3 text-slate-700">{{ payment.customer_name || 'N/A' }}</td>
+                  <td class="px-4 py-3 text-slate-700">{{ payment.payment_method.replaceAll('_', ' ') }}</td>
+                  <td class="px-4 py-3 font-semibold text-slate-900">{{ formatCurrency(payment.amount) }}</td>
+                  <td class="px-4 py-3">
+                    <span class="rounded-full px-3 py-1 text-xs font-bold ring-1" :class="paymentStateClass(payment.partial_payment_state)">
+                      {{ payment.partial_payment_state?.replaceAll('_', ' ') }}
+                    </span>
+                  </td>
+                </tr>
+                <tr v-if="!report.partialPaymentRecords.length">
+                  <td colspan="6" class="px-4 py-8 text-center text-slate-500">No partial payments found.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="admin-panel overflow-hidden">
+          <div class="border-b border-slate-200 p-5">
+            <h4 class="font-bold text-slate-950">Recent Payment Records</h4>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="px-4 py-3 text-left text-slate-600">Date</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Job Order</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Type</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Method</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Amount</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Reference / Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="payment in report.paymentRecords" :key="payment.id">
+                  <td class="px-4 py-3 text-slate-700">{{ payment.received_at_formatted }}</td>
+                  <td class="px-4 py-3">
+                    <p class="font-semibold text-slate-900">{{ payment.job_order_number }}</p>
+                    <p class="text-xs text-slate-500">{{ payment.customer_name || 'N/A' }}</p>
+                  </td>
+                  <td class="px-4 py-3 text-slate-700">{{ payment.payment_type.replaceAll('_', ' ') }}</td>
+                  <td class="px-4 py-3 text-slate-700">{{ payment.payment_method.replaceAll('_', ' ') }}</td>
+                  <td class="px-4 py-3 font-semibold text-slate-900">{{ formatCurrency(payment.amount) }}</td>
+                  <td class="px-4 py-3 text-slate-700">
+                    <p v-if="payment.reference_number">Ref: {{ payment.reference_number }}</p>
+                    <p v-if="payment.notes" class="text-xs text-slate-500">{{ payment.notes }}</p>
+                    <p v-if="payment.received_by" class="text-xs text-slate-500">Received by {{ payment.received_by }}</p>
+                  </td>
+                </tr>
+                <tr v-if="!report.paymentRecords.length">
+                  <td colspan="6" class="px-4 py-8 text-center text-slate-500">No payment records found.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </div>
   </AdminLayout>
 </template>

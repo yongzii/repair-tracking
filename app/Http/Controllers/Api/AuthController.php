@@ -146,6 +146,11 @@ class AuthController extends Controller
                 'id' => $user->shop->id,
                 'name' => $user->shop->name,
                 'slug' => $user->shop->slug,
+                'logo_url' => $user->shop->logoUrl(),
+                'access_until' => $user->shop->trial_ends_at,
+                'access_until_formatted' => $user->shop->trial_ends_at?->format('M d, Y'),
+                'has_active_access' => $user->shop->hasActiveAccess(),
+                'is_close_out_mode' => $user->shop->isInCloseOutMode(),
             ] : null,
         ];
     }

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref, watch } from 'vue';
 import AppLink from '../components/AppLink.vue';
 import { isCsrfMismatch, refreshCsrfToken } from '../composables/auth';
 
@@ -26,6 +26,8 @@ const lookupErrorMessage = ref('');
 const successMessage = ref('');
 const appointment = ref(null);
 const statusAppointment = ref(null);
+const shopProfile = ref(null);
+const shopProfileLoading = ref(false);
 const photoInput = ref(null);
 const consultationPhoto = ref(null);
 
@@ -35,6 +37,8 @@ const form = reactive({
     customer_phone: '',
     booking_type: defaultBookingType,
     device_type: '',
+    service_category_id: '',
+    service_item_id: '',
     brand: '',
     model: '',
     concern: '',
@@ -44,8 +48,68 @@ const statusForm = reactive({
     shop_slug: props.params.shopSlug || '',
     confirmation_code: '',
 });
+let shopProfileTimer = null;
+
+const businessDays = [
+    { key: 'monday', label: 'Mon' },
+    { key: 'tuesday', label: 'Tue' },
+    { key: 'wednesday', label: 'Wed' },
+    { key: 'thursday', label: 'Thu' },
+    { key: 'friday', label: 'Fri' },
+    { key: 'saturday', label: 'Sat' },
+    { key: 'sunday', label: 'Sun' },
+];
+const todayKey = computed(() => businessDays[(new Date().getDay() + 6) % 7].key);
 
 const formatStatus = (value) => (value ? value.replaceAll('_', ' ') : '');
+
+const formatTime = (value) => {
+    if (!value) return '';
+    const [hourValue, minute = '00'] = value.split(':');
+    const hour = Number(hourValue);
+    const suffix = hour >= 12 ? 'PM' : 'AM';
+    const displayHour = hour % 12 || 12;
+    return `${displayHour}:${minute} ${suffix}`;
+};
+
+const formatHours = (day) => {
+    if (!day?.open) return 'Closed';
+    return `${formatTime(day.open_time)} - ${formatTime(day.close_time)}`;
+};
+
+const shopHoursRows = computed(() => businessDays
+    .map((day) => ({
+        ...day,
+        details: shopProfile.value?.business_hours?.[day.key],
+    }))
+    .filter((day) => day.details));
+
+const todayHours = computed(() => {
+    const hours = shopProfile.value?.business_hours?.[todayKey.value];
+    return hours ? formatHours(hours) : '';
+});
+const selectedCategoryServices = computed(() => {
+    const category = shopProfile.value?.service_catalog?.find((item) => String(item.id) === String(form.service_category_id));
+    return category?.services || [];
+});
+
+const loadShopProfile = async (slug) => {
+    const normalizedShopSlug = slug.trim().toLowerCase();
+    shopProfile.value = null;
+
+    if (!normalizedShopSlug) return;
+
+    shopProfileLoading.value = true;
+
+    try {
+        const { data } = await window.axios.get(`/api/shops/${encodeURIComponent(normalizedShopSlug)}/profile`);
+        shopProfile.value = data.shop || null;
+    } catch {
+        shopProfile.value = null;
+    } finally {
+        shopProfileLoading.value = false;
+    }
+};
 
 const onPhotoChange = (event) => {
     consultationPhoto.value = event.target.files?.[0] || null;
@@ -99,6 +163,8 @@ const submitRequest = async () => {
             customer_phone: '',
             booking_type: defaultBookingType,
             device_type: '',
+            service_category_id: '',
+            service_item_id: '',
             brand: '',
             model: '',
             concern: '',
@@ -156,6 +222,24 @@ const lookupStatus = async () => {
         lookupLoading.value = false;
     }
 };
+
+watch(shopSlug, (value) => {
+    clearTimeout(shopProfileTimer);
+    shopProfileTimer = setTimeout(() => loadShopProfile(value), 350);
+});
+
+watch(
+    () => form.service_category_id,
+    (categoryId) => {
+        form.service_item_id = '';
+        const category = shopProfile.value?.service_catalog?.find((item) => String(item.id) === String(categoryId));
+        form.device_type = category?.name || '';
+    }
+);
+
+onMounted(() => {
+    loadShopProfile(shopSlug.value);
+});
 </script>
 
 <template>
@@ -211,8 +295,19 @@ const lookupStatus = async () => {
           </label>
 
           <label class="space-y-2">
-            <span class="text-sm font-bold text-slate-700">Device Type</span>
-            <input v-model="form.device_type" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="Laptop, phone, desktop..." required />
+            <span class="text-sm font-bold text-slate-700">Device Category</span>
+            <select v-model="form.service_category_id" class="w-full rounded-lg border border-slate-300 px-4 py-2" required :disabled="!shopProfile?.service_catalog?.length">
+              <option value="">Choose device category</option>
+              <option v-for="category in shopProfile?.service_catalog || []" :key="category.id" :value="category.id">{{ category.name }}</option>
+            </select>
+          </label>
+
+          <label class="space-y-2">
+            <span class="text-sm font-bold text-slate-700">Service Needed</span>
+            <select v-model="form.service_item_id" class="w-full rounded-lg border border-slate-300 px-4 py-2" :disabled="!form.service_category_id">
+              <option value="">Choose service</option>
+              <option v-for="service in selectedCategoryServices" :key="service.id" :value="service.id">{{ service.name }}</option>
+            </select>
           </label>
 
           <label class="space-y-2">
@@ -247,6 +342,32 @@ const lookupStatus = async () => {
             </button>
           </div>
         </form>
+      </div>
+
+      <div class="space-y-6">
+      <div class="public-card p-6">
+        <p class="text-xs font-bold uppercase text-teal-700">Shop schedule</p>
+        <h2 class="mt-2 text-lg font-bold text-slate-950">Business Hours</h2>
+        <div v-if="shopProfileLoading" class="mt-4 text-sm text-slate-500">Loading shop hours...</div>
+        <div v-else-if="shopProfile" class="mt-4">
+          <div class="flex items-center gap-3">
+            <div v-if="shopProfile.logo_url" class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+              <img :src="shopProfile.logo_url" alt="Shop logo" class="h-full w-full object-contain p-2" />
+            </div>
+            <div>
+              <p class="font-bold text-slate-950">{{ shopProfile.name }}</p>
+              <p v-if="todayHours" class="text-sm font-semibold text-teal-700">Today: {{ todayHours }}</p>
+            </div>
+          </div>
+          <p v-if="shopProfile.address" class="mt-3 text-sm text-slate-500">{{ shopProfile.address }}</p>
+          <div v-if="shopHoursRows.length" class="mt-4 grid grid-cols-2 gap-2 text-xs">
+            <div v-for="day in shopHoursRows" :key="day.key" class="rounded-lg bg-slate-50 px-3 py-2">
+              <p class="font-bold text-slate-700">{{ day.label }}</p>
+              <p class="mt-1 text-slate-500">{{ formatHours(day.details) }}</p>
+            </div>
+          </div>
+        </div>
+        <p v-else class="mt-4 text-sm text-slate-500">Enter a valid shop code to view the shop schedule.</p>
       </div>
 
       <div class="public-card p-6">
@@ -294,6 +415,7 @@ const lookupStatus = async () => {
             <p class="font-semibold text-slate-900">{{ statusAppointment.recommended_action_label }}</p>
           </div>
         </div>
+      </div>
       </div>
       </div>
     </div>

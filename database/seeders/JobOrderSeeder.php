@@ -27,6 +27,11 @@ class JobOrderSeeder extends Seeder
             'model' => 'Aspire 5',
             'serial_number' => 'SN123456',
             'problem_description' => 'Laptop not powering on, possible battery issue',
+            'included_accessories' => 'Charger',
+            'repair_approved_at' => now(),
+            'repair_approved_by_customer' => 'Juan Dela Cruz',
+            'repair_approval_recorded_by' => 'System Administrator',
+            'repair_approval_notes' => 'Approved during seed data setup.',
             'current_status' => 'IN_PROGRESS',
         ]);
 
@@ -70,6 +75,11 @@ class JobOrderSeeder extends Seeder
             'model' => 'Gaming PC',
             'serial_number' => 'SN789012',
             'problem_description' => 'Graphics card not detected',
+            'included_accessories' => 'Power cable',
+            'repair_approved_at' => now(),
+            'repair_approved_by_customer' => 'Maria Santos',
+            'repair_approval_recorded_by' => 'System Administrator',
+            'repair_approval_notes' => 'Approved during seed data setup.',
             'current_status' => 'READY_FOR_PICKUP',
         ]);
 

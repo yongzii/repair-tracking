@@ -1,11 +1,12 @@
 <script setup>
 import { computed } from 'vue';
-import { adminRoles, authState } from '../composables/auth';
+import { adminRoles, authState, platformRoles } from '../composables/auth';
 import AppLink from '../components/AppLink.vue';
 import { appConfig } from '../config';
 
-const canOpenPortal = computed(() => [...adminRoles, 'staff'].includes(authState.user?.role));
+const canOpenPortal = computed(() => [...platformRoles, ...adminRoles, 'staff'].includes(authState.user?.role));
 const technicianPortal = computed(() => authState.user?.role === 'technician');
+const portalPath = computed(() => authState.user?.role === 'platform_admin' ? '/platform' : '/admin');
 
 const platformStats = [
     { label: 'Repair queue', value: 'Organized', detail: 'Across intake, diagnosis, and pickup' },
@@ -58,7 +59,7 @@ const featureGroups = [
         </nav>
 
         <div class="flex items-center gap-2">
-          <AppLink v-if="canOpenPortal" to="/admin" class="rounded-lg bg-teal-600 px-4 py-2 text-sm font-bold text-white shadow-sm shadow-teal-700/20 hover:bg-teal-700">Dashboard</AppLink>
+          <AppLink v-if="canOpenPortal" :to="portalPath" class="rounded-lg bg-teal-600 px-4 py-2 text-sm font-bold text-white shadow-sm shadow-teal-700/20 hover:bg-teal-700">Dashboard</AppLink>
           <AppLink v-else-if="technicianPortal" to="/technician" class="rounded-lg bg-teal-600 px-4 py-2 text-sm font-bold text-white shadow-sm shadow-teal-700/20 hover:bg-teal-700">My Jobs</AppLink>
           <AppLink v-else to="/login" class="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white shadow-sm shadow-slate-900/20 hover:bg-slate-800">Login</AppLink>
         </div>

@@ -14,6 +14,8 @@ class Appointment extends Model
         'customer_phone',
         'booking_type',
         'device_type',
+        'service_category_id',
+        'service_item_id',
         'brand',
         'model',
         'concern',
@@ -44,5 +46,15 @@ class Appointment extends Model
     public function convertedJobOrder()
     {
         return $this->belongsTo(JobOrder::class, 'converted_job_order_id');
+    }
+
+    public function serviceCategory()
+    {
+        return $this->belongsTo(ServiceCategory::class);
+    }
+
+    public function serviceItem()
+    {
+        return $this->belongsTo(ServiceItem::class);
     }
 }

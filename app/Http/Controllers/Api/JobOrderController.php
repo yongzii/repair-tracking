@@ -4,18 +4,24 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\SendCustomerNotification;
+use App\Models\CustomerNotification;
 use App\Models\JobOrder;
 use App\Models\JobOrderPayment;
 use App\Models\JobOrderPart;
+use App\Models\RepairPhoto;
+use App\Models\ServiceCategory;
+use App\Models\ServiceItem;
 use App\Models\SparePart;
 use App\Models\StatusHistory;
 use App\Models\StockMovement;
 use App\Models\Technician;
 use App\Models\User;
+use App\Models\WarrantyAssessment;
 use App\Support\AuditLogger;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -30,7 +36,10 @@ class JobOrderController extends Controller
 
         $jobOrders = JobOrder::query()
             ->where('shop_id', $shopId)
-            ->with('technician:id,name');
+            ->with(['technician:id,name', 'warrantyParentJobOrder:id,job_order_number', 'serviceCategory:id,name', 'serviceItem:id,name'])
+            ->withExists([
+                'statusHistories as has_started_repair' => fn ($query) => $query->where('status', 'IN_PROGRESS'),
+            ]);
 
         if ($search = trim((string) $request->query('search', ''))) {
             $jobOrders->where(function ($query) use ($search) {
@@ -58,8 +67,28 @@ class JobOrderController extends Controller
             $jobOrders->where('payment_status', $paymentStatus);
         }
 
+        if ($serviceType = $request->query('service_type')) {
+            $jobOrders->where('service_type', $serviceType);
+        }
+
+        if ($serviceCategoryId = $request->query('service_category_id')) {
+            $jobOrders->where('service_category_id', $serviceCategoryId);
+        }
+
+        if ($serviceItemId = $request->query('service_item_id')) {
+            $jobOrders->where('service_item_id', $serviceItemId);
+        }
+
         if ($technicianId = $request->query('technician_id')) {
             $jobOrders->where('technician_id', $technicianId);
+        }
+
+        if ($receivedFrom = $request->date('received_from')) {
+            $jobOrders->whereDate('created_at', '>=', $receivedFrom);
+        }
+
+        if ($receivedTo = $request->date('received_to')) {
+            $jobOrders->whereDate('created_at', '<=', $receivedTo);
         }
 
         if ($request->boolean('overdue_only')) {
@@ -87,6 +116,9 @@ class JobOrderController extends Controller
 
         $jobOrders = JobOrder::onlyTrashed()
             ->where('shop_id', $shopId)
+            ->withExists([
+                'statusHistories as has_started_repair' => fn ($query) => $query->where('status', 'IN_PROGRESS'),
+            ])
             ->latest('deleted_at')
             ->paginate(15);
         $jobOrders->getCollection()->transform(fn (JobOrder $job) => $this->mapJobOrderSummary($job));
@@ -114,49 +146,60 @@ class JobOrderController extends Controller
             ],
             'priorities' => ['STANDARD', 'EXPRESS', 'EMERGENCY'],
             'paymentStatuses' => ['PENDING', 'PARTIAL', 'PAID'],
+            'serviceTypes' => [
+                'STANDARD',
+                'WARRANTY_SERVICE',
+            ],
+            'serviceCatalog' => $this->activeServiceCatalog($shopId),
         ]);
     }
 
     public function store(Request $request)
     {
         $this->authorizeStaffOrAdmin($request);
+        $this->ensureShopCanStartNewWork($request);
         $shopId = $this->currentShopId($request);
 
         $validated = $request->validate([
             'customer_name' => 'required|string|max:100',
-            'customer_email' => 'nullable|email|max:150|required_without:customer_phone',
-            'customer_phone' => 'nullable|string|max:30|required_without:customer_email',
+            'customer_email' => 'nullable|email|max:150',
+            'customer_phone' => 'required|string|max:30',
             'device_type' => 'required|string|max:50',
+            'service_category_id' => ['nullable', 'integer'],
+            'service_item_id' => ['nullable', 'integer'],
             'brand' => 'nullable|string|max:50',
             'model' => 'nullable|string|max:50',
             'serial_number' => 'nullable|string|max:100',
             'problem_description' => 'required|string',
+            'included_accessories' => 'nullable|string|max:1000',
             'priority' => 'nullable|in:STANDARD,EXPRESS,EMERGENCY',
             'estimated_cost' => 'nullable|numeric|min:0',
+            'partial_payment' => 'nullable|numeric|min:0',
             'down_payment' => 'nullable|numeric|min:0',
-            'warranty_days' => 'nullable|integer|min:0',
             'estimated_completion' => 'nullable|date',
             'technician_id' => [
                 'nullable',
                 Rule::exists('technicians', 'id')->where(fn ($query) => $query->where('shop_id', $shopId)),
             ],
         ]);
+        $validated = $this->normalizeServiceSelection($shopId, $validated);
 
         $estimatedCost = (float) ($validated['estimated_cost'] ?? 0);
-        $downPayment = (float) ($validated['down_payment'] ?? 0);
+        $partialPayment = (float) ($validated['partial_payment'] ?? $validated['down_payment'] ?? 0);
 
-        if ($downPayment > 0 && $estimatedCost <= 0) {
+        if ($partialPayment > 0 && $estimatedCost <= 0) {
             throw ValidationException::withMessages([
-                'estimated_cost' => 'Estimated cost is required when down payment is entered.',
+                'estimated_cost' => 'Estimated cost is required when initial payment is entered.',
             ]);
         }
 
-        if ($estimatedCost > 0 && $downPayment > $estimatedCost) {
+        if ($estimatedCost > 0 && $partialPayment > $estimatedCost) {
             throw ValidationException::withMessages([
-                'down_payment' => 'Down payment cannot be greater than estimated cost.',
+                'partial_payment' => 'Initial partial payment cannot be greater than estimated cost.',
             ]);
         }
 
+        unset($validated['partial_payment']);
         unset($validated['down_payment']);
 
         if ($duplicate = $this->findRecentDuplicate($shopId, $validated)) {
@@ -172,33 +215,34 @@ class JobOrderController extends Controller
 
         $jobOrderNumber = $this->generateJobOrderNumber();
 
-        $jobOrder = DB::transaction(function () use ($validated, $jobOrderNumber, $downPayment, $estimatedCost, $request, $shopId) {
+        $jobOrder = DB::transaction(function () use ($validated, $jobOrderNumber, $partialPayment, $estimatedCost, $request, $shopId) {
             $jobOrder = JobOrder::create([
                 ...$validated,
                 'shop_id' => $shopId,
                 'job_order_number' => $jobOrderNumber,
+                'received_by' => $request->user()?->name,
                 'current_status' => 'RECEIVED',
                 'priority' => $validated['priority'] ?? 'STANDARD',
-                'warranty_days' => $validated['warranty_days'] ?? ($request->user()?->shop?->default_warranty_days ?? 30),
-                'payment_status' => $downPayment > 0
-                    ? ($downPayment >= $estimatedCost ? 'PAID' : 'PARTIAL')
+                'warranty_days' => 0,
+                'payment_status' => $partialPayment > 0
+                    ? ($partialPayment >= $estimatedCost ? 'PAID' : 'PARTIAL')
                     : 'PENDING',
                 'parts_cost' => 0,
                 'labor_cost' => 0,
                 'total_cost' => $estimatedCost,
-                'amount_paid' => $downPayment,
-                'payment_date' => $downPayment > 0 ? now() : null,
-                'payment_notes' => $downPayment > 0 ? 'Initial down payment upon intake.' : null,
+                'amount_paid' => $partialPayment,
+                'payment_date' => $partialPayment > 0 ? now() : null,
+                'payment_notes' => $partialPayment > 0 ? 'Initial partial payment upon intake.' : null,
             ]);
 
-            if ($downPayment > 0) {
+            if ($partialPayment > 0) {
                 JobOrderPayment::create([
                     'shop_id' => $shopId,
                     'job_order_id' => $jobOrder->id,
-                    'amount' => $downPayment,
-                    'payment_type' => 'DOWN_PAYMENT',
+                    'amount' => $partialPayment,
+                    'payment_type' => 'PARTIAL_PAYMENT',
                     'payment_method' => 'CASH',
-                    'notes' => 'Initial down payment upon intake.',
+                    'notes' => 'Initial partial payment upon intake.',
                     'received_at' => now(),
                     'received_by' => $request->user()?->name,
                 ]);
@@ -227,6 +271,8 @@ class JobOrderController extends Controller
                 'job_order_number',
                 'customer_name',
                 'device_type',
+                'service_category_id',
+                'service_item_id',
                 'brand',
                 'model',
                 'current_status',
@@ -249,7 +295,7 @@ class JobOrderController extends Controller
         $this->authorizeStaffOrAdmin($request);
         $this->ensureSameShop($request, $jobOrder);
 
-        $jobOrder->load(['technician', 'statusHistories', 'parts', 'payments']);
+        $jobOrder->load(['technician', 'statusHistories', 'parts', 'payments', 'repairPhotos', 'warrantyAssessments.warrantyJobOrder']);
 
         return response()->json([
             'jobOrder' => $jobOrder,
@@ -263,6 +309,20 @@ class JobOrderController extends Controller
                 ->latest('id')
                 ->get()
                 ->map(fn (JobOrderPayment $payment) => $this->mapPayment($payment)),
+            'photos' => $jobOrder->repairPhotos()
+                ->latest()
+                ->get()
+                ->map(fn (RepairPhoto $photo) => $this->mapPhoto($photo)),
+            'notifications' => $jobOrder->customerNotifications()
+                ->latest()
+                ->limit(25)
+                ->get()
+                ->map(fn (CustomerNotification $notification) => $this->mapNotification($notification)),
+            'warrantyAssessments' => $jobOrder->warrantyAssessments()
+                ->with('warrantyJobOrder:id,job_order_number,current_status')
+                ->latest()
+                ->get()
+                ->map(fn (WarrantyAssessment $assessment) => $this->mapWarrantyAssessment($assessment)),
         ]);
     }
 
@@ -276,13 +336,16 @@ class JobOrderController extends Controller
         $trackUrl = $jobOrder->shop?->slug
             ? url('/shops/' . $jobOrder->shop->slug . '/track/' . $jobOrder->job_order_number)
             : url('/track/' . $jobOrder->job_order_number);
-        $downPayment = (float) $jobOrder->payments()
-            ->where('payment_type', 'DOWN_PAYMENT')
+        $partialPayment = (float) $jobOrder->payments()
+            ->whereIn('payment_type', ['DOWN_PAYMENT', 'PARTIAL_PAYMENT'])
             ->sum('amount');
 
-        if ($downPayment <= 0 && (float) $jobOrder->amount_paid > 0 && (float) $jobOrder->estimated_cost > 0) {
-            $downPayment = min((float) $jobOrder->amount_paid, (float) $jobOrder->estimated_cost);
+        if ($partialPayment <= 0 && (float) $jobOrder->amount_paid > 0 && (float) $jobOrder->estimated_cost > 0) {
+            $partialPayment = min((float) $jobOrder->amount_paid, (float) $jobOrder->estimated_cost);
         }
+
+        $isWarrantyService = ($jobOrder->service_type ?? 'STANDARD') === 'WARRANTY_SERVICE';
+        $documentPrefix = $isWarrantyService ? 'WS-' : 'INV-';
 
         return response()->json([
             'shop' => [
@@ -291,9 +354,18 @@ class JobOrderController extends Controller
                 'slug' => $jobOrder->shop?->slug,
                 'phone' => $jobOrder->shop?->phone,
                 'address' => $jobOrder->shop?->address,
+                'business_hours' => $jobOrder->shop?->business_hours,
+                'logo_url' => $jobOrder->shop?->logoUrl(),
+            ],
+            'document' => [
+                'type' => $isWarrantyService ? 'service_summary' : 'invoice',
+                'title' => $isWarrantyService ? 'Service Summary' : 'Invoice',
+                'eyebrow' => $isWarrantyService ? 'Under Warranty Service' : 'Invoice',
+                'print_label' => $isWarrantyService ? 'Print Service Summary' : 'Print Invoice',
+                'is_warranty_service' => $isWarrantyService,
             ],
             'invoice' => [
-                'invoice_number' => 'INV-' . str_pad((string) $jobOrder->id, 6, '0', STR_PAD_LEFT),
+                'invoice_number' => $documentPrefix . str_pad((string) $jobOrder->id, 6, '0', STR_PAD_LEFT),
                 'issued_at' => now()->toIso8601String(),
                 'issued_at_formatted' => now()->format('M d, Y h:i A'),
                 'track_url' => $trackUrl,
@@ -316,8 +388,9 @@ class JobOrderController extends Controller
             ],
             'costs' => [
                 'estimated_cost' => $jobOrder->estimated_cost,
-                'down_payment' => $downPayment,
-                'estimated_balance' => max((float) $jobOrder->estimated_cost - $downPayment, 0),
+                'partial_payment' => $partialPayment,
+                'down_payment' => $partialPayment,
+                'estimated_balance' => max((float) $jobOrder->estimated_cost - $partialPayment, 0),
                 'parts_cost' => $jobOrder->parts_cost,
                 'labor_cost' => $jobOrder->labor_cost,
                 'total_cost' => $jobOrder->total_cost,
@@ -335,6 +408,16 @@ class JobOrderController extends Controller
         ]);
     }
 
+    public function printData(Request $request, JobOrder $jobOrder)
+    {
+        $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        $jobOrder->load(['technician', 'parts', 'payments']);
+
+        return response()->json($this->buildPrintableData($jobOrder));
+    }
+
     public function update(Request $request, JobOrder $jobOrder)
     {
         $this->authorizeStaffOrAdmin($request);
@@ -345,10 +428,13 @@ class JobOrderController extends Controller
             'customer_email',
             'customer_phone',
             'device_type',
+            'service_category_id',
+            'service_item_id',
             'brand',
             'model',
             'serial_number',
             'problem_description',
+            'included_accessories',
             'priority',
             'warranty_days',
             'estimated_completion',
@@ -357,13 +443,16 @@ class JobOrderController extends Controller
 
         $validated = $request->validate([
             'customer_name' => 'required|string|max:100',
-            'customer_email' => 'nullable|email|max:150|required_without:customer_phone',
-            'customer_phone' => 'nullable|string|max:30|required_without:customer_email',
+            'customer_email' => 'nullable|email|max:150',
+            'customer_phone' => 'required|string|max:30',
             'device_type' => 'required|string|max:50',
+            'service_category_id' => ['nullable', 'integer'],
+            'service_item_id' => ['nullable', 'integer'],
             'brand' => 'nullable|string|max:50',
             'model' => 'nullable|string|max:50',
             'serial_number' => 'nullable|string|max:100',
             'problem_description' => 'required|string',
+            'included_accessories' => 'nullable|string|max:1000',
             'priority' => 'nullable|in:STANDARD,EXPRESS,EMERGENCY',
             'warranty_days' => 'nullable|integer|min:0',
             'estimated_completion' => 'nullable|date',
@@ -372,6 +461,7 @@ class JobOrderController extends Controller
                 Rule::exists('technicians', 'id')->where(fn ($query) => $query->where('shop_id', $shopId)),
             ],
         ]);
+        $validated = $this->normalizeServiceSelection($shopId, $validated);
 
         $jobOrder->update($validated);
 
@@ -392,10 +482,447 @@ class JobOrderController extends Controller
         ]);
     }
 
+    public function updateWarranty(Request $request, JobOrder $jobOrder)
+    {
+        $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+        $before = $jobOrder->only(['warranty_days', 'warranty_details', 'service_performed']);
+
+        $validated = $request->validate([
+            'warranty_days' => 'required|integer|min:0|max:3650',
+            'warranty_details' => 'nullable|string|max:2000',
+            'service_performed' => 'nullable|string|max:2000',
+        ]);
+
+        $jobOrder->update($validated);
+
+        AuditLogger::log(
+            request: $request,
+            user: $request->user(),
+            action: 'job_order.warranty_updated',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: "Updated warranty details for {$jobOrder->job_order_number}.",
+            oldValues: $before,
+            newValues: $jobOrder->fresh()->only(['warranty_days', 'warranty_details', 'service_performed'])
+        );
+
+        return response()->json([
+            'message' => 'Warranty details updated.',
+            'jobOrder' => $jobOrder->fresh(),
+        ]);
+    }
+
+    public function recordWarrantyAssessment(Request $request, JobOrder $jobOrder)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        $validated = $request->validate([
+            'reported_issue' => ['required', 'string', 'max:2000'],
+            'brought_at' => ['nullable', 'date'],
+            'checked_by' => ['nullable', 'string', 'max:100'],
+            'result' => ['required', Rule::in(WarrantyAssessment::results())],
+            'assessment_notes' => ['nullable', 'string', 'max:3000'],
+        ]);
+
+        $assessment = DB::transaction(function () use ($validated, $jobOrder, $request, $user) {
+            $warrantyJobOrder = null;
+
+            if ($validated['result'] === WarrantyAssessment::RESULT_COVERED) {
+                $this->assertCanIssueWarrantyService($jobOrder);
+                $this->assertNoActiveWarrantyService($jobOrder);
+
+                $warrantyJobOrder = JobOrder::create([
+                    'shop_id' => $jobOrder->shop_id,
+                    'job_order_number' => $this->generateJobOrderNumber('WTY'),
+                    'service_type' => 'WARRANTY_SERVICE',
+                    'warranty_parent_job_order_id' => $jobOrder->id,
+                    'customer_name' => $jobOrder->customer_name,
+                    'customer_contact' => $jobOrder->customer_contact,
+                    'customer_email' => $jobOrder->customer_email,
+                    'customer_phone' => $jobOrder->customer_phone,
+                    'device_type' => $jobOrder->device_type,
+                    'service_category_id' => $jobOrder->service_category_id,
+                    'service_item_id' => $jobOrder->service_item_id,
+                    'brand' => $jobOrder->brand,
+                    'model' => $jobOrder->model,
+                    'serial_number' => $jobOrder->serial_number,
+                    'problem_description' => $validated['reported_issue'],
+                    'received_by' => $request->user()?->name,
+                    'included_accessories' => $jobOrder->included_accessories,
+                    'current_status' => 'RECEIVED',
+                    'priority' => 'STANDARD',
+                    'estimated_cost' => 0,
+                    'parts_cost' => 0,
+                    'labor_cost' => 0,
+                    'total_cost' => 0,
+                    'amount_paid' => 0,
+                    'payment_status' => 'PAID',
+                    'warranty_days' => 0,
+                    'internal_notes' => "Warranty service linked to {$jobOrder->job_order_number}.",
+                ]);
+
+                StatusHistory::create([
+                    'shop_id' => $jobOrder->shop_id,
+                    'job_order_id' => $warrantyJobOrder->id,
+                    'status' => 'RECEIVED',
+                    'note' => "Warranty service created from {$jobOrder->job_order_number}.",
+                ]);
+            }
+
+            $assessment = WarrantyAssessment::create([
+                'shop_id' => $jobOrder->shop_id,
+                'job_order_id' => $jobOrder->id,
+                'warranty_job_order_id' => $warrantyJobOrder?->id,
+                'reported_issue' => $validated['reported_issue'],
+                'brought_at' => $validated['brought_at'] ?? now(),
+                'checked_by' => $validated['checked_by'] ?? null,
+                'result' => $validated['result'],
+                'assessment_notes' => $validated['assessment_notes'] ?? null,
+                'created_by' => $user->name,
+            ]);
+
+            StatusHistory::create([
+                'shop_id' => $jobOrder->shop_id,
+                'job_order_id' => $jobOrder->id,
+                'status' => $jobOrder->current_status,
+                'note' => 'Warranty assessment recorded: ' . str_replace('_', ' ', $assessment->result) . '.',
+            ]);
+
+            return $assessment;
+        });
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'job_order.warranty_assessed',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: "Recorded warranty assessment for {$jobOrder->job_order_number}.",
+            newValues: $assessment->fresh()->only([
+                'reported_issue',
+                'result',
+                'checked_by',
+                'warranty_job_order_id',
+            ])
+        );
+
+        return response()->json([
+            'message' => $assessment->result === WarrantyAssessment::RESULT_COVERED
+                ? 'Warranty assessment recorded and warranty service job created.'
+                : 'Warranty assessment recorded.',
+            'assessment' => $this->mapWarrantyAssessment($assessment->fresh()->load('warrantyJobOrder:id,job_order_number,current_status')),
+        ], 201);
+    }
+
+    public function issueWarrantyService(Request $request, JobOrder $jobOrder)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        if (($jobOrder->service_type ?? 'STANDARD') === 'WARRANTY_SERVICE') {
+            throw ValidationException::withMessages([
+                'warranty_service' => 'This job order is already a warranty service job.',
+            ]);
+        }
+
+        $this->assertCanIssueWarrantyService($jobOrder);
+        $this->assertNoActiveWarrantyService($jobOrder);
+
+        $reportedIssue = "Warranty service for {$jobOrder->job_order_number}: {$jobOrder->problem_description}";
+
+        $assessment = DB::transaction(function () use ($jobOrder, $request, $user, $reportedIssue) {
+            return $this->createCoveredWarrantyService(
+                jobOrder: $jobOrder,
+                request: $request,
+                user: $user,
+                reportedIssue: $reportedIssue,
+                checkedBy: $request->user()?->name
+            );
+        });
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'job_order.warranty_service_issued',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: "Issued warranty service for {$jobOrder->job_order_number}.",
+            newValues: $assessment->fresh()->only([
+                'reported_issue',
+                'result',
+                'checked_by',
+                'warranty_job_order_id',
+            ])
+        );
+
+        $assessment = $assessment->fresh()->load('warrantyJobOrder:id,job_order_number,current_status');
+
+        return response()->json([
+            'message' => 'Warranty service job created.',
+            'assessment' => $this->mapWarrantyAssessment($assessment),
+            'warrantyJobOrder' => [
+                'id' => $assessment->warrantyJobOrder->id,
+                'job_order_number' => $assessment->warrantyJobOrder->job_order_number,
+                'current_status' => $assessment->warrantyJobOrder->current_status,
+            ],
+        ], 201);
+    }
+
+    public function cancelWarrantyService(Request $request, JobOrder $jobOrder)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        if (($jobOrder->service_type ?? 'STANDARD') !== 'WARRANTY_SERVICE') {
+            throw ValidationException::withMessages([
+                'warranty_service' => 'Only under warranty service jobs can be canceled here.',
+            ]);
+        }
+
+        if ($jobOrder->current_status !== 'RECEIVED' || $jobOrder->picked_up_at) {
+            throw ValidationException::withMessages([
+                'warranty_service' => 'Only newly issued warranty service jobs can be canceled. Use RTO/release once work has started.',
+            ]);
+        }
+
+        $parentJobOrder = $jobOrder->warrantyParentJobOrder;
+        $jobOrderNumber = $jobOrder->job_order_number;
+        $before = $jobOrder->only(['job_order_number', 'customer_name', 'current_status', 'service_type', 'warranty_parent_job_order_id']);
+
+        DB::transaction(function () use ($jobOrder) {
+            WarrantyAssessment::query()
+                ->where('warranty_job_order_id', $jobOrder->id)
+                ->delete();
+
+            $jobOrder->delete();
+        });
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'job_order.warranty_service_canceled',
+            module: 'job_orders',
+            description: "Canceled warranty service {$jobOrderNumber}.",
+            oldValues: $before
+        );
+
+        return response()->json([
+            'message' => "Warranty service {$jobOrderNumber} canceled.",
+            'parentJobOrder' => $parentJobOrder ? [
+                'id' => $parentJobOrder->id,
+                'job_order_number' => $parentJobOrder->job_order_number,
+            ] : null,
+        ]);
+    }
+
+    public function recordRepairApproval(Request $request, JobOrder $jobOrder)
+    {
+        $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+        $before = $jobOrder->only([
+            'repair_approved_at',
+            'repair_approved_by_customer',
+            'repair_approval_recorded_by',
+            'repair_approval_notes',
+        ]);
+
+        $validated = $request->validate([
+            'repair_approved_by_customer' => 'required|string|max:100',
+            'repair_approval_notes' => 'nullable|string|max:2000',
+        ]);
+
+        $jobOrder->update([
+            'repair_approved_at' => now(),
+            'repair_approved_by_customer' => $validated['repair_approved_by_customer'],
+            'repair_approval_recorded_by' => $request->user()?->name,
+            'repair_approval_notes' => $validated['repair_approval_notes'] ?? null,
+        ]);
+
+        AuditLogger::log(
+            request: $request,
+            user: $request->user(),
+            action: 'job_order.repair_approved',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: "Recorded customer repair approval for {$jobOrder->job_order_number}.",
+            oldValues: $before,
+            newValues: $jobOrder->fresh()->only(array_keys($before))
+        );
+
+        return response()->json([
+            'message' => 'Customer repair approval recorded.',
+            'jobOrder' => $jobOrder->fresh(),
+        ]);
+    }
+
+    public function storePhoto(Request $request, JobOrder $jobOrder)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        $validated = $request->validate([
+            'photo' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'photo_type' => ['required', Rule::in(RepairPhoto::types())],
+            'description' => ['nullable', 'string', 'max:1000'],
+            'visible_to_customer' => ['nullable', 'boolean'],
+        ]);
+
+        $file = $validated['photo'];
+        $path = $file->store("repair-photos/{$jobOrder->shop_id}/{$jobOrder->id}", 'public');
+
+        $photo = RepairPhoto::create([
+            'shop_id' => $jobOrder->shop_id,
+            'job_order_id' => $jobOrder->id,
+            'photo_type' => $validated['photo_type'],
+            'photo_path' => $path,
+            'original_name' => $file->getClientOriginalName(),
+            'mime_type' => $file->getClientMimeType(),
+            'file_size' => $file->getSize(),
+            'description' => $validated['description'] ?? null,
+            'visible_to_customer' => $request->boolean('visible_to_customer'),
+            'uploaded_by' => $user->name,
+            'uploaded_by_role' => $user->role,
+        ]);
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'job_order.photo_uploaded',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: "Uploaded {$photo->photo_type} photo for {$jobOrder->job_order_number}.",
+            newValues: $photo->only(['photo_type', 'original_name', 'description', 'uploaded_by'])
+        );
+
+        return response()->json([
+            'message' => 'Photo uploaded successfully.',
+            'photo' => $this->mapPhoto($photo),
+        ], 201);
+    }
+
+    public function updatePhotoVisibility(Request $request, JobOrder $jobOrder, RepairPhoto $photo)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        if ((int) $photo->job_order_id !== (int) $jobOrder->id || (int) $photo->shop_id !== (int) $jobOrder->shop_id) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $validated = $request->validate([
+            'visible_to_customer' => ['required', 'boolean'],
+        ]);
+
+        $before = $photo->only(['visible_to_customer']);
+        $photo->update([
+            'visible_to_customer' => $validated['visible_to_customer'],
+        ]);
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'job_order.photo_visibility_updated',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: ($photo->visible_to_customer ? 'Published' : 'Hid') . " photo from customer tracking for {$jobOrder->job_order_number}.",
+            oldValues: $before,
+            newValues: $photo->fresh()->only(['visible_to_customer'])
+        );
+
+        return response()->json([
+            'message' => $photo->visible_to_customer ? 'Photo is now visible to customer.' : 'Photo is now internal only.',
+            'photo' => $this->mapPhoto($photo->fresh()),
+        ]);
+    }
+
+    public function deletePhoto(Request $request, JobOrder $jobOrder, RepairPhoto $photo)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        if ((int) $photo->job_order_id !== (int) $jobOrder->id || (int) $photo->shop_id !== (int) $jobOrder->shop_id) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $before = $photo->only(['photo_type', 'photo_path', 'original_name', 'description', 'uploaded_by']);
+
+        Storage::disk('public')->delete($photo->photo_path);
+        $photo->delete();
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'job_order.photo_deleted',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: "Deleted {$before['photo_type']} photo from {$jobOrder->job_order_number}.",
+            oldValues: $before
+        );
+
+        return response()->json([
+            'message' => 'Photo deleted.',
+        ]);
+    }
+
+    public function retryNotification(Request $request, JobOrder $jobOrder, CustomerNotification $notification)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        if ((int) $notification->job_order_id !== (int) $jobOrder->id || (int) $notification->shop_id !== (int) $jobOrder->shop_id) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        if ($notification->status !== CustomerNotification::STATUS_FAILED) {
+            throw ValidationException::withMessages([
+                'notification' => 'Only failed notifications can be retried.',
+            ]);
+        }
+
+        $notification->update([
+            'status' => CustomerNotification::STATUS_QUEUED,
+            'queued_at' => now(),
+            'sent_at' => null,
+            'failed_at' => null,
+            'error_message' => null,
+        ]);
+
+        SendCustomerNotification::dispatch(
+            null,
+            null,
+            $notification->subject ?? "{$jobOrder->job_order_number} update",
+            $notification->message,
+            $notification->id
+        );
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'job_order.notification_retried',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: "Retried {$notification->channel} notification for {$jobOrder->job_order_number}.",
+            newValues: $notification->fresh()->only(['channel', 'recipient', 'status', 'trigger'])
+        );
+
+        return response()->json([
+            'message' => 'Notification queued for retry.',
+            'notification' => $this->mapNotification($notification->fresh()),
+        ]);
+    }
+
     public function destroy(Request $request, JobOrder $jobOrder)
     {
         $this->authorizeAdmin($request);
         $this->ensureSameShop($request, $jobOrder);
+
+        if ($jobOrder->repairHasStarted()) {
+            throw ValidationException::withMessages([
+                'job_order' => 'This job order cannot be deleted because the approved repair has already started.',
+            ]);
+        }
 
         $jobOrderNumber = $jobOrder->job_order_number;
         $before = $jobOrder->only(['job_order_number', 'customer_name', 'current_status', 'payment_status', 'amount_paid', 'total_cost']);
@@ -423,6 +950,13 @@ class JobOrderController extends Controller
         $jobOrder = JobOrder::onlyTrashed()
             ->where('shop_id', $shopId)
             ->findOrFail($jobOrderId);
+
+        if ($jobOrder->repairHasStarted()) {
+            throw ValidationException::withMessages([
+                'job_order' => 'This job order cannot be permanently deleted because the approved repair has already started.',
+            ]);
+        }
+
         $jobOrderNumber = $jobOrder->job_order_number;
         $jobOrder->restore();
 
@@ -485,6 +1019,12 @@ class JobOrderController extends Controller
             ]);
         }
 
+        if (in_array($validated['status'], ['IN_PROGRESS', 'READY_FOR_PICKUP'], true) && !$jobOrder->repair_approved_at) {
+            throw ValidationException::withMessages([
+                'status' => 'Customer repair approval must be recorded before repair work or pickup preparation can proceed.',
+            ]);
+        }
+
         $jobOrder->update(['current_status' => $validated['status']]);
 
         StatusHistory::create([
@@ -515,16 +1055,42 @@ class JobOrderController extends Controller
 
     public function markPickedUp(Request $request, JobOrder $jobOrder)
     {
-        $this->authorizeStaffOrAdmin($request);
+        $user = $this->authorizeStaffOrAdmin($request);
         $this->ensureSameShop($request, $jobOrder);
 
         $validated = $request->validate([
             'picked_up_by' => 'required|string|max:100',
+            'override_unpaid_balance' => 'nullable|boolean',
+            'override_reason' => 'nullable|string|max:1000',
         ]);
+
+        if ($jobOrder->current_status !== 'READY_FOR_PICKUP') {
+            throw ValidationException::withMessages([
+                'picked_up_by' => 'Only job orders marked ready for pickup can be released.',
+            ]);
+        }
+
+        $hasUnpaidBalance = $jobOrder->balance > 0;
+        $isAdmin = $user->hasAnyRole(User::adminRoles());
+        $isOverride = $request->boolean('override_unpaid_balance');
+
+        if ($hasUnpaidBalance && (!$isAdmin || !$isOverride)) {
+            throw ValidationException::withMessages([
+                'picked_up_by' => 'This job order has an unpaid balance. An admin must explicitly approve the release override.',
+            ]);
+        }
+
+        if ($hasUnpaidBalance && empty(trim((string) ($validated['override_reason'] ?? '')))) {
+            throw ValidationException::withMessages([
+                'override_reason' => 'An override reason is required when releasing a device with an unpaid balance.',
+            ]);
+        }
 
         $jobOrder->update([
             'picked_up_at' => now(),
             'picked_up_by' => $validated['picked_up_by'],
+            'pickup_override_by' => $hasUnpaidBalance ? $user->name : null,
+            'pickup_override_reason' => $hasUnpaidBalance ? $validated['override_reason'] : null,
             'current_status' => 'PICKED_UP',
         ]);
 
@@ -532,10 +1098,10 @@ class JobOrderController extends Controller
             'shop_id' => $jobOrder->shop_id,
             'job_order_id' => $jobOrder->id,
             'status' => 'PICKED_UP',
-            'note' => "Device picked up by {$validated['picked_up_by']}",
+            'note' => "Device released to {$validated['picked_up_by']}",
         ]);
 
-        $this->notifyCustomer($jobOrder, 'PICKED_UP', "Device picked up by {$validated['picked_up_by']}");
+        $this->notifyCustomer($jobOrder, 'PICKED_UP', "Device released to {$validated['picked_up_by']}");
 
         AuditLogger::log(
             request: $request,
@@ -543,13 +1109,18 @@ class JobOrderController extends Controller
             action: 'job_order.picked_up',
             module: 'job_orders',
             record: $jobOrder,
-            description: "Marked {$jobOrder->job_order_number} as picked up.",
+            description: "Released {$jobOrder->job_order_number}.",
             oldValues: ['current_status' => 'READY_FOR_PICKUP', 'picked_up_at' => null, 'picked_up_by' => null],
-            newValues: ['current_status' => 'PICKED_UP', 'picked_up_by' => $validated['picked_up_by']]
+            newValues: [
+                'current_status' => 'PICKED_UP',
+                'picked_up_by' => $validated['picked_up_by'],
+                'pickup_override_by' => $hasUnpaidBalance ? $user->name : null,
+                'pickup_override_reason' => $hasUnpaidBalance ? $validated['override_reason'] : null,
+            ]
         );
 
         return response()->json([
-            'message' => 'Device marked as picked up.',
+            'message' => 'Device released.',
             'jobOrder' => $jobOrder->fresh(),
         ]);
     }
@@ -562,7 +1133,7 @@ class JobOrderController extends Controller
 
         $validated = $request->validate([
             'amount_paid' => 'required|numeric|min:0.01',
-            'payment_type' => 'nullable|in:DOWN_PAYMENT,PARTIAL_PAYMENT,FINAL_PAYMENT',
+            'payment_type' => 'nullable|in:PARTIAL_PAYMENT,FINAL_PAYMENT',
             'payment_method' => 'nullable|string|max:40',
             'reference_number' => 'nullable|string|max:100',
             'received_at' => 'nullable|date',
@@ -958,9 +1529,122 @@ class JobOrderController extends Controller
         $this->authorizeRoles($request, User::ROLE_ADMIN);
     }
 
-    private function authorizeStaffOrAdmin(Request $request): void
+    private function authorizeStaffOrAdmin(Request $request): User
     {
-        $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        return $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+    }
+
+    private function createCoveredWarrantyService(
+        JobOrder $jobOrder,
+        Request $request,
+        User $user,
+        string $reportedIssue,
+        ?string $checkedBy = null,
+        ?string $assessmentNotes = null
+    ): WarrantyAssessment {
+        $warrantyJobOrder = JobOrder::create([
+            'shop_id' => $jobOrder->shop_id,
+            'job_order_number' => $this->generateJobOrderNumber('WTY'),
+            'service_type' => 'WARRANTY_SERVICE',
+            'warranty_parent_job_order_id' => $jobOrder->id,
+            'customer_name' => $jobOrder->customer_name,
+            'customer_contact' => $jobOrder->customer_contact,
+            'customer_email' => $jobOrder->customer_email,
+            'customer_phone' => $jobOrder->customer_phone,
+            'device_type' => $jobOrder->device_type,
+            'service_category_id' => $jobOrder->service_category_id,
+            'service_item_id' => $jobOrder->service_item_id,
+            'brand' => $jobOrder->brand,
+            'model' => $jobOrder->model,
+            'serial_number' => $jobOrder->serial_number,
+            'problem_description' => $reportedIssue,
+            'received_by' => $request->user()?->name,
+            'included_accessories' => $jobOrder->included_accessories,
+            'current_status' => 'RECEIVED',
+            'priority' => 'STANDARD',
+            'estimated_cost' => 0,
+            'parts_cost' => 0,
+            'labor_cost' => 0,
+            'total_cost' => 0,
+            'amount_paid' => 0,
+            'payment_status' => 'PAID',
+            'warranty_days' => 0,
+            'internal_notes' => "Warranty service linked to {$jobOrder->job_order_number}.",
+        ]);
+
+        StatusHistory::create([
+            'shop_id' => $jobOrder->shop_id,
+            'job_order_id' => $warrantyJobOrder->id,
+            'status' => 'RECEIVED',
+            'note' => "Warranty service issued from {$jobOrder->job_order_number}.",
+        ]);
+
+        $assessment = WarrantyAssessment::create([
+            'shop_id' => $jobOrder->shop_id,
+            'job_order_id' => $jobOrder->id,
+            'warranty_job_order_id' => $warrantyJobOrder->id,
+            'reported_issue' => $reportedIssue,
+            'brought_at' => now(),
+            'checked_by' => $checkedBy,
+            'result' => WarrantyAssessment::RESULT_COVERED,
+            'assessment_notes' => $assessmentNotes,
+            'created_by' => $user->name,
+        ]);
+
+        StatusHistory::create([
+            'shop_id' => $jobOrder->shop_id,
+            'job_order_id' => $jobOrder->id,
+            'status' => $jobOrder->current_status,
+            'note' => "Warranty service issued: {$warrantyJobOrder->job_order_number}.",
+        ]);
+
+        return $assessment;
+    }
+
+    private function assertCanIssueWarrantyService(JobOrder $jobOrder): void
+    {
+        if ($jobOrder->current_status !== 'PICKED_UP' || !$jobOrder->picked_up_at) {
+            throw ValidationException::withMessages([
+                'warranty_service' => 'Warranty service can only be issued after the original unit is released to the customer.',
+            ]);
+        }
+
+        if ($jobOrder->payment_status !== 'PAID' || (float) $jobOrder->balance > 0) {
+            throw ValidationException::withMessages([
+                'warranty_service' => 'Warranty service can only be issued after the original job order is fully paid.',
+            ]);
+        }
+
+        if ((int) ($jobOrder->warranty_days ?? 0) <= 0) {
+            throw ValidationException::withMessages([
+                'warranty_service' => 'This job order has no warranty coverage recorded.',
+            ]);
+        }
+
+        $warrantyExpiresAt = $jobOrder->picked_up_at->copy()->addDays((int) $jobOrder->warranty_days);
+
+        if (now()->greaterThan($warrantyExpiresAt)) {
+            throw ValidationException::withMessages([
+                'warranty_service' => 'This job order warranty has already expired.',
+            ]);
+        }
+    }
+
+    private function assertNoActiveWarrantyService(JobOrder $jobOrder): void
+    {
+        $existingWarrantyJob = JobOrder::query()
+            ->where('shop_id', $jobOrder->shop_id)
+            ->where('warranty_parent_job_order_id', $jobOrder->id)
+            ->where('service_type', 'WARRANTY_SERVICE')
+            ->whereNull('picked_up_at')
+            ->whereNot('current_status', 'UNREPAIRABLE')
+            ->first();
+
+        if ($existingWarrantyJob) {
+            throw ValidationException::withMessages([
+                'warranty_service' => "Warranty service {$existingWarrantyJob->job_order_number} is still active.",
+            ]);
+        }
     }
 
     private function mapJobOrderSummary(JobOrder $job): array
@@ -970,9 +1654,17 @@ class JobOrderController extends Controller
         return [
             'id' => $job->id,
             'job_order_number' => $job->job_order_number,
+            'service_type' => $job->service_type ?? 'STANDARD',
+            'warranty_parent_job_order_id' => $job->warranty_parent_job_order_id,
+            'warranty_parent_job_order_number' => $job->warrantyParentJobOrder?->job_order_number,
+            'is_warranty_service' => ($job->service_type ?? 'STANDARD') === 'WARRANTY_SERVICE',
             'customer_name' => $job->customer_name,
             'customer_phone' => $job->customer_phone,
             'device_type' => $job->device_type,
+            'service_category_id' => $job->service_category_id,
+            'service_category_name' => $job->serviceCategory?->name,
+            'service_item_id' => $job->service_item_id,
+            'service_item_name' => $job->serviceItem?->name,
             'brand' => $job->brand,
             'model' => $job->model,
             'current_status' => $job->current_status,
@@ -985,9 +1677,87 @@ class JobOrderController extends Controller
             'estimated_completion' => $job->estimated_completion,
             'estimated_completion_formatted' => $job->estimated_completion?->format('M d, Y h:i A'),
             'is_overdue' => $isOverdue,
+            'repair_started' => in_array($job->current_status, ['IN_PROGRESS', 'READY_FOR_PICKUP', 'PICKED_UP'], true)
+                || (bool) ($job->has_started_repair ?? false),
             'deleted_at' => $job->deleted_at,
             'created_at_formatted' => $job->created_at?->format('M d, Y'),
         ];
+    }
+
+    private function normalizeServiceSelection(int $shopId, array $validated): array
+    {
+        $categoryId = $validated['service_category_id'] ?? null;
+        $serviceId = $validated['service_item_id'] ?? null;
+        $service = null;
+
+        if ($serviceId) {
+            $service = ServiceItem::query()
+                ->where('shop_id', $shopId)
+                ->where('is_active', true)
+                ->find($serviceId);
+
+            if (!$service) {
+                throw ValidationException::withMessages([
+                    'service_item_id' => 'Selected service is not available for this shop.',
+                ]);
+            }
+
+            if ($categoryId && (int) $service->service_category_id !== (int) $categoryId) {
+                throw ValidationException::withMessages([
+                    'service_item_id' => 'Selected service does not belong to the selected device category.',
+                ]);
+            }
+
+            $categoryId = $service->service_category_id;
+        }
+
+        if ($categoryId) {
+            $category = ServiceCategory::query()
+                ->where('shop_id', $shopId)
+                ->where('is_active', true)
+                ->find($categoryId);
+
+            if (!$category) {
+                throw ValidationException::withMessages([
+                    'service_category_id' => 'Selected device category is not available for this shop.',
+                ]);
+            }
+
+            $validated['service_category_id'] = $category->id;
+            $validated['service_item_id'] = $service?->id;
+            $validated['device_type'] = $category->name;
+        } else {
+            $validated['service_category_id'] = null;
+            $validated['service_item_id'] = null;
+        }
+
+        return $validated;
+    }
+
+    private function activeServiceCatalog(int $shopId): array
+    {
+        return ServiceCategory::query()
+            ->where('shop_id', $shopId)
+            ->where('is_active', true)
+            ->with(['services' => fn ($query) => $query
+                ->where('is_active', true)
+                ->orderBy('sort_order')
+                ->orderBy('name')])
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get()
+            ->map(fn (ServiceCategory $category) => [
+                'id' => $category->id,
+                'name' => $category->name,
+                'description' => $category->description,
+                'services' => $category->services->map(fn (ServiceItem $service) => [
+                    'id' => $service->id,
+                    'service_category_id' => $service->service_category_id,
+                    'name' => $service->name,
+                    'description' => $service->description,
+                ])->all(),
+            ])
+            ->all();
     }
 
     private function isJobOverdue(JobOrder $job): bool
@@ -1008,7 +1778,7 @@ class JobOrderController extends Controller
         return [
             'id' => $payment->id,
             'amount' => $payment->amount,
-            'payment_type' => $payment->payment_type,
+            'payment_type' => $payment->payment_type === 'DOWN_PAYMENT' ? 'PARTIAL_PAYMENT' : $payment->payment_type,
             'payment_method' => $payment->payment_method,
             'reference_number' => $payment->reference_number,
             'notes' => $payment->notes,
@@ -1019,9 +1789,198 @@ class JobOrderController extends Controller
         ];
     }
 
-    private function generateJobOrderNumber(): string
+    private function mapPhoto(RepairPhoto $photo): array
+    {
+        return [
+            'id' => $photo->id,
+            'photo_type' => $photo->photo_type,
+            'photo_type_label' => str_replace('_', ' ', $photo->photo_type),
+            'url' => $photo->publicUrl(),
+            'description' => $photo->description,
+            'visible_to_customer' => (bool) $photo->visible_to_customer,
+            'original_name' => $photo->original_name,
+            'uploaded_by' => $photo->uploaded_by,
+            'uploaded_by_role' => $photo->uploaded_by_role,
+            'created_at' => $photo->created_at,
+            'created_at_formatted' => $photo->created_at?->format('M d, Y h:i A'),
+        ];
+    }
+
+    private function mapNotification(CustomerNotification $notification): array
+    {
+        return [
+            'id' => $notification->id,
+            'channel' => $notification->channel,
+            'channel_label' => strtoupper($notification->channel),
+            'recipient' => $notification->recipient,
+            'subject' => $notification->subject,
+            'message' => $notification->message,
+            'message_preview' => mb_strimwidth($notification->message, 0, 140, '...'),
+            'status' => $notification->status,
+            'status_label' => strtoupper($notification->status),
+            'status_help' => $this->notificationStatusHelp($notification),
+            'can_retry' => $notification->status === CustomerNotification::STATUS_FAILED,
+            'trigger' => $notification->trigger,
+            'error_message' => $notification->error_message,
+            'queued_at' => $notification->queued_at,
+            'sent_at' => $notification->sent_at,
+            'failed_at' => $notification->failed_at,
+            'created_at' => $notification->created_at,
+            'created_at_formatted' => $notification->created_at?->format('M d, Y h:i A'),
+            'queued_at_formatted' => $notification->queued_at?->format('M d, Y h:i A'),
+            'sent_at_formatted' => $notification->sent_at?->format('M d, Y h:i A'),
+            'failed_at_formatted' => $notification->failed_at?->format('M d, Y h:i A'),
+        ];
+    }
+
+    private function notificationStatusHelp(CustomerNotification $notification): string
+    {
+        if ($notification->status === CustomerNotification::STATUS_SENT) {
+            return 'Delivered successfully.';
+        }
+
+        if ($notification->status === CustomerNotification::STATUS_FAILED) {
+            return $notification->channel === CustomerNotification::CHANNEL_SMS
+                ? 'SMS failed. Check SMS provider setup or retry after fixing the issue.'
+                : 'Email failed. Check mail settings or retry after fixing the issue.';
+        }
+
+        return 'Waiting for the queue worker to send.';
+    }
+
+    private function mapWarrantyAssessment(WarrantyAssessment $assessment): array
+    {
+        return [
+            'id' => $assessment->id,
+            'reported_issue' => $assessment->reported_issue,
+            'brought_at' => $assessment->brought_at,
+            'brought_at_formatted' => $assessment->brought_at?->format('M d, Y h:i A'),
+            'checked_by' => $assessment->checked_by,
+            'result' => $assessment->result,
+            'result_label' => str_replace('_', ' ', $assessment->result),
+            'assessment_notes' => $assessment->assessment_notes,
+            'created_by' => $assessment->created_by,
+            'created_at' => $assessment->created_at,
+            'created_at_formatted' => $assessment->created_at?->format('M d, Y h:i A'),
+            'warranty_job_order' => $assessment->warrantyJobOrder ? [
+                'id' => $assessment->warrantyJobOrder->id,
+                'job_order_number' => $assessment->warrantyJobOrder->job_order_number,
+                'current_status' => $assessment->warrantyJobOrder->current_status,
+            ] : null,
+        ];
+    }
+
+    private function buildPrintableData(JobOrder $jobOrder): array
+    {
+        $trackUrl = $jobOrder->shop?->slug
+            ? url('/shops/' . $jobOrder->shop->slug . '/track/' . $jobOrder->job_order_number)
+            : url('/track/' . $jobOrder->job_order_number);
+        $warrantyDays = (int) ($jobOrder->warranty_days ?? 0);
+        $pickedUpAt = $jobOrder->picked_up_at;
+        $warrantyExpiresAt = $warrantyDays > 0 && $pickedUpAt
+            ? $pickedUpAt->copy()->addDays($warrantyDays)
+            : null;
+
+        return [
+            'shop' => [
+                'name' => $jobOrder->shop?->name ?? config('app.name', 'Repair Service Management System'),
+                'tagline' => config('repair.tagline', 'Electronics Repair Service Management'),
+                'phone' => $jobOrder->shop?->phone,
+                'address' => $jobOrder->shop?->address,
+                'business_hours' => $jobOrder->shop?->business_hours,
+                'logo_url' => $jobOrder->shop?->logoUrl(),
+            ],
+            'jobOrder' => $jobOrder,
+            'customer' => [
+                'name' => $jobOrder->customer_name,
+                'phone' => $jobOrder->customer_phone,
+                'email' => $jobOrder->customer_email,
+                'contact' => $jobOrder->customer_phone ?: ($jobOrder->customer_email ?: $jobOrder->customer_contact),
+            ],
+            'device' => [
+                'type' => $jobOrder->device_type,
+                'brand' => $jobOrder->brand,
+                'model' => $jobOrder->model,
+                'serial_number' => $jobOrder->serial_number,
+                'problem_description' => $jobOrder->problem_description,
+                'included_accessories' => $jobOrder->included_accessories,
+                'label' => trim(collect([$jobOrder->brand, $jobOrder->model, $jobOrder->device_type])->filter()->join(' ')),
+            ],
+            'service' => [
+                'priority' => $jobOrder->priority,
+                'current_status' => $jobOrder->current_status,
+                'technician' => $jobOrder->technician?->name,
+                'received_at' => $jobOrder->created_at,
+                'received_at_formatted' => $jobOrder->created_at?->format('M d, Y h:i A'),
+                'estimated_completion_formatted' => $jobOrder->estimated_completion?->format('M d, Y h:i A'),
+                'picked_up_at_formatted' => $pickedUpAt?->format('M d, Y h:i A'),
+                'picked_up_by' => $jobOrder->picked_up_by,
+                'received_by' => $jobOrder->received_by,
+                'service_performed' => $jobOrder->service_performed,
+                'repair_approved_at_formatted' => $jobOrder->repair_approved_at?->format('M d, Y h:i A'),
+                'repair_approved_by_customer' => $jobOrder->repair_approved_by_customer,
+                'repair_approval_recorded_by' => $jobOrder->repair_approval_recorded_by,
+                'repair_approval_notes' => $jobOrder->repair_approval_notes,
+            ],
+            'costs' => [
+                'estimated_cost' => $jobOrder->estimated_cost,
+                'total_cost' => $jobOrder->total_cost,
+                'amount_paid' => $jobOrder->amount_paid,
+                'balance' => $jobOrder->balance,
+            ],
+            'warranty' => [
+                'is_available' => $warrantyDays > 0,
+                'days' => $warrantyDays,
+                'details' => $jobOrder->warranty_details,
+                'starts_at_formatted' => $pickedUpAt?->format('M d, Y'),
+                'expires_at_formatted' => $warrantyExpiresAt?->format('M d, Y'),
+            ],
+            'tracking' => [
+                'url' => $trackUrl,
+                'qr_value' => $trackUrl,
+                'claim_code' => $jobOrder->job_order_number,
+            ],
+            'claim_terms' => $this->configuredTerms($jobOrder->shop?->claim_terms, [
+                'Check-up and diagnosis are free of charge.',
+                'No repair or additional cost will proceed without the customer\'s approval.',
+                'Once the approved repair work has started, cancellation is no longer accepted and the customer remains responsible for authorized work and parts, except where required by law or agreed by the shop.',
+                'The customer confirms that the reported problem and included accessories recorded on this claim stab are correct.',
+                'The shop is not responsible for undisclosed pre-existing defects or data loss not caused by the shop\'s negligence. Customers are advised to back up important data before repair.',
+                'Only the customer or an authorized representative may claim the device. This claim stab or valid identification may be required.',
+                'Customer contact information will only be used for repair updates, device tracking, and related service communication.',
+            ]),
+            'warranty_terms' => $this->configuredTerms($jobOrder->shop?->warranty_terms, [
+                'Warranty covers only the specific repair or replacement listed on this slip.',
+                'Warranty does not cover misuse, liquid or physical damage, power surges, software issues, or unrelated faults.',
+                'Warranty is void if the device is opened, altered, or repaired by another party.',
+                'Present this warranty slip and job order record when requesting warranty service.',
+                'Warranty claims remain subject to inspection and the stated coverage period.',
+            ]),
+            'generated_at' => now()->format('M d, Y h:i A'),
+        ];
+    }
+
+    private function configuredTerms(?string $configuredTerms, array $defaults): array
+    {
+        if (!$configuredTerms) {
+            return $defaults;
+        }
+
+        $terms = collect(preg_split('/\r\n|\r|\n/', $configuredTerms) ?: [])
+            ->map(fn (string $term) => trim($term))
+            ->filter()
+            ->values()
+            ->all();
+
+        return $terms ?: $defaults;
+    }
+
+    private function generateJobOrderNumber(?string $suffix = null): string
     {
         $prefix = strtoupper((string) config('repair.job_order_prefix', 'RSMS'));
+        if ($suffix) {
+            $prefix .= '-' . strtoupper($suffix);
+        }
 
         do {
             $jobOrderNumber = $prefix . '-' . date('Y') . '-' . strtoupper(Str::random(6));
@@ -1086,6 +2045,12 @@ class JobOrderController extends Controller
 
     private function notifyCustomer(JobOrder $jobOrder, string $status, ?string $note = null): void
     {
+        $settings = $this->notificationSettings($jobOrder);
+
+        if (!($settings['events'][$status] ?? true)) {
+            return;
+        }
+
         $email = $jobOrder->customer_email;
         $phone = $jobOrder->customer_phone;
 
@@ -1102,7 +2067,7 @@ class JobOrderController extends Controller
             return;
         }
 
-        $statusLabel = str_replace('_', ' ', $status);
+        $statusLabel = $this->statusLabelForNotification($status);
         $trackBase = $jobOrder->shop?->slug
             ? '/shops/' . $jobOrder->shop->slug . '/track/'
             : '/track/';
@@ -1113,11 +2078,84 @@ class JobOrderController extends Controller
         $message = "{$appName}: Your device {$jobOrder->job_order_number} is now {$statusLabel}." . $noteText . " Track: {$trackUrl}";
         $subject = "{$appName} Update: {$jobOrder->job_order_number} - {$statusLabel}";
 
-        SendCustomerNotification::dispatch(
-            $email,
-            $phone,
-            $subject,
-            $message
-        );
+        $trigger = 'status:' . $status;
+
+        if (($settings['email_enabled'] ?? true) && $email && filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $notification = CustomerNotification::create([
+                'shop_id' => $jobOrder->shop_id,
+                'job_order_id' => $jobOrder->id,
+                'channel' => CustomerNotification::CHANNEL_EMAIL,
+                'recipient' => $email,
+                'subject' => $subject,
+                'message' => $message,
+                'status' => CustomerNotification::STATUS_QUEUED,
+                'trigger' => $trigger,
+                'queued_at' => now(),
+            ]);
+
+            SendCustomerNotification::dispatch(
+                $email,
+                null,
+                $subject,
+                $message,
+                $notification->id
+            );
+        }
+
+        if (($settings['sms_enabled'] ?? false) && $phone && preg_match('/^\+?[0-9\-\s\(\)]+$/', $phone)) {
+            $notification = CustomerNotification::create([
+                'shop_id' => $jobOrder->shop_id,
+                'job_order_id' => $jobOrder->id,
+                'channel' => CustomerNotification::CHANNEL_SMS,
+                'recipient' => $phone,
+                'subject' => null,
+                'message' => $message,
+                'status' => CustomerNotification::STATUS_QUEUED,
+                'trigger' => $trigger,
+                'queued_at' => now(),
+            ]);
+
+            SendCustomerNotification::dispatch(
+                null,
+                $phone,
+                $subject,
+                $message,
+                $notification->id
+            );
+        }
+    }
+
+    private function notificationSettings(JobOrder $jobOrder): array
+    {
+        $settings = $jobOrder->shop?->notification_settings ?? [];
+        $inputEvents = is_array($settings['events'] ?? null) ? $settings['events'] : [];
+        $events = [
+            'RECEIVED',
+            'DIAGNOSING',
+            'WAITING_PARTS',
+            'IN_PROGRESS',
+            'READY_FOR_PICKUP',
+            'PICKED_UP',
+            'UNREPAIRABLE',
+        ];
+
+        return [
+            'email_enabled' => array_key_exists('email_enabled', $settings) ? (bool) $settings['email_enabled'] : true,
+            'sms_enabled' => array_key_exists('sms_enabled', $settings) ? (bool) $settings['sms_enabled'] : false,
+            'events' => collect($events)
+                ->mapWithKeys(fn (string $event) => [
+                    $event => array_key_exists($event, $inputEvents) ? (bool) $inputEvents[$event] : true,
+                ])
+                ->all(),
+        ];
+    }
+
+    private function statusLabelForNotification(string $status): string
+    {
+        return match ($status) {
+            'PICKED_UP' => 'RELEASED',
+            'UNREPAIRABLE' => 'RTO',
+            default => str_replace('_', ' ', $status),
+        };
     }
 }

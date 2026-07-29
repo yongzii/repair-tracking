@@ -7,6 +7,7 @@ import AdminDashboardPage from './pages/admin/AdminDashboardPage.vue';
 import JobOrdersPage from './pages/admin/JobOrdersPage.vue';
 import JobOrderEditPage from './pages/admin/JobOrderEditPage.vue';
 import JobOrderInvoicePage from './pages/admin/JobOrderInvoicePage.vue';
+import JobOrderPrintPage from './pages/admin/JobOrderPrintPage.vue';
 import JobOrderShowPage from './pages/admin/JobOrderShowPage.vue';
 import JobOrderTrashPage from './pages/admin/JobOrderTrashPage.vue';
 import PartRequestsPage from './pages/admin/PartRequestsPage.vue';
@@ -22,6 +23,7 @@ import TechnicianShowPage from './pages/admin/TechnicianShowPage.vue';
 import UsersPage from './pages/admin/UsersPage.vue';
 import UserEditPage from './pages/admin/UserEditPage.vue';
 import ShopSettingsPage from './pages/admin/ShopSettingsPage.vue';
+import PlatformDashboardPage from './pages/platform/PlatformDashboardPage.vue';
 import TechnicianDashboardPage from './pages/technician/TechnicianDashboardPage.vue';
 import TechnicianJobOrderPage from './pages/technician/TechnicianJobOrderPage.vue';
 import NotFoundPage from './pages/NotFoundPage.vue';
@@ -86,6 +88,14 @@ export const resolveRoute = (path) => {
         return { component: TechnicianDashboardPage, params: {}, title: 'My Jobs' };
     }
 
+    if (path === '/platform') {
+        return { component: PlatformDashboardPage, params: {}, title: 'Platform Overview' };
+    }
+
+    if (path === '/platform/shops') {
+        return { component: PlatformDashboardPage, params: { view: 'shops' }, title: 'Shop Workspaces' };
+    }
+
     if (path.startsWith('/technician/job-orders/')) {
         const id = path.replace('/technician/job-orders/', '');
         if (id) {
@@ -129,6 +139,20 @@ export const resolveRoute = (path) => {
                 component: JobOrderInvoicePage,
                 params: { id: id.replace('/invoice', '') },
                 title: 'Invoice',
+            };
+        }
+        if (id.endsWith('/print/intake')) {
+            return {
+                component: JobOrderPrintPage,
+                params: { id: id.replace('/print/intake', ''), mode: 'intake' },
+                title: 'Claim Stab and Job Order Slip',
+            };
+        }
+        if (id.endsWith('/print/warranty')) {
+            return {
+                component: JobOrderPrintPage,
+                params: { id: id.replace('/print/warranty', ''), mode: 'warranty' },
+                title: 'Warranty Certificate',
             };
         }
         if (id.endsWith('/edit')) {

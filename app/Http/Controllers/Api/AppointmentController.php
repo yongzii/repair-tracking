@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Appointment;
 use App\Models\JobOrder;
+use App\Models\ServiceCategory;
+use App\Models\ServiceItem;
 use App\Models\Shop;
 use App\Models\StatusHistory;
 use App\Models\User;
@@ -22,18 +24,25 @@ class AppointmentController extends Controller
             abort(404, 'Shop not found.');
         }
 
+        if (!$shop->hasActiveAccess()) {
+            abort(402, 'This shop is not accepting new appointment requests until its subscription is renewed.');
+        }
+
         $validated = $request->validate([
             'customer_name' => ['required', 'string', 'max:120'],
             'customer_email' => ['nullable', 'email', 'max:150', 'required_without:customer_phone'],
             'customer_phone' => ['nullable', 'string', 'max:30', 'required_without:customer_email'],
             'booking_type' => ['required', Rule::in(['CONSULTATION', 'DROP_OFF'])],
             'device_type' => ['required', 'string', 'max:80'],
+            'service_category_id' => ['nullable', 'integer'],
+            'service_item_id' => ['nullable', 'integer'],
             'brand' => ['nullable', 'string', 'max:80'],
             'model' => ['nullable', 'string', 'max:80'],
             'concern' => ['required', 'string', 'max:3000'],
             'photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
             'preferred_at' => ['required', 'date', 'after:now'],
         ]);
+        $validated = $this->normalizeServiceSelection($shop->id, $validated);
 
         $photoPath = null;
         $photoOriginalName = null;
@@ -179,6 +188,7 @@ class AppointmentController extends Controller
     {
         $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
         $this->ensureSameShop($request, $appointment);
+        $this->ensureShopCanStartNewWork($request);
 
         if ($appointment->converted_job_order_id) {
             return response()->json([
@@ -207,12 +217,16 @@ class AppointmentController extends Controller
                 'customer_email' => $appointment->customer_email,
                 'customer_phone' => $appointment->customer_phone,
                 'device_type' => $appointment->device_type,
+                'service_category_id' => $appointment->service_category_id,
+                'service_item_id' => $appointment->service_item_id,
                 'brand' => $appointment->brand,
                 'model' => $appointment->model,
                 'problem_description' => $appointment->concern,
+                'included_accessories' => null,
+                'received_by' => $user?->name,
                 'current_status' => 'RECEIVED',
                 'priority' => $validated['priority'] ?? 'STANDARD',
-                'warranty_days' => $request->user()?->shop?->default_warranty_days ?? 30,
+                'warranty_days' => 0,
                 'payment_status' => 'PENDING',
                 'parts_cost' => 0,
                 'labor_cost' => 0,
@@ -285,6 +299,10 @@ class AppointmentController extends Controller
             'customer_phone' => $appointment->customer_phone,
             'booking_type' => $appointment->booking_type,
             'device_type' => $appointment->device_type,
+            'service_category_id' => $appointment->service_category_id,
+            'service_category_name' => $appointment->serviceCategory?->name,
+            'service_item_id' => $appointment->service_item_id,
+            'service_item_name' => $appointment->serviceItem?->name,
             'brand' => $appointment->brand,
             'model' => $appointment->model,
             'concern' => $appointment->concern,
@@ -318,6 +336,50 @@ class AppointmentController extends Controller
         } while (Appointment::where('confirmation_code', $code)->exists());
 
         return $code;
+    }
+
+    private function normalizeServiceSelection(int $shopId, array $validated): array
+    {
+        $categoryId = $validated['service_category_id'] ?? null;
+        $serviceId = $validated['service_item_id'] ?? null;
+        $service = null;
+
+        if ($serviceId) {
+            $service = ServiceItem::query()
+                ->where('shop_id', $shopId)
+                ->where('is_active', true)
+                ->find($serviceId);
+
+            if (!$service) {
+                abort(422, 'Selected service is not available for this shop.');
+            }
+
+            if ($categoryId && (int) $service->service_category_id !== (int) $categoryId) {
+                abort(422, 'Selected service does not belong to the selected device category.');
+            }
+
+            $categoryId = $service->service_category_id;
+        }
+
+        if ($categoryId) {
+            $category = ServiceCategory::query()
+                ->where('shop_id', $shopId)
+                ->where('is_active', true)
+                ->find($categoryId);
+
+            if (!$category) {
+                abort(422, 'Selected device category is not available for this shop.');
+            }
+
+            $validated['service_category_id'] = $category->id;
+            $validated['service_item_id'] = $service?->id;
+            $validated['device_type'] = $category->name;
+        } else {
+            $validated['service_category_id'] = null;
+            $validated['service_item_id'] = null;
+        }
+
+        return $validated;
     }
 
     /**

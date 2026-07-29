@@ -21,10 +21,17 @@ const timeline = ref([]);
 const allowedStatuses = ref([]);
 const availableParts = ref([]);
 const removingPartId = ref(null);
+const selectedPhoto = ref(null);
+const uploadingPhoto = ref(false);
 
 const form = ref({
     status: '',
     note: '',
+});
+
+const photoForm = ref({
+    photo_type: 'DURING',
+    description: '',
 });
 
 const partForm = ref({
@@ -50,6 +57,11 @@ const resetForms = () => {
         part_name: '',
         quantity: 1,
         note: '',
+    };
+    selectedPhoto.value = null;
+    photoForm.value = {
+        photo_type: 'DURING',
+        description: '',
     };
 };
 
@@ -96,6 +108,54 @@ const submit = async () => {
         await loadJob();
     } catch (error) {
         errorMessage.value = error?.response?.data?.message || 'Unable to update job status.';
+    }
+};
+
+const onPhotoSelected = (event) => {
+    selectedPhoto.value = event.target.files?.[0] || null;
+};
+
+const uploadPhoto = async () => {
+    if (!selectedPhoto.value) return;
+    errorMessage.value = '';
+    successMessage.value = '';
+    uploadingPhoto.value = true;
+
+    const payload = new FormData();
+    payload.append('photo', selectedPhoto.value);
+    payload.append('photo_type', photoForm.value.photo_type);
+    payload.append('description', photoForm.value.description || '');
+
+    try {
+        const { data } = await window.axios.post(`/api/technician/job-orders/${props.params.id}/photos`, payload, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        successMessage.value = data.message || 'Photo uploaded successfully.';
+        await loadJob();
+    } catch (error) {
+        const firstError = error?.response?.data?.errors
+            ? Object.values(error.response.data.errors)[0]?.[0]
+            : null;
+        errorMessage.value = firstError || error?.response?.data?.message || 'Unable to upload photo.';
+    } finally {
+        uploadingPhoto.value = false;
+    }
+};
+
+const deletePhoto = async (photo) => {
+    if (!window.confirm('Delete this job photo?')) {
+        return;
+    }
+
+    errorMessage.value = '';
+    successMessage.value = '';
+
+    try {
+        const { data } = await window.axios.delete(`/api/technician/job-orders/${props.params.id}/photos/${photo.id}`);
+        successMessage.value = data.message || 'Photo deleted.';
+        await loadJob();
+    } catch (error) {
+        errorMessage.value = error?.response?.data?.message || 'Unable to delete photo.';
     }
 };
 
@@ -166,6 +226,12 @@ const formatCurrency = (value) => {
     return `PHP ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+const formatStatus = (status) => {
+    if (status === 'PICKED_UP') return 'Released';
+    if (status === 'UNREPAIRABLE') return 'RTO';
+    return status ? status.replaceAll('_', ' ') : '';
+};
+
 onMounted(loadJob);
 </script>
 
@@ -199,7 +265,7 @@ onMounted(loadJob);
             <div class="grid grid-cols-1 gap-4 text-sm md:grid-cols-2">
               <div>
                 <p class="text-slate-500">Status</p>
-                <p class="font-semibold text-slate-900">{{ job.current_status.replaceAll('_', ' ') }}</p>
+                <p class="font-semibold text-slate-900">{{ formatStatus(job.current_status) }}</p>
               </div>
               <div>
                 <p class="text-slate-500">Priority</p>
@@ -224,12 +290,59 @@ onMounted(loadJob);
             <h4 class="mb-4 text-lg font-semibold text-slate-900">Timeline</h4>
             <div class="space-y-3">
               <div v-for="entry in timeline" :key="entry.id" class="border-b border-slate-100 pb-3 last:border-0 last:pb-0">
-                <p class="font-semibold text-slate-900">{{ entry.status.replaceAll('_', ' ') }}</p>
+                <p class="font-semibold text-slate-900">{{ formatStatus(entry.status) }}</p>
                 <p class="text-sm text-slate-500">{{ entry.created_at_formatted }}</p>
                 <p v-if="entry.note" class="text-sm text-slate-700">{{ entry.note }}</p>
               </div>
               <p v-if="!timeline.length" class="text-sm text-slate-500">No status history available.</p>
             </div>
+          </div>
+
+          <div class="card p-6">
+            <div class="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h4 class="text-lg font-semibold text-slate-900">Photos & Evidence</h4>
+                <p class="text-sm text-slate-500">Upload repair photos from camera, gallery, or computer files.</p>
+              </div>
+              <span class="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">{{ job.photos?.length || 0 }} files</span>
+            </div>
+
+            <div v-if="job.photos?.length" class="mb-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div v-for="photo in job.photos" :key="photo.id" class="overflow-hidden rounded-lg border border-slate-200 bg-white">
+                <a :href="photo.url" target="_blank" rel="noopener" class="block aspect-[4/3] bg-slate-100">
+                  <img :src="photo.url" :alt="photo.photo_type_label" class="h-full w-full object-cover" />
+                </a>
+                <div class="space-y-2 p-3">
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <p class="text-sm font-semibold text-slate-900">{{ photo.photo_type_label }}</p>
+                      <p class="text-xs text-slate-500">{{ photo.created_at_formatted }}</p>
+                    </div>
+                    <button type="button" class="text-sm font-semibold text-rose-600 hover:text-rose-700" @click="deletePhoto(photo)">Delete</button>
+                  </div>
+                  <p v-if="photo.description" class="text-sm text-slate-700">{{ photo.description }}</p>
+                  <p class="text-xs font-semibold" :class="photo.visible_to_customer ? 'text-emerald-700' : 'text-slate-500'">
+                    {{ photo.visible_to_customer ? 'Visible to customer' : 'Internal only' }}
+                  </p>
+                  <p class="text-xs text-slate-500">Uploaded by {{ photo.uploaded_by || 'Unknown' }}</p>
+                </div>
+              </div>
+            </div>
+            <p v-else class="mb-4 text-sm text-slate-500">No photos uploaded yet.</p>
+
+            <form class="grid grid-cols-1 gap-3 md:grid-cols-4" @submit.prevent="uploadPhoto">
+              <select v-model="photoForm.photo_type" class="rounded-lg border border-slate-300 px-4 py-2">
+                <option value="BEFORE">Before</option>
+                <option value="DURING">During</option>
+                <option value="AFTER">After</option>
+                <option value="EVIDENCE">Evidence</option>
+              </select>
+              <input type="file" accept="image/png,image/jpeg,image/webp" capture="environment" class="rounded-lg border border-slate-300 px-4 py-2 md:col-span-3" required @change="onPhotoSelected" />
+              <input v-model="photoForm.description" class="rounded-lg border border-slate-300 px-4 py-2 md:col-span-3" placeholder="Photo note (optional)" />
+              <button type="submit" class="rounded-lg bg-slate-900 py-2 font-semibold text-white hover:bg-slate-800 disabled:opacity-60" :disabled="uploadingPhoto || !selectedPhoto">
+                {{ uploadingPhoto ? 'Uploading...' : 'Upload Photo' }}
+              </button>
+            </form>
           </div>
 
           <div class="card p-6">
@@ -305,7 +418,7 @@ onMounted(loadJob);
             <h4 class="mb-4 text-lg font-semibold text-slate-900">Update Repair Status</h4>
             <form class="space-y-3" @submit.prevent="submit">
               <select v-model="form.status" class="w-full rounded-lg border border-slate-300 px-4 py-2" required>
-                <option v-for="status in allowedStatuses" :key="status" :value="status">{{ status.replaceAll('_', ' ') }}</option>
+                <option v-for="status in allowedStatuses" :key="status" :value="status">{{ formatStatus(status) }}</option>
               </select>
               <textarea v-model="form.note" rows="3" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="Work note (optional)"></textarea>
               <button type="submit" class="w-full rounded-lg bg-slate-900 py-2 font-semibold text-white hover:bg-slate-800">Save Status</button>

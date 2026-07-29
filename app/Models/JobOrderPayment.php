@@ -23,6 +23,11 @@ class JobOrderPayment extends Model
         'received_at' => 'datetime',
     ];
 
+    public function setPaymentTypeAttribute(?string $value): void
+    {
+        $this->attributes['payment_type'] = $value === 'DOWN_PAYMENT' ? 'PARTIAL_PAYMENT' : $value;
+    }
+
     public function jobOrder()
     {
         return $this->belongsTo(JobOrder::class);

@@ -8,9 +8,11 @@ use App\Http\Controllers\Api\FailedJobController;
 use App\Http\Controllers\Api\InventoryController;
 use App\Http\Controllers\Api\JobOrderController;
 use App\Http\Controllers\Api\PartRequestController;
+use App\Http\Controllers\Api\PlatformController;
 use App\Http\Controllers\Api\ReportsController;
 use App\Http\Controllers\Api\ShopController;
 use App\Http\Controllers\Api\ShopOnboardingController;
+use App\Http\Controllers\Api\SubscriptionRequestController;
 use App\Http\Controllers\Api\TechnicianController;
 use App\Http\Controllers\Api\TechnicianPortalController;
 use App\Http\Controllers\Api\TrackingController;
@@ -37,15 +39,27 @@ Route::middleware('web')->group(function () {
 
     Route::get('/track', [TrackingController::class, 'search']);
     Route::get('/track/{jobOrderNumber}', [TrackingController::class, 'show']);
+    Route::get('/shops/{shop:slug}/profile', [ShopController::class, 'publicProfile']);
     Route::get('/shops/{shop:slug}/track', [TrackingController::class, 'searchForShop']);
     Route::get('/shops/{shop:slug}/track/{jobOrderNumber}', [TrackingController::class, 'showForShop']);
     Route::post('/shops/{shop:slug}/appointments', [AppointmentController::class, 'storeForShop']);
     Route::get('/shops/{shop:slug}/appointments/{confirmationCode}', [AppointmentController::class, 'showForShop']);
 
     Route::middleware('auth')->prefix('admin')->group(function () {
+        Route::get('/subscription/options', [SubscriptionRequestController::class, 'options']);
+        Route::post('/subscription/requests', [SubscriptionRequestController::class, 'store']);
+
         Route::get('/dashboard', [DashboardController::class, 'index']);
         Route::get('/shop', [ShopController::class, 'show']);
         Route::put('/shop', [ShopController::class, 'update']);
+        Route::post('/shop/logo', [ShopController::class, 'uploadLogo']);
+        Route::delete('/shop/logo', [ShopController::class, 'deleteLogo']);
+        Route::post('/shop/service-categories', [ShopController::class, 'storeServiceCategory']);
+        Route::put('/shop/service-categories/{category}', [ShopController::class, 'updateServiceCategory']);
+        Route::delete('/shop/service-categories/{category}', [ShopController::class, 'deactivateServiceCategory']);
+        Route::post('/shop/service-categories/{category}/services', [ShopController::class, 'storeServiceItem']);
+        Route::put('/shop/services/{service}', [ShopController::class, 'updateServiceItem']);
+        Route::delete('/shop/services/{service}', [ShopController::class, 'deactivateServiceItem']);
         Route::get('/audit-logs', [AuditLogController::class, 'index']);
         Route::get('/part-requests', [PartRequestController::class, 'index']);
         Route::post('/part-requests/{jobOrder}/fulfill', [PartRequestController::class, 'fulfill']);
@@ -59,6 +73,7 @@ Route::middleware('web')->group(function () {
         Route::get('/job-orders/trash', [JobOrderController::class, 'trashed']);
         Route::post('/job-orders', [JobOrderController::class, 'store']);
         Route::get('/job-orders/{jobOrder}/invoice', [JobOrderController::class, 'invoice']);
+        Route::get('/job-orders/{jobOrder}/print-data', [JobOrderController::class, 'printData']);
         Route::get('/job-orders/{jobOrder}', [JobOrderController::class, 'show']);
         Route::put('/job-orders/{jobOrder}', [JobOrderController::class, 'update']);
         Route::delete('/job-orders/{jobOrder}', [JobOrderController::class, 'destroy']);
@@ -68,7 +83,16 @@ Route::middleware('web')->group(function () {
         Route::post('/job-orders/{jobOrder}/mark-picked-up', [JobOrderController::class, 'markPickedUp']);
         Route::post('/job-orders/{jobOrder}/record-payment', [JobOrderController::class, 'recordPayment']);
         Route::post('/job-orders/{jobOrder}/update-costs', [JobOrderController::class, 'updateCosts']);
+        Route::post('/job-orders/{jobOrder}/update-warranty', [JobOrderController::class, 'updateWarranty']);
+        Route::post('/job-orders/{jobOrder}/issue-warranty-service', [JobOrderController::class, 'issueWarrantyService']);
+        Route::post('/job-orders/{jobOrder}/cancel-warranty-service', [JobOrderController::class, 'cancelWarrantyService']);
+        Route::post('/job-orders/{jobOrder}/warranty-assessments', [JobOrderController::class, 'recordWarrantyAssessment']);
+        Route::post('/job-orders/{jobOrder}/record-repair-approval', [JobOrderController::class, 'recordRepairApproval']);
         Route::post('/job-orders/{jobOrder}/rate-technician', [JobOrderController::class, 'rateTechnician']);
+        Route::post('/job-orders/{jobOrder}/photos', [JobOrderController::class, 'storePhoto']);
+        Route::post('/job-orders/{jobOrder}/photos/{photo}/visibility', [JobOrderController::class, 'updatePhotoVisibility']);
+        Route::delete('/job-orders/{jobOrder}/photos/{photo}', [JobOrderController::class, 'deletePhoto']);
+        Route::post('/job-orders/{jobOrder}/notifications/{notification}/retry', [JobOrderController::class, 'retryNotification']);
         Route::post('/job-orders/{jobOrder}/parts', [JobOrderController::class, 'addPart']);
         Route::put('/job-orders/{jobOrder}/parts/{part}', [JobOrderController::class, 'updatePart']);
         Route::delete('/job-orders/{jobOrder}/parts/{part}', [JobOrderController::class, 'deletePart']);
@@ -103,10 +127,26 @@ Route::middleware('web')->group(function () {
         Route::delete('/inventory/{sparePart}', [InventoryController::class, 'destroy']);
     });
 
+    Route::middleware('auth')->prefix('platform')->group(function () {
+        Route::get('/dashboard', [PlatformController::class, 'dashboard']);
+        Route::get('/shops', [PlatformController::class, 'shops']);
+        Route::get('/subscription-settings', [PlatformController::class, 'subscriptionSettings']);
+        Route::put('/subscription-settings', [PlatformController::class, 'updateSubscriptionSettings']);
+        Route::get('/subscription-requests', [PlatformController::class, 'subscriptionRequests']);
+        Route::post('/subscription-requests/{subscriptionRequest}/approve', [PlatformController::class, 'approveSubscriptionRequest']);
+        Route::post('/subscription-requests/{subscriptionRequest}/reject', [PlatformController::class, 'rejectSubscriptionRequest']);
+        Route::put('/shops/{shop}', [PlatformController::class, 'updateShop']);
+        Route::post('/shops/{shop}/toggle', [PlatformController::class, 'toggleShop']);
+        Route::post('/shops/{shop}/reset-admin-password', [PlatformController::class, 'resetShopAdminPassword']);
+        Route::post('/shops/{shop}/subscription-payments', [PlatformController::class, 'storeSubscriptionPayment']);
+    });
+
     Route::middleware('auth')->prefix('technician')->group(function () {
         Route::get('/dashboard', [TechnicianPortalController::class, 'dashboard']);
         Route::get('/job-orders/{jobOrder}', [TechnicianPortalController::class, 'showJob']);
         Route::post('/job-orders/{jobOrder}/update-status', [TechnicianPortalController::class, 'updateStatus']);
+        Route::post('/job-orders/{jobOrder}/photos', [TechnicianPortalController::class, 'storePhoto']);
+        Route::delete('/job-orders/{jobOrder}/photos/{photo}', [TechnicianPortalController::class, 'deletePhoto']);
         Route::post('/job-orders/{jobOrder}/parts', [TechnicianPortalController::class, 'addPart']);
         Route::delete('/job-orders/{jobOrder}/parts/{part}', [TechnicianPortalController::class, 'removePart']);
         Route::post('/job-orders/{jobOrder}/request-part', [TechnicianPortalController::class, 'requestPart']);

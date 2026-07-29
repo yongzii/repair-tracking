@@ -16,6 +16,14 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        $this->call(PlatformAdminSeeder::class);
+
+        $seedDemoData = filter_var(config('repair.seed_demo_data'), FILTER_VALIDATE_BOOL);
+
+        if (!$seedDemoData) {
+            return;
+        }
+
         $shop = Shop::query()->firstOrCreate(
             ['slug' => 'default-shop'],
             [
@@ -26,14 +34,16 @@ class DatabaseSeeder extends Seeder
         );
 
         // Create admin user
-        User::create([
-            'shop_id' => $shop->id,
-            'name' => 'System Administrator',
-            'email' => 'admin@example.com',
-            'password' => bcrypt('password'),
-            'role' => 'shop_admin',
-            'is_active' => true,
-        ]);
+        User::query()->updateOrCreate(
+            ['email' => 'admin@example.com'],
+            [
+                'shop_id' => $shop->id,
+                'name' => 'System Administrator',
+                'password' => bcrypt('password'),
+                'role' => User::ROLE_SHOP_ADMIN,
+                'is_active' => true,
+            ]
+        );
 
         $this->call([
             JobOrderSeeder::class,

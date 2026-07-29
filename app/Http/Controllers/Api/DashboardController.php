@@ -29,6 +29,7 @@ class DashboardController extends Controller
         $readyForPickup = (clone $jobOrders)->where('current_status', 'READY_FOR_PICKUP')->count();
         $pickedUp = (clone $jobOrders)->where('current_status', 'PICKED_UP')->count();
         $unrepairable = (clone $jobOrders)->where('current_status', 'UNREPAIRABLE')->count();
+        $warrantyServiceJobs = (clone $jobOrders)->where('service_type', 'WARRANTY_SERVICE')->count();
         $overdueJobs = (clone $jobOrders)->whereIn('current_status', $activeStatuses)
             ->whereNotNull('estimated_completion')
             ->where('estimated_completion', '<', now())
@@ -190,6 +191,7 @@ class DashboardController extends Controller
             'readyForPickup' => $readyForPickup,
             'pickedUp' => $pickedUp,
             'unrepairable' => $unrepairable,
+            'warrantyServiceJobs' => $warrantyServiceJobs,
             'overdueJobs' => $overdueJobs,
             'completionRate' => $completionRate,
             'averageTurnaround' => $averageTurnaround,

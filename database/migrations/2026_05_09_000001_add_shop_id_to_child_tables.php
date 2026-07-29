@@ -25,6 +25,12 @@ return new class extends Migration
             $table->foreignId('shop_id')->nullable()->after('id')->constrained('shops')->nullOnDelete();
         });
 
+        // SQLite does not support Laravel's joined update form. Fresh test
+        // databases have no legacy child rows to backfill.
+        if (DB::getDriverName() === 'sqlite') {
+            return;
+        }
+
         DB::table('status_histories')
             ->join('job_orders', 'status_histories.job_order_id', '=', 'job_orders.id')
             ->whereNull('status_histories.shop_id')

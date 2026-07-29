@@ -24,6 +24,7 @@ const metricCards = computed(() => {
         { label: 'Active Jobs', value: stats.value.activeJobs, hint: 'Currently in progress', accent: 'text-teal-700', tone: 'bg-teal-500' },
         { label: 'Waiting for Parts', value: stats.value.waitingParts, hint: 'Needs inventory action', accent: 'text-amber-700', tone: 'bg-amber-400' },
         { label: 'Ready for Pickup', value: stats.value.readyForPickup, hint: 'Customer pickup queue', accent: 'text-emerald-700', tone: 'bg-emerald-500' },
+        { label: 'Under Warranty', value: stats.value.warrantyServiceJobs, hint: 'Warranty service units', accent: 'text-emerald-700', tone: 'bg-emerald-400', to: '/admin/job-orders?service_type=WARRANTY_SERVICE' },
         { label: 'Overdue Repairs', value: stats.value.overdueJobs, hint: 'Needs attention', accent: 'text-rose-700', tone: 'bg-rose-500' },
         { label: "Today's Intake", value: stats.value.todayIntake, hint: 'New jobs today', accent: 'text-slate-950', tone: 'bg-slate-400' },
         { label: 'Unpaid Jobs', value: stats.value.unpaidJobs, hint: 'With remaining balance', accent: 'text-slate-950', tone: 'bg-indigo-500' },
@@ -47,6 +48,12 @@ const statusClass = (status, overdue = false) => {
     if (status === 'WAITING_PARTS') return 'bg-amber-50 text-amber-700 ring-amber-200';
     if (status === 'UNREPAIRABLE') return 'bg-slate-100 text-slate-700 ring-slate-200';
     return 'bg-teal-50 text-teal-700 ring-teal-200';
+};
+
+const formatStatus = (status) => {
+    if (status === 'PICKED_UP') return 'RELEASED';
+    if (status === 'UNREPAIRABLE') return 'RTO';
+    return status ? status.replaceAll('_', ' ') : '';
 };
 
 const loadDashboard = async () => {
@@ -113,16 +120,25 @@ onMounted(loadDashboard);
       </section>
 
       <section class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <div v-for="metric in metricCards" :key="metric.label" class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:shadow-lg hover:shadow-slate-900/5">
+        <component
+          :is="metric.to ? AppLink : 'div'"
+          v-for="metric in metricCards"
+          :key="metric.label"
+          :to="metric.to"
+          class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-lg hover:shadow-slate-900/5"
+        >
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-sm font-semibold text-slate-500">{{ metric.label }}</p>
               <p class="mt-2 text-3xl font-bold leading-tight" :class="metric.accent">{{ metric.value }}</p>
               <p class="mt-2 text-xs text-slate-500">{{ metric.hint }}</p>
             </div>
-            <span class="mt-1 h-3 w-3 rounded-full" :class="metric.tone"></span>
+            <div class="flex flex-col items-end gap-2">
+              <span class="mt-1 h-3 w-3 rounded-full" :class="metric.tone"></span>
+              <span v-if="metric.to" class="text-xs font-bold text-teal-700">View</span>
+            </div>
           </div>
-        </div>
+        </component>
       </section>
 
       <section class="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_1fr]">
@@ -145,7 +161,7 @@ onMounted(loadDashboard);
                 </div>
                 <div class="shrink-0 text-right">
                   <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="statusClass(job.current_status, job.is_overdue)">
-                    {{ job.current_status.replaceAll('_', ' ') }}
+                    {{ formatStatus(job.current_status) }}
                   </span>
                   <p v-if="job.estimated_completion_formatted" class="mt-2 text-xs text-slate-500">{{ job.estimated_completion_formatted }}</p>
                 </div>
@@ -241,7 +257,7 @@ onMounted(loadDashboard);
                   <td class="px-4 py-4 text-slate-700">{{ job.customer_name }}</td>
                   <td class="px-4 py-4">
                     <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="statusClass(job.current_status, job.is_overdue)">
-                      {{ job.is_overdue ? 'OVERDUE' : job.current_status.replaceAll('_', ' ') }}
+                      {{ job.is_overdue ? 'OVERDUE' : formatStatus(job.current_status) }}
                     </span>
                   </td>
                   <td class="px-4 py-4">

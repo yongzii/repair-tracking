@@ -110,7 +110,6 @@ class User extends Authenticatable
     public static function adminRoles(): array
     {
         return [
-            self::ROLE_PLATFORM_ADMIN,
             self::ROLE_SHOP_ADMIN,
             self::ROLE_ADMIN,
         ];

@@ -24,6 +24,7 @@ const form = reactive({
     model: '',
     serial_number: '',
     problem_description: '',
+    included_accessories: '',
     priority: 'STANDARD',
     technician_id: '',
 });
@@ -58,6 +59,7 @@ const loadData = async () => {
             model: jobOrder.value.model || '',
             serial_number: jobOrder.value.serial_number || '',
             problem_description: jobOrder.value.problem_description || '',
+            included_accessories: jobOrder.value.included_accessories || '',
             priority: jobOrder.value.priority || 'STANDARD',
             technician_id: jobOrder.value.technician_id || '',
         });
@@ -102,8 +104,8 @@ onMounted(loadData);
 
       <form class="grid grid-cols-1 md:grid-cols-2 gap-4" @submit.prevent="submit">
         <input v-model="form.customer_name" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Customer name" required />
-        <input v-model="form.customer_email" type="email" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Customer email" />
-        <input v-model="form.customer_phone" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Customer phone" />
+        <input v-model="form.customer_email" type="email" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Customer email (optional)" />
+        <input v-model="form.customer_phone" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Customer cellphone number" required />
         <input v-model="form.device_type" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Device type" required />
         <input v-model="form.brand" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Brand" />
         <input v-model="form.model" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Model" />
@@ -119,6 +121,7 @@ onMounted(loadData);
         </select>
         <div></div>
         <textarea v-model="form.problem_description" class="md:col-span-2 px-4 py-2 border border-slate-300 rounded-lg" rows="4" placeholder="Problem description" required></textarea>
+        <textarea v-model="form.included_accessories" class="md:col-span-2 px-4 py-2 border border-slate-300 rounded-lg" rows="3" placeholder="Included accessories (optional)"></textarea>
         <button type="submit" class="md:col-span-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Save Changes</button>
       </form>
     </div>

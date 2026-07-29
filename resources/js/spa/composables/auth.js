@@ -8,11 +8,13 @@ const state = reactive({
 
 export const authState = state;
 
-export const adminRoles = ['platform_admin', 'shop_admin', 'admin'];
+export const platformRoles = ['platform_admin'];
+export const adminRoles = ['shop_admin', 'admin'];
 
 const roleAliases = {
     admin: adminRoles,
     shop_admin: adminRoles,
+    platform_admin: platformRoles,
 };
 
 const expandRoles = (roles) => {
@@ -28,6 +30,12 @@ const applyCsrfToken = (token) => {
     if (meta) {
         meta.setAttribute('content', token);
     }
+};
+
+export const setAuthenticatedUser = (user, token = null) => {
+    applyCsrfToken(token);
+    state.user = user ?? null;
+    state.initialized = true;
 };
 
 export const isCsrfMismatch = (error) => {
@@ -121,3 +129,4 @@ export const ensureRoles = async (roles) => {
 };
 
 export const ensureAdmin = async () => ensureRoles(['admin']);
+export const ensurePlatformAdmin = async () => ensureRoles(['platform_admin']);

@@ -8,6 +8,28 @@ use Twilio\Rest\Client;
 
 class CustomerNotifier
 {
+    public function sendEmailNotification(string $email, string $subject, string $message): void
+    {
+        if (!$this->isEmail($email)) {
+            throw new \InvalidArgumentException('Recipient is not a valid email address.');
+        }
+
+        if (!$this->sendEmail($email, $subject, $message)) {
+            throw new \RuntimeException('Email delivery failed.');
+        }
+    }
+
+    public function sendSmsNotification(string $phone, string $message): void
+    {
+        if (!$this->isPhone($phone)) {
+            throw new \InvalidArgumentException('Recipient is not a valid phone number.');
+        }
+
+        if (!$this->sendSms($phone, $message)) {
+            throw new \RuntimeException('SMS delivery failed.');
+        }
+    }
+
     public function notifyContacts(?string $email, ?string $phone, string $subject, string $message): void
     {
         $attempted = false;

@@ -55,6 +55,12 @@ const updateStatus = async (job) => {
     }
 };
 
+const formatStatus = (status) => {
+    if (status === 'PICKED_UP') return 'Released';
+    if (status === 'UNREPAIRABLE') return 'RTO';
+    return status ? status.replaceAll('_', ' ') : '';
+};
+
 onMounted(loadDashboard);
 </script>
 
@@ -115,14 +121,14 @@ onMounted(loadDashboard);
                 <p class="text-xs text-slate-500">{{ job.device_type }}</p>
               </td>
               <td class="px-4 py-3">
-                <span class="rounded-full px-3 py-1 text-xs font-bold ring-1" :class="job.is_overdue ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-teal-50 text-teal-700 ring-teal-200'">{{ job.current_status.replaceAll('_', ' ') }}</span>
+                <span class="rounded-full px-3 py-1 text-xs font-bold ring-1" :class="job.is_overdue ? 'bg-rose-50 text-rose-700 ring-rose-200' : 'bg-teal-50 text-teal-700 ring-teal-200'">{{ formatStatus(job.current_status) }}</span>
                 <p v-if="job.is_overdue" class="mt-2 text-xs font-semibold text-rose-600">Overdue</p>
               </td>
               <td class="px-4 py-3 text-slate-700">{{ job.estimated_completion_formatted || 'Not set' }}</td>
               <td class="px-4 py-3">
                 <form class="space-y-2" @submit.prevent="updateStatus(job)">
                   <select v-model="statusDrafts[job.id]" class="w-full border border-slate-300 px-3 py-2">
-                    <option v-for="status in allowedStatuses" :key="status" :value="status">{{ status.replaceAll('_', ' ') }}</option>
+                    <option v-for="status in allowedStatuses" :key="status" :value="status">{{ formatStatus(status) }}</option>
                   </select>
                   <input v-model="notesDrafts[job.id]" class="w-full border border-slate-300 px-3 py-2" placeholder="Note (optional)" />
                   <button type="submit" class="btn-primary w-full py-2">Save</button>

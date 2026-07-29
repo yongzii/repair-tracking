@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\JobOrder;
 use App\Models\JobOrderPart;
+use App\Models\RepairPhoto;
 use App\Models\SparePart;
 use App\Models\StatusHistory;
 use App\Models\StockMovement;
@@ -13,6 +14,8 @@ use App\Models\User;
 use App\Support\AuditLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -51,7 +54,7 @@ class TechnicianPortalController extends Controller
         $this->ensureSameShop($request, $jobOrder);
         $this->ensureAssignedToTechnician($jobOrder, $technician);
 
-        $jobOrder->load(['statusHistories', 'parts', 'payments']);
+        $jobOrder->load(['statusHistories', 'parts', 'payments', 'repairPhotos']);
 
         return response()->json([
             'job' => $this->mapJob($jobOrder, true),
@@ -108,6 +111,12 @@ class TechnicianPortalController extends Controller
             ]);
         }
 
+        if (in_array($validated['status'], ['IN_PROGRESS', 'READY_FOR_PICKUP'], true) && !$jobOrder->repair_approved_at) {
+            throw ValidationException::withMessages([
+                'status' => 'Customer repair approval must be recorded before repair work or pickup preparation can proceed.',
+            ]);
+        }
+
         $previousStatus = $jobOrder->current_status;
         $jobOrder->update(['current_status' => $validated['status']]);
 
@@ -132,6 +141,82 @@ class TechnicianPortalController extends Controller
         return response()->json([
             'message' => 'Job status updated successfully.',
             'job' => $this->mapJob($jobOrder->fresh(), true),
+        ]);
+    }
+
+    public function storePhoto(Request $request, JobOrder $jobOrder)
+    {
+        $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
+        $technician = $this->resolveTechnician($user);
+        $this->ensureSameShop($request, $jobOrder);
+        $this->ensureAssignedToTechnician($jobOrder, $technician);
+
+        $validated = $request->validate([
+            'photo' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
+            'photo_type' => ['required', Rule::in(RepairPhoto::types())],
+            'description' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $file = $validated['photo'];
+        $path = $file->store("repair-photos/{$jobOrder->shop_id}/{$jobOrder->id}", 'public');
+
+        $photo = RepairPhoto::create([
+            'shop_id' => $jobOrder->shop_id,
+            'job_order_id' => $jobOrder->id,
+            'photo_type' => $validated['photo_type'],
+            'photo_path' => $path,
+            'original_name' => $file->getClientOriginalName(),
+            'mime_type' => $file->getClientMimeType(),
+            'file_size' => $file->getSize(),
+            'description' => $validated['description'] ?? null,
+            'uploaded_by' => $technician->name,
+            'uploaded_by_role' => User::ROLE_TECHNICIAN,
+        ]);
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'technician.photo_uploaded',
+            module: 'technician_portal',
+            record: $jobOrder,
+            description: "{$technician->name} uploaded {$photo->photo_type} photo for {$jobOrder->job_order_number}.",
+            newValues: $photo->only(['photo_type', 'original_name', 'description', 'uploaded_by'])
+        );
+
+        return response()->json([
+            'message' => 'Photo uploaded successfully.',
+            'photo' => $this->mapPhoto($photo),
+        ], 201);
+    }
+
+    public function deletePhoto(Request $request, JobOrder $jobOrder, RepairPhoto $photo)
+    {
+        $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
+        $technician = $this->resolveTechnician($user);
+        $this->ensureSameShop($request, $jobOrder);
+        $this->ensureAssignedToTechnician($jobOrder, $technician);
+
+        if ((int) $photo->job_order_id !== (int) $jobOrder->id || (int) $photo->shop_id !== (int) $jobOrder->shop_id) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $before = $photo->only(['photo_type', 'photo_path', 'original_name', 'description', 'uploaded_by']);
+
+        Storage::disk('public')->delete($photo->photo_path);
+        $photo->delete();
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'technician.photo_deleted',
+            module: 'technician_portal',
+            record: $jobOrder,
+            description: "{$technician->name} deleted {$before['photo_type']} photo from {$jobOrder->job_order_number}.",
+            oldValues: $before
+        );
+
+        return response()->json([
+            'message' => 'Photo deleted.',
         ]);
     }
 
@@ -420,6 +505,26 @@ class TechnicianPortalController extends Controller
             'parts' => $includeDetails
                 ? $job->parts()->latest()->get(['id', 'part_name', 'quantity', 'unit_cost', 'total_cost', 'notes', 'spare_part_id'])
                 : null,
+            'photos' => $includeDetails
+                ? $job->repairPhotos()->latest()->get()->map(fn (RepairPhoto $photo) => $this->mapPhoto($photo))
+                : null,
+        ];
+    }
+
+    private function mapPhoto(RepairPhoto $photo): array
+    {
+        return [
+            'id' => $photo->id,
+            'photo_type' => $photo->photo_type,
+            'photo_type_label' => str_replace('_', ' ', $photo->photo_type),
+            'url' => $photo->publicUrl(),
+            'description' => $photo->description,
+            'visible_to_customer' => (bool) $photo->visible_to_customer,
+            'original_name' => $photo->original_name,
+            'uploaded_by' => $photo->uploaded_by,
+            'uploaded_by_role' => $photo->uploaded_by_role,
+            'created_at' => $photo->created_at,
+            'created_at_formatted' => $photo->created_at?->format('M d, Y h:i A'),
         ];
     }
 

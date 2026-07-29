@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\ServiceCategory;
+use App\Models\ServiceItem;
 use App\Models\Shop;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -27,7 +30,7 @@ class ShopOnboardingController extends Controller
 
         $slug = $this->generateUniqueSlug($validated['shop_slug'] ?: Str::slug($validated['shop_name']));
 
-        $shop = DB::transaction(function () use ($validated, $slug) {
+        [$shop, $owner] = DB::transaction(function () use ($validated, $slug) {
             $shop = Shop::create([
                 'name' => $validated['shop_name'],
                 'slug' => $slug,
@@ -35,11 +38,11 @@ class ShopOnboardingController extends Controller
                 'phone' => $validated['shop_phone'] ?? null,
                 'address' => $validated['shop_address'] ?? null,
                 'subscription_plan' => 'starter',
-                'trial_ends_at' => now()->addDays(14),
+                'trial_ends_at' => null,
                 'is_active' => true,
             ]);
 
-            User::create([
+            $owner = User::create([
                 'shop_id' => $shop->id,
                 'name' => $validated['owner_name'],
                 'email' => $validated['owner_email'],
@@ -48,11 +51,23 @@ class ShopOnboardingController extends Controller
                 'is_active' => true,
             ]);
 
-            return $shop;
+            $this->createDefaultServiceCatalog($shop);
+
+            return [$shop, $owner];
         });
 
+        Auth::login($owner);
+        $request->session()->regenerate();
+        $request->session()->regenerateToken();
+
+        $owner->forceFill([
+            'last_login_at' => now(),
+        ])->save();
+
+        $owner->loadMissing('shop');
+
         return response()->json([
-            'message' => 'Shop workspace created successfully. You can now sign in to manage your repair operations.',
+            'message' => 'Shop workspace created successfully. You can sign in to explore preview mode, but subscription payment is required before saving records or transactions.',
             'shop' => [
                 'name' => $shop->name,
                 'slug' => $shop->slug,
@@ -61,6 +76,8 @@ class ShopOnboardingController extends Controller
             'owner' => [
                 'email' => $validated['owner_email'],
             ],
+            'user' => $this->formatOwner($owner),
+            'csrf_token' => csrf_token(),
         ], 201);
     }
 
@@ -95,5 +112,75 @@ class ShopOnboardingController extends Controller
         }
 
         return $slug;
+    }
+
+    private function createDefaultServiceCatalog(Shop $shop): void
+    {
+        foreach ($this->defaultCatalog() as $categoryIndex => $category) {
+            $serviceCategory = ServiceCategory::create([
+                'shop_id' => $shop->id,
+                'name' => $category['name'],
+                'description' => $category['description'],
+                'sort_order' => $categoryIndex + 1,
+                'is_active' => true,
+            ]);
+
+            foreach ($category['services'] as $serviceIndex => $serviceName) {
+                ServiceItem::create([
+                    'shop_id' => $shop->id,
+                    'service_category_id' => $serviceCategory->id,
+                    'name' => $serviceName,
+                    'sort_order' => $serviceIndex + 1,
+                    'is_active' => true,
+                ]);
+            }
+        }
+    }
+
+    private function formatOwner(User $user): array
+    {
+        return [
+            'id' => $user->id,
+            'shop_id' => $user->shop_id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->role,
+            'shop' => $user->shop ? [
+                'id' => $user->shop->id,
+                'name' => $user->shop->name,
+                'slug' => $user->shop->slug,
+                'logo_url' => $user->shop->logoUrl(),
+                'access_until' => $user->shop->trial_ends_at,
+                'access_until_formatted' => $user->shop->trial_ends_at?->format('M d, Y'),
+                'has_active_access' => $user->shop->hasActiveAccess(),
+                'is_close_out_mode' => $user->shop->isInCloseOutMode(),
+            ] : null,
+        ];
+    }
+
+    private function defaultCatalog(): array
+    {
+        return [
+            [
+                'name' => 'Laptop',
+                'description' => 'Laptop diagnostics, parts replacement, software, and upgrades.',
+                'services' => ['Motherboard Repair', 'LCD Replacement', 'Keyboard Replacement', 'Reformat', 'RAM/SSD Upgrade', 'No Power', 'No Display', 'Cleaning / Repaste'],
+            ],
+            [
+                'name' => 'Cellphone',
+                'description' => 'Mobile phone hardware and software repair services.',
+                'services' => ['Motherboard Repair', 'LCD Replacement', 'Battery Replacement', 'Bypass', 'Software Update', 'No Display Issue', 'Water Damage'],
+            ],
+            [
+                'name' => 'Printer',
+                'description' => 'Printer repair, maintenance, and setup.',
+                'services' => ['Printer Diagnosis', 'Ink System Repair', 'Paper Jam Repair', 'Print Head Cleaning', 'Roller Replacement', 'Driver Setup'],
+            ],
+            [
+                'name' => 'CCTV',
+                'description' => 'CCTV installation, replacement, setup, and support.',
+                'services' => ['CCTV Installation', 'Camera Replacement', 'DVR/NVR Setup', 'Cable Layout', 'Remote Viewing Setup', 'Troubleshooting'],
+            ],
+        ];
     }
 }

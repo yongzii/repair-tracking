@@ -1,13 +1,11 @@
 <script setup>
 import { reactive, ref, watch } from 'vue';
 import AppLink from '../components/AppLink.vue';
-import { isCsrfMismatch, refreshCsrfToken } from '../composables/auth';
+import { isCsrfMismatch, refreshCsrfToken, setAuthenticatedUser } from '../composables/auth';
 import { navigate } from '../navigation';
 
 const loading = ref(false);
 const errorMessage = ref('');
-const successMessage = ref('');
-const createdTrackingUrl = ref('');
 
 const form = reactive({
     shop_name: '',
@@ -53,21 +51,15 @@ const submit = async () => {
     try {
         await refreshCsrfToken();
         const { data } = await window.axios.post('/api/onboarding/register-shop', form);
-        successMessage.value = data.message || 'Shop workspace created successfully.';
-        createdTrackingUrl.value = data.shop?.tracking_url || '';
-        window.setTimeout(() => {
-            navigate('/login', { replace: true });
-        }, 1200);
+        setAuthenticatedUser(data.user, data.csrf_token);
+        navigate('/admin', { replace: true });
     } catch (error) {
         if (isCsrfMismatch(error)) {
             try {
                 await refreshCsrfToken();
                 const { data } = await window.axios.post('/api/onboarding/register-shop', form);
-                successMessage.value = data.message || 'Shop workspace created successfully.';
-                createdTrackingUrl.value = data.shop?.tracking_url || '';
-                window.setTimeout(() => {
-                    navigate('/login', { replace: true });
-                }, 1200);
+                setAuthenticatedUser(data.user, data.csrf_token);
+                navigate('/admin', { replace: true });
                 return;
             } catch (retryError) {
                 error = retryError;
@@ -97,11 +89,11 @@ const submit = async () => {
         <div class="mt-8 space-y-4 text-sm text-slate-300">
           <div class="rounded-xl border border-white/10 bg-white/5 p-4">
             <p class="font-bold text-white">What you get first</p>
-            <p class="mt-1">A separate shop workspace, owner login, and a public tracking link unique to your business.</p>
+            <p class="mt-1">A separate shop workspace, owner login, and a public tracking link reserved for your business.</p>
           </div>
           <div class="rounded-xl border border-white/10 bg-white/5 p-4">
-            <p class="font-bold text-white">Built for repair operations</p>
-            <p class="mt-1">Start with job orders, customer tracking, inventory monitoring, and staff access.</p>
+            <p class="font-bold text-white">Activation required</p>
+            <p class="mt-1">You can explore preview mode first. Saving records and transactions opens after subscription payment is recorded.</p>
           </div>
         </div>
 
@@ -117,11 +109,6 @@ const submit = async () => {
         </div>
 
         <div v-if="errorMessage" class="mb-4 p-4 rounded-lg border border-rose-200 bg-rose-50 text-rose-700">{{ errorMessage }}</div>
-        <div v-if="successMessage" class="mb-4 p-4 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700">
-          {{ successMessage }}
-          <p v-if="createdTrackingUrl" class="mt-2 text-sm break-all">{{ createdTrackingUrl }}</p>
-        </div>
-
         <form class="grid grid-cols-1 md:grid-cols-2 gap-4" @submit.prevent="submit">
           <label class="space-y-2 md:col-span-2">
             <span class="text-sm font-bold text-slate-700">Shop Name</span>

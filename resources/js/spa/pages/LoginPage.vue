@@ -1,7 +1,7 @@
 <script setup>
 import { reactive, ref } from 'vue';
 import AppLink from '../components/AppLink.vue';
-import { adminRoles, login, authState } from '../composables/auth';
+import { adminRoles, login, authState, platformRoles } from '../composables/auth';
 import { navigate } from '../navigation';
 import { appConfig } from '../config';
 
@@ -13,7 +13,9 @@ const form = reactive({
 const loading = ref(false);
 const errorMessage = ref('');
 
-if ([...adminRoles, 'staff'].includes(authState.user?.role)) {
+if (platformRoles.includes(authState.user?.role)) {
+    navigate('/platform', { replace: true });
+} else if ([...adminRoles, 'staff'].includes(authState.user?.role)) {
     navigate('/admin', { replace: true });
 } else if (authState.user?.role === 'technician') {
     navigate('/technician', { replace: true });
@@ -25,7 +27,9 @@ const submit = async () => {
 
     try {
         await login(form);
-        if (authState.user?.role === 'technician') {
+        if (platformRoles.includes(authState.user?.role)) {
+            navigate('/platform', { replace: true });
+        } else if (authState.user?.role === 'technician') {
             navigate('/technician', { replace: true });
         } else {
             navigate('/admin', { replace: true });

@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { adminRoles, authState, logout } from '../composables/auth';
 import { useNavigation, navigate } from '../navigation';
 import AppLink from '../components/AppLink.vue';
@@ -33,11 +33,102 @@ const isAdmin = computed(() => adminRoles.includes(user.value?.role));
 const canViewInventory = computed(() => [...adminRoles, 'staff'].includes(user.value?.role));
 const shopName = computed(() => user.value?.shop?.name || appConfig.name);
 const shopSlug = computed(() => user.value?.shop?.slug || '');
+const shopLogo = computed(() => user.value?.shop?.logo_url || '');
+const isCloseOutMode = computed(() => Boolean(user.value?.shop?.is_close_out_mode));
+const isPreviewMode = computed(() => Boolean(user.value?.shop && !user.value.shop.has_active_access && !user.value.shop.is_close_out_mode));
+const accessUntil = computed(() => user.value?.shop?.access_until_formatted || '');
 const trackingPath = computed(() => shopSlug.value ? `/shops/${shopSlug.value}/track` : '/track');
+const showSubscribeModal = ref(false);
+const subscriptionLoading = ref(false);
+const subscriptionSubmitting = ref(false);
+const subscriptionError = ref('');
+const subscriptionSuccess = ref('');
+const subscriptionSettings = ref(null);
+const pendingSubscriptionRequest = ref(null);
+const subscriptionForm = ref({
+    plan_key: '',
+    payment_method_key: '',
+    reference_number: '',
+    proof: null,
+});
+
+const subscriptionPlans = computed(() => subscriptionSettings.value?.plans || []);
+const subscriptionMethods = computed(() => subscriptionSettings.value?.payment_methods || []);
+const selectedPlan = computed(() => subscriptionPlans.value.find((plan) => plan.key === subscriptionForm.value.plan_key));
+const selectedMethod = computed(() => subscriptionMethods.value.find((method) => method.key === subscriptionForm.value.payment_method_key));
+
+const formatCurrency = (value) => {
+    const amount = Number(value || 0);
+    return `PHP ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
 
 const onLogout = async () => {
     await logout();
     navigate('/login', { replace: true });
+};
+
+const loadSubscriptionOptions = async () => {
+    subscriptionLoading.value = true;
+    subscriptionError.value = '';
+
+    try {
+        const { data } = await window.axios.get('/api/admin/subscription/options');
+        subscriptionSettings.value = data.settings;
+        pendingSubscriptionRequest.value = data.pending_request;
+        if (!subscriptionForm.value.plan_key && data.settings?.plans?.[0]) {
+            subscriptionForm.value.plan_key = data.settings.plans[0].key;
+        }
+        if (!subscriptionForm.value.payment_method_key && data.settings?.payment_methods?.[0]) {
+            subscriptionForm.value.payment_method_key = data.settings.payment_methods[0].key;
+        }
+    } catch (error) {
+        subscriptionError.value = error?.response?.data?.message || 'Unable to load subscription options.';
+    } finally {
+        subscriptionLoading.value = false;
+    }
+};
+
+const openSubscribeModal = async () => {
+    showSubscribeModal.value = true;
+    subscriptionSuccess.value = '';
+    if (!subscriptionSettings.value) {
+        await loadSubscriptionOptions();
+    }
+};
+
+const onProofChange = (event) => {
+    subscriptionForm.value.proof = event.target.files?.[0] || null;
+};
+
+const submitSubscriptionRequest = async () => {
+    subscriptionSubmitting.value = true;
+    subscriptionError.value = '';
+    subscriptionSuccess.value = '';
+
+    try {
+        const formData = new FormData();
+        formData.append('plan_key', subscriptionForm.value.plan_key);
+        formData.append('payment_method_key', subscriptionForm.value.payment_method_key);
+        formData.append('reference_number', subscriptionForm.value.reference_number || '');
+        if (subscriptionForm.value.proof) {
+            formData.append('proof', subscriptionForm.value.proof);
+        }
+
+        const { data } = await window.axios.post('/api/admin/subscription/requests', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        pendingSubscriptionRequest.value = data.subscription_request;
+        subscriptionSuccess.value = data.message || 'Subscription request submitted.';
+        subscriptionForm.value.reference_number = '';
+        subscriptionForm.value.proof = null;
+    } catch (error) {
+        const firstError = error?.response?.data?.errors
+            ? Object.values(error.response.data.errors)[0]?.[0]
+            : null;
+        subscriptionError.value = firstError || error?.response?.data?.message || 'Unable to submit subscription request.';
+    } finally {
+        subscriptionSubmitting.value = false;
+    }
 };
 </script>
 
@@ -46,13 +137,17 @@ const onLogout = async () => {
     <aside class="sidebar app-scrollbar flex min-h-screen w-72 shrink-0 flex-col overflow-hidden">
       <div class="border-b border-white/10 p-5">
         <AppLink to="/admin" class="flex items-start gap-3">
-          <span class="mt-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white text-sm font-bold text-slate-950">RS</span>
+          <span class="mt-1 flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white text-sm font-bold text-slate-950">
+            <img v-if="shopLogo" :src="shopLogo" alt="Shop logo" class="h-full w-full object-contain p-1.5" />
+            <span v-else>{{ (shopName || 'RS').slice(0, 2).toUpperCase() }}</span>
+          </span>
           <span class="min-w-0">
             <span class="block truncate text-xl font-semibold sidebar-title text-white">{{ shopName }}</span>
             <span class="mt-1 block text-sm text-slate-300">{{ appConfig.tagline }}</span>
           </span>
         </AppLink>
         <p v-if="shopSlug" class="mt-4 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold uppercase tracking-[0.15em] text-teal-200">Shop Code: {{ shopSlug }}</p>
+        <p v-if="isPreviewMode" class="mt-3 rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-100">Preview Mode</p>
       </div>
 
       <nav class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto pb-6">
@@ -144,7 +239,101 @@ const onLogout = async () => {
 
       <div class="app-scrollbar flex-1 overflow-auto">
         <div class="space-y-4 p-6">
-          <slot />
+          <div v-if="isCloseOutMode" class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <p class="font-bold">Shop access expired{{ accessUntil ? ` on ${accessUntil}` : '' }}.</p>
+            <p class="mt-1">Close-out mode is active: existing job orders can still be completed and released, but new intake is locked until the subscription is renewed.</p>
+          </div>
+          <div v-if="isPreviewMode" class="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+            <span>Preview mode: subscription required before saving records or processing transactions.</span>
+            <button type="button" class="shrink-0 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white hover:bg-slate-800" @click="openSubscribeModal">
+              Subscribe Now
+            </button>
+          </div>
+          <div class="relative">
+            <div :class="isPreviewMode ? 'blur-[3px] opacity-55' : ''" class="transition duration-200">
+              <slot />
+            </div>
+            <div v-if="isPreviewMode" class="pointer-events-none absolute inset-x-0 top-6 flex justify-center">
+              <span class="rounded-full bg-slate-950/85 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white shadow-lg">
+                Subscribe to unlock
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="showSubscribeModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm" @click.self="showSubscribeModal = false">
+      <div class="w-full max-w-lg rounded-xl bg-white shadow-2xl shadow-slate-950/20">
+        <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
+          <div>
+            <p class="text-xs font-bold uppercase tracking-[0.16em] text-teal-700">Subscription</p>
+            <h3 class="mt-1 text-xl font-bold text-slate-950">Activate {{ shopName }}</h3>
+          </div>
+          <button type="button" class="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-bold text-slate-600 hover:bg-slate-50" @click="showSubscribeModal = false">Close</button>
+        </div>
+
+        <div class="space-y-4 px-6 py-5 text-sm text-slate-700">
+          <p>{{ subscriptionSettings?.instructions || 'Choose a plan, pay using an available method, then upload proof for verification.' }}</p>
+
+          <div v-if="subscriptionError" class="rounded-lg border border-rose-200 bg-rose-50 p-3 font-semibold text-rose-700">{{ subscriptionError }}</div>
+          <div v-if="subscriptionSuccess" class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 font-semibold text-emerald-700">{{ subscriptionSuccess }}</div>
+          <div v-if="subscriptionLoading" class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-500">Loading subscription options...</div>
+
+          <div v-if="pendingSubscriptionRequest" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+            <p class="font-bold">Pending verification</p>
+            <p class="mt-1 text-xs">{{ pendingSubscriptionRequest.plan_name }} - {{ formatCurrency(pendingSubscriptionRequest.amount) }} via {{ pendingSubscriptionRequest.payment_method_name }}</p>
+            <p class="mt-1 text-xs">Submitted {{ pendingSubscriptionRequest.created_at_formatted }}</p>
+          </div>
+
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <p class="text-xs font-bold uppercase text-slate-500">Workspace Code</p>
+            <p class="mt-1 font-bold text-slate-950">{{ shopSlug || 'Not assigned' }}</p>
+          </div>
+
+          <form class="space-y-4" @submit.prevent="submitSubscriptionRequest">
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <label v-for="plan in subscriptionPlans" :key="plan.key" class="cursor-pointer rounded-lg border p-3" :class="subscriptionForm.plan_key === plan.key ? 'border-teal-300 bg-teal-50 ring-2 ring-teal-100' : 'border-slate-200'">
+                <input v-model="subscriptionForm.plan_key" type="radio" class="sr-only" :value="plan.key" />
+                <p class="font-bold text-slate-950">{{ plan.name }}</p>
+                <p class="mt-1 text-xs text-slate-500">{{ formatCurrency(plan.amount) }}</p>
+                <p class="mt-1 text-xs text-slate-500">{{ plan.duration_months }} month{{ plan.duration_months === 1 ? '' : 's' }}</p>
+              </label>
+            </div>
+
+            <label class="block space-y-2">
+              <span class="text-xs font-bold uppercase text-slate-500">Payment Method</span>
+              <select v-model="subscriptionForm.payment_method_key" class="w-full rounded-lg border border-slate-300 px-3 py-2">
+                <option v-for="method in subscriptionMethods" :key="method.key" :value="method.key">{{ method.name }}</option>
+              </select>
+            </label>
+
+            <div v-if="selectedMethod" class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p class="font-bold text-slate-950">{{ selectedMethod.name }}</p>
+              <p v-if="selectedMethod.account_name" class="mt-1 text-xs text-slate-600">Account name: {{ selectedMethod.account_name }}</p>
+              <p v-if="selectedMethod.account_number" class="mt-1 text-xs text-slate-600">Account number: {{ selectedMethod.account_number }}</p>
+              <p v-if="selectedMethod.instructions" class="mt-2 text-xs text-slate-500">{{ selectedMethod.instructions }}</p>
+            </div>
+
+            <div v-if="selectedPlan" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+              <p class="font-bold">Amount to pay: {{ formatCurrency(selectedPlan.amount) }}</p>
+              <p class="mt-1 text-xs">After payment verification, your workspace will be activated by the platform admin.</p>
+            </div>
+
+            <label class="block space-y-2">
+              <span class="text-xs font-bold uppercase text-slate-500">Reference Number</span>
+              <input v-model="subscriptionForm.reference_number" class="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="GCash / bank reference optional" />
+            </label>
+
+            <label class="block space-y-2">
+              <span class="text-xs font-bold uppercase text-slate-500">Proof of Payment</span>
+              <input type="file" accept="image/*,.pdf" class="w-full rounded-lg border border-slate-300 px-3 py-2" :required="!pendingSubscriptionRequest" @change="onProofChange" />
+            </label>
+
+            <button type="submit" class="w-full rounded-lg bg-teal-600 px-4 py-3 font-bold text-white hover:bg-teal-700 disabled:opacity-60" :disabled="subscriptionSubmitting || subscriptionLoading">
+              {{ subscriptionSubmitting ? 'Submitting...' : 'Submit Payment Proof' }}
+            </button>
+          </form>
         </div>
       </div>
     </div>

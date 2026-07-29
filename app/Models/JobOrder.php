@@ -13,15 +13,25 @@ class JobOrder extends Model
     protected $fillable = [
         'shop_id',
         'job_order_number',
+        'service_type',
+        'warranty_parent_job_order_id',
         'customer_name',
         'customer_contact',
         'customer_email',
         'customer_phone',
         'device_type',
+        'service_category_id',
+        'service_item_id',
         'brand',
         'model',
         'serial_number',
         'problem_description',
+        'received_by',
+        'included_accessories',
+        'repair_approved_at',
+        'repair_approved_by_customer',
+        'repair_approval_recorded_by',
+        'repair_approval_notes',
         'current_status',
         'priority',
         'estimated_cost',
@@ -40,12 +50,15 @@ class JobOrder extends Model
         'estimated_completion',
         'picked_up_at',
         'picked_up_by',
+        'pickup_override_by',
+        'pickup_override_reason',
         'technician_id',
         'technician_rating',
     ];
 
     protected $casts = [
         'picked_up_at' => 'datetime',
+        'repair_approved_at' => 'datetime',
         'payment_date' => 'date',
         'estimated_completion' => 'datetime',
         'parts_cost' => 'decimal:2',
@@ -75,9 +88,44 @@ class JobOrder extends Model
         return $this->hasMany(JobOrderPayment::class);
     }
 
+    public function repairPhotos()
+    {
+        return $this->hasMany(RepairPhoto::class);
+    }
+
+    public function customerNotifications()
+    {
+        return $this->hasMany(CustomerNotification::class);
+    }
+
+    public function warrantyAssessments()
+    {
+        return $this->hasMany(WarrantyAssessment::class);
+    }
+
+    public function warrantyParentJobOrder()
+    {
+        return $this->belongsTo(JobOrder::class, 'warranty_parent_job_order_id');
+    }
+
+    public function warrantyServiceJobOrders()
+    {
+        return $this->hasMany(JobOrder::class, 'warranty_parent_job_order_id');
+    }
+
     public function technician()
     {
         return $this->belongsTo(Technician::class);
+    }
+
+    public function serviceCategory()
+    {
+        return $this->belongsTo(ServiceCategory::class);
+    }
+
+    public function serviceItem()
+    {
+        return $this->belongsTo(ServiceItem::class);
     }
 
     public function getTimelineAttribute()
@@ -105,6 +153,15 @@ class JobOrder extends Model
     public function partsTotal(): float
     {
         return (float) $this->parts()->sum('total_cost');
+    }
+
+    public function repairHasStarted(): bool
+    {
+        if (in_array($this->current_status, ['IN_PROGRESS', 'READY_FOR_PICKUP', 'PICKED_UP'], true)) {
+            return true;
+        }
+
+        return $this->statusHistories()->where('status', 'IN_PROGRESS')->exists();
     }
 }
 
