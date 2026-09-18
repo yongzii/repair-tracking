@@ -134,41 +134,23 @@ class TrackingController extends Controller
             : null;
 
         return [
-            'id' => $jobOrder->id,
             'job_order_number' => $jobOrder->job_order_number,
             'service_type' => $jobOrder->service_type ?? 'STANDARD',
             'is_warranty_service' => ($jobOrder->service_type ?? 'STANDARD') === 'WARRANTY_SERVICE',
             'warranty_parent_job_order' => $jobOrder->warrantyParentJobOrder ? [
                 'job_order_number' => $jobOrder->warrantyParentJobOrder->job_order_number,
-                'created_at_formatted' => $jobOrder->warrantyParentJobOrder->created_at?->format('M d, Y'),
-                'problem_description' => $jobOrder->warrantyParentJobOrder->problem_description,
             ] : null,
             'customer_name' => $jobOrder->customer_name,
-            'customer_email' => $jobOrder->customer_email,
-            'customer_phone' => $jobOrder->customer_phone,
-            'customer_contact' => $jobOrder->customer_contact,
             'device_type' => $jobOrder->device_type,
             'brand' => $jobOrder->brand,
             'model' => $jobOrder->model,
-            'problem_description' => $jobOrder->problem_description,
             'current_status' => $jobOrder->current_status,
-            'priority' => $jobOrder->priority,
-            'payment_status' => $jobOrder->payment_status ?? 'PENDING',
-            'total_cost' => (float) ($jobOrder->total_cost ?? 0),
-            'amount_paid' => (float) ($jobOrder->amount_paid ?? 0),
-            'balance' => round(max((float) ($jobOrder->total_cost ?? 0) - (float) ($jobOrder->amount_paid ?? 0), 0), 2),
-            'is_fully_paid' => ((float) ($jobOrder->total_cost ?? 0) <= 0)
-                || ((float) ($jobOrder->amount_paid ?? 0) >= (float) ($jobOrder->total_cost ?? 0)),
-            'picked_up_at' => $jobOrder->picked_up_at,
-            'picked_up_by' => $jobOrder->picked_up_by,
-            'created_at' => $jobOrder->created_at,
             'created_at_formatted' => $jobOrder->created_at?->format('M d, Y'),
             'picked_up_at_formatted' => $jobOrder->picked_up_at
                 ? $jobOrder->picked_up_at->format('M d, Y \a\t h:i A')
                 : null,
             'warranty_days' => $warrantyDays,
             'warranty_details' => $jobOrder->warranty_details,
-            'warranty_expires_at' => $warrantyExpiresAt,
             'warranty_expires_at_formatted' => $warrantyExpiresAt?->format('M d, Y'),
             'is_under_warranty' => $warrantyExpiresAt ? now()->lessThanOrEqualTo($warrantyExpiresAt) : false,
         ];
@@ -184,7 +166,6 @@ class TrackingController extends Controller
                     'id' => $history->id,
                     'status' => $history->status,
                     'note' => $history->note,
-                    'created_at' => $history->created_at,
                     'created_at_formatted' => $history->created_at?->format('M d, Y \a\t h:i A'),
                 ];
             })
@@ -203,7 +184,6 @@ class TrackingController extends Controller
                 'photo_type_label' => str_replace('_', ' ', $photo->photo_type),
                 'url' => $photo->publicUrl(),
                 'description' => $photo->description,
-                'created_at' => $photo->created_at,
                 'created_at_formatted' => $photo->created_at?->format('M d, Y \a\t h:i A'),
             ])
             ->all();

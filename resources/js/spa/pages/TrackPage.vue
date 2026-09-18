@@ -91,11 +91,6 @@ const deviceLabel = computed(() => {
     return [jobOrder.value.brand, jobOrder.value.model].filter(Boolean).join(' ') || jobOrder.value.device_type;
 });
 
-const formatCurrency = (value) => {
-    const amount = Number(value || 0);
-    return `PHP ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
-
 const fetchTracking = async (number) => {
     loading.value = true;
     errorMessage.value = '';
@@ -154,7 +149,7 @@ const onSearch = () => {
               <p class="text-xs font-bold uppercase text-teal-300">Customer repair tracking</p>
               <h1 class="mt-3 font-display text-4xl leading-tight">Track Your Repair</h1>
               <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-                View the latest repair status, payment balance, warranty details, and customer-visible proof photos.
+                View the latest repair status, warranty details, and customer-visible proof photos.
               </p>
             </div>
             <div class="flex flex-wrap gap-2">
@@ -246,7 +241,7 @@ const onSearch = () => {
           <div v-if="jobOrder.current_status === 'PICKED_UP'" class="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
             <p class="font-bold">RELEASED</p>
             <p class="mt-1">
-              This unit was released<span v-if="jobOrder.picked_up_by"> to {{ jobOrder.picked_up_by }}</span><span v-if="jobOrder.picked_up_at_formatted"> on {{ jobOrder.picked_up_at_formatted }}</span>.
+              This unit was released<span v-if="jobOrder.picked_up_at_formatted"> on {{ jobOrder.picked_up_at_formatted }}</span>.
             </p>
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
@@ -268,41 +263,6 @@ const onSearch = () => {
               <p class="font-semibold text-slate-900">{{ jobOrder.created_at_formatted }}</p>
             </div>
           </div>
-        </div>
-
-        <div class="public-card p-6">
-          <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 class="text-lg font-bold text-slate-950">Payment Summary</h3>
-              <p class="mt-1 text-sm text-slate-500">Balance overview for claiming or release.</p>
-            </div>
-            <span
-              class="rounded-full px-3 py-1 text-xs font-bold ring-1"
-              :class="jobOrder.is_fully_paid ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' : 'bg-amber-50 text-amber-700 ring-amber-200'"
-            >
-              {{ jobOrder.is_fully_paid ? 'FULLY PAID' : 'BALANCE DUE' }}
-            </span>
-          </div>
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p class="text-xs font-bold uppercase text-slate-400">Total</p>
-              <p class="mt-1 text-lg font-bold text-slate-950">{{ formatCurrency(jobOrder.total_cost) }}</p>
-            </div>
-            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p class="text-xs font-bold uppercase text-slate-400">Paid</p>
-              <p class="mt-1 text-lg font-bold text-emerald-700">{{ formatCurrency(jobOrder.amount_paid) }}</p>
-            </div>
-            <div class="rounded-xl border border-slate-200 p-4" :class="jobOrder.balance > 0 ? 'bg-amber-50 border-amber-200' : 'bg-emerald-50 border-emerald-200'">
-              <p class="text-xs font-bold uppercase" :class="jobOrder.balance > 0 ? 'text-amber-600' : 'text-emerald-600'">Balance</p>
-              <p class="mt-1 text-lg font-bold" :class="jobOrder.balance > 0 ? 'text-amber-800' : 'text-emerald-700'">{{ formatCurrency(jobOrder.balance) }}</p>
-            </div>
-          </div>
-          <p v-if="jobOrder.balance > 0 && jobOrder.current_status !== 'PICKED_UP'" class="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            Please settle the remaining balance before the unit is released.
-          </p>
-          <p v-if="jobOrder.is_warranty_service" class="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
-            Warranty service jobs are recorded with zero initial charge unless the shop confirms an approved exception.
-          </p>
         </div>
 
         <div v-if="jobOrder.warranty_days > 0 || warrantyAssessments.length" class="public-card p-6">

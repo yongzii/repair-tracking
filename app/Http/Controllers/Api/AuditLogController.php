@@ -12,8 +12,11 @@ class AuditLogController extends Controller
     public function index(Request $request)
     {
         $this->authorizeRoles($request, User::ROLE_ADMIN);
+        $shopId = $this->currentShopId($request);
 
-        $query = AuditLog::query()->latest();
+        $query = AuditLog::query()
+            ->where('shop_id', $shopId)
+            ->latest();
 
         if ($search = trim((string) $request->query('search', ''))) {
             $query->where(function ($builder) use ($search) {
@@ -67,8 +70,8 @@ class AuditLogController extends Controller
             'logs' => $logs,
             'filters' => [
                 'roles' => User::availableRoles(),
-                'modules' => AuditLog::query()->select('module')->distinct()->orderBy('module')->pluck('module'),
-                'actions' => AuditLog::query()->select('action')->distinct()->orderBy('action')->pluck('action'),
+                'modules' => AuditLog::query()->where('shop_id', $shopId)->select('module')->distinct()->orderBy('module')->pluck('module'),
+                'actions' => AuditLog::query()->where('shop_id', $shopId)->select('action')->distinct()->orderBy('action')->pluck('action'),
             ],
         ]);
     }
