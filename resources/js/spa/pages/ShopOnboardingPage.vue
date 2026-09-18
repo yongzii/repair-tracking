@@ -46,7 +46,6 @@ watch(
 const submit = async () => {
     loading.value = true;
     errorMessage.value = '';
-    successMessage.value = '';
 
     try {
         await refreshCsrfToken();

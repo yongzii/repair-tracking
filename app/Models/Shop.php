@@ -14,7 +14,6 @@ class Shop extends Model
         'address',
         'business_hours',
         'logo_path',
-        'primary_color',
         'default_warranty_days',
         'claim_terms',
         'warranty_terms',

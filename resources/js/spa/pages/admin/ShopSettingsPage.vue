@@ -31,7 +31,6 @@ const form = reactive({
     phone: '',
     address: '',
     business_hours: {},
-    primary_color: '#0f766e',
     default_warranty_days: 30,
     claim_terms: '',
     warranty_terms: '',
@@ -181,7 +180,6 @@ const loadShop = async () => {
             phone: data.shop.phone || '',
             address: data.shop.address || '',
             business_hours: normalizeBusinessHours(data.shop.business_hours),
-            primary_color: data.shop.primary_color || '#0f766e',
             default_warranty_days: data.shop.default_warranty_days ?? 30,
             claim_terms: data.shop.claim_terms || '',
             warranty_terms: data.shop.warranty_terms || '',
@@ -207,7 +205,6 @@ const saveShop = async () => {
             phone: form.phone || null,
             address: form.address || null,
             business_hours: normalizeBusinessHours(form.business_hours),
-            primary_color: form.primary_color || null,
             default_warranty_days: Number(form.default_warranty_days || 0),
             claim_terms: form.claim_terms || null,
             warranty_terms: form.warranty_terms || null,
@@ -517,12 +514,7 @@ onMounted(loadShop);
               </div>
             </section>
 
-            <div class="md:col-span-2 grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5 md:grid-cols-2">
-              <label class="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2">
-                <span class="text-xs font-bold uppercase text-slate-500">Primary Color</span>
-                <input v-model="form.primary_color" type="color" class="h-8 w-16 rounded border border-slate-300 p-1" />
-              </label>
-
+            <div class="md:col-span-2 grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
               <label class="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2">
                 <span class="text-xs font-bold uppercase text-slate-500">Warranty Days</span>
                 <input v-model.number="form.default_warranty_days" type="number" min="0" max="3650" class="w-24 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-right" required />

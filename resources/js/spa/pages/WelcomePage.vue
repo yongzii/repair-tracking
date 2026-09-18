@@ -9,9 +9,9 @@ const technicianPortal = computed(() => authState.user?.role === 'technician');
 const portalPath = computed(() => authState.user?.role === 'platform_admin' ? '/platform' : '/admin');
 
 const platformStats = [
-    { label: 'Repair queue', value: 'Organized', detail: 'Across intake, diagnosis, and pickup' },
-    { label: 'Parts inventory', value: 'Monitored', detail: 'Stock levels, usage, and requests' },
-    { label: 'Customer updates', value: 'Trackable', detail: 'Self-service tracking by job number' },
+    { label: 'Active workflow', value: '5 stages', detail: 'Intake to pickup in one organized queue' },
+    { label: 'Shop operations', value: 'Unified', detail: 'Jobs, parts, customers, and reports together' },
+    { label: 'Customer updates', value: 'Self-serve', detail: 'Repair status lookup by job order number' },
 ];
 
 const serviceSteps = [
@@ -22,18 +22,24 @@ const serviceSteps = [
     'Pickup',
 ];
 
+const boardMetrics = [
+    { label: 'Open jobs', value: '24' },
+    { label: 'Ready today', value: '7' },
+    { label: 'Low stock', value: '3' },
+];
+
 const featureGroups = [
     {
         title: 'Repair Operations',
-        text: 'Manage job orders, customer devices, technician assignments, and repair progress in one workspace.',
+        text: 'Create job orders, assign technicians, record diagnosis notes, and move each repair through a clear service flow.',
     },
     {
         title: 'Inventory Control',
-        text: 'Track spare parts, stock movements, and part requests needed to keep repair work moving.',
+        text: 'Monitor spare parts, stock movements, and technician part requests before they slow down active repairs.',
     },
     {
         title: 'Customer Visibility',
-        text: 'Let customers track repairs, submit inquiries, book drop-offs, and receive service updates.',
+        text: 'Give customers simple tracking, booking, and consultation links while your team stays focused on the queue.',
     },
 ];
 </script>
@@ -67,14 +73,14 @@ const featureGroups = [
 
       <div class="relative z-10 mx-auto grid max-w-7xl items-center gap-12 px-5 pb-12 pt-8 sm:px-8 lg:grid-cols-[1.02fr_0.98fr] lg:px-10 lg:pb-20 lg:pt-16">
         <div class="fade-up">
-          <p class="inline-flex items-center rounded-full border border-teal-200 bg-white/80 px-4 py-2 text-xs font-bold uppercase text-teal-700 shadow-sm">
+          <p class="inline-flex items-center rounded-full border border-teal-200 bg-white/80 px-4 py-2 text-xs font-bold uppercase tracking-[0.14em] text-teal-700 shadow-sm">
             SaaS repair tracking system
           </p>
           <h1 class="mt-6 max-w-4xl font-display text-5xl leading-[1.02] text-slate-950 sm:text-6xl lg:text-7xl">
-            {{ appConfig.name }}
+            Run every repair job from intake to pickup.
           </h1>
           <p class="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
-            A web-based platform for repair intake, service tracking, spare parts monitoring, customer updates, and shop operations.
+            {{ appConfig.name }} helps repair shops organize job orders, technician work, spare parts, payments, and customer updates in one focused workspace.
           </p>
           <p class="mt-3 max-w-xl text-sm font-medium text-slate-500">
             {{ appConfig.tagline }}
@@ -88,7 +94,7 @@ const featureGroups = [
           </div>
 
           <div class="mt-10 grid gap-3 sm:grid-cols-3">
-            <div v-for="stat in platformStats" :key="stat.label" class="rounded-lg border border-white bg-white/80 p-4 shadow-sm">
+            <div v-for="stat in platformStats" :key="stat.label" class="rounded-lg border border-white bg-white/85 p-4 shadow-sm ring-1 ring-slate-100/80">
               <p class="text-xl font-bold text-slate-950">{{ stat.value }}</p>
               <p class="mt-1 text-sm font-semibold text-slate-700">{{ stat.label }}</p>
               <p class="mt-1 text-xs leading-5 text-slate-500">{{ stat.detail }}</p>
@@ -101,13 +107,20 @@ const featureGroups = [
             <div class="overflow-hidden rounded-[1.45rem] bg-white">
               <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-4">
                 <div>
-                  <p class="text-xs font-bold uppercase text-slate-400">Operations Board</p>
+                  <p class="text-xs font-bold uppercase tracking-[0.12em] text-slate-400">Operations Board</p>
                   <p class="text-sm font-bold text-slate-900">Today&apos;s Repair Flow</p>
                 </div>
                 <span class="rounded-full bg-teal-100 px-3 py-1 text-xs font-bold text-teal-700">Live queue</span>
               </div>
 
               <div class="grid gap-5 p-5">
+                <div class="grid gap-3 sm:grid-cols-3">
+                  <div v-for="metric in boardMetrics" :key="metric.label" class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <p class="text-2xl font-bold text-slate-950">{{ metric.value }}</p>
+                    <p class="mt-1 text-xs font-semibold uppercase text-slate-500">{{ metric.label }}</p>
+                  </div>
+                </div>
+
                 <div class="rounded-xl bg-slate-950 p-5 text-white">
                   <div class="flex items-start justify-between gap-4">
                     <div>
@@ -128,11 +141,11 @@ const featureGroups = [
                   <div class="rounded-xl border border-slate-200 bg-white p-4">
                     <p class="text-xs font-bold uppercase text-slate-400">Technician</p>
                     <p class="mt-2 text-lg font-bold text-slate-950">Assigned Workspace</p>
-                    <p class="mt-2 text-sm leading-6 text-slate-500">Parts request, status notes, and repair updates are organized per job order.</p>
+                    <p class="mt-2 text-sm leading-6 text-slate-500">Parts requests, status notes, and repair photos stay attached to the job order.</p>
                   </div>
                   <div class="rounded-xl border border-slate-200 bg-white p-4">
                     <p class="text-xs font-bold uppercase text-slate-400">Payment</p>
-                    <p class="mt-2 text-lg font-bold text-slate-950">Balance: ₱1,250.00</p>
+                    <p class="mt-2 text-lg font-bold text-slate-950">Balance: PHP 1,250.00</p>
                     <p class="mt-2 text-sm leading-6 text-slate-500">Manual payments, invoices, and remaining balances stay visible to operations.</p>
                   </div>
                 </div>
@@ -153,7 +166,7 @@ const featureGroups = [
       </div>
 
       <div class="relative z-10 mx-auto grid max-w-7xl gap-4 px-5 pb-8 sm:px-8 md:grid-cols-3 lg:px-10">
-        <div v-for="feature in featureGroups" :key="feature.title" class="rounded-xl border border-slate-200 bg-white/90 p-5 shadow-sm">
+        <div v-for="feature in featureGroups" :key="feature.title" class="rounded-xl border border-slate-200 bg-white/90 p-5 shadow-sm ring-1 ring-slate-100/80">
           <p class="text-base font-bold text-slate-950">{{ feature.title }}</p>
           <p class="mt-2 text-sm leading-6 text-slate-600">{{ feature.text }}</p>
         </div>
