@@ -96,14 +96,20 @@ const fetchTracking = async (number) => {
     errorMessage.value = '';
     shopOptions.value = [];
 
+  const normalizedShop = shopSlug.value.trim().toLowerCase();
+  if (!normalizedShop) {
+    shop.value = null;
+    jobOrder.value = null;
+    timeline.value = [];
+    photos.value = [];
+    warrantyAssessments.value = [];
+    errorMessage.value = 'Shop code is required for tracking.';
+    loading.value = false;
+    return;
+  }
+
     try {
-        const request = shopSlug.value
-            ? window.axios.get(`/api/shops/${encodeURIComponent(shopSlug.value)}/track/${encodeURIComponent(number)}`)
-            : window.axios.get('/api/track', {
-                params: {
-                    job_order_number: number,
-                },
-            });
+    const request = window.axios.get(`/api/shops/${encodeURIComponent(normalizedShop)}/track/${encodeURIComponent(number)}`);
         const { data } = await request;
         shop.value = data.shop || null;
         jobOrder.value = data.jobOrder;
@@ -131,11 +137,11 @@ const onSearch = () => {
     const normalized = jobOrderNumber.value.trim().toUpperCase();
     if (!normalized) return;
     const normalizedShop = shopSlug.value.trim().toLowerCase();
-    if (normalizedShop) {
-        navigate(`/shops/${encodeURIComponent(normalizedShop)}/track/${encodeURIComponent(normalized)}`);
+  if (!normalizedShop) {
+    errorMessage.value = 'Shop code is required for tracking.';
         return;
     }
-    navigate(`/track/${encodeURIComponent(normalized)}`);
+  navigate(`/shops/${encodeURIComponent(normalizedShop)}/track/${encodeURIComponent(normalized)}`);
 };
 </script>
 
@@ -166,6 +172,7 @@ const onSearch = () => {
             type="text"
             placeholder="Shop code (recommended)"
             class="w-full border border-slate-300 px-4 py-3"
+            required
           />
           <input
             v-model="jobOrderNumber"

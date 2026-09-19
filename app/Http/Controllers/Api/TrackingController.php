@@ -19,60 +19,36 @@ class TrackingController extends Controller
             'shop_slug' => ['nullable', 'string'],
         ]);
 
-        if (!empty($validated['shop_slug'])) {
-            $shop = Shop::where('slug', $validated['shop_slug'])->first();
-
-            if (!$shop || !$shop->is_active) {
-                return response()->json([
-                    'message' => 'Shop not found for the provided tracking code.',
-                ], 404);
-            }
-
-            return $this->showForShop($shop, $validated['job_order_number']);
-        }
-
-        $matches = JobOrder::query()
-            ->with('shop:id,name,slug')
-            ->whereHas('shop', fn ($query) => $query->where('is_active', true))
-            ->where('job_order_number', strtoupper($validated['job_order_number']))
-            ->get();
-
-        if ($matches->isEmpty()) {
+        if (empty($validated['shop_slug'])) {
             return response()->json([
-                'message' => 'Job Order not found.',
-            ], 404);
+                'message' => 'Shop code is required for tracking.',
+                'errors' => [
+                    'shop_slug' => ['The shop code field is required.'],
+                ],
+            ], 422);
         }
 
-        if ($matches->count() > 1) {
-            return response()->json([
-                'message' => 'Multiple shops matched this tracking number. Please enter the shop code shown on your receipt.',
-                'shops' => $matches
-                    ->map(fn (JobOrder $jobOrder) => [
-                        'name' => $jobOrder->shop?->name,
-                        'slug' => $jobOrder->shop?->slug,
-                        'tracking_url' => $jobOrder->shop ? url('/shops/' . $jobOrder->shop->slug . '/track/' . $jobOrder->job_order_number) : null,
-                    ])
-                    ->filter(fn (array $shop) => !empty($shop['slug']))
-                    ->values(),
-            ], 409);
-        }
-
-        return response()->json($this->buildTrackingResponse($matches->first()));
-    }
-
-    public function show(string $jobOrderNumber)
-    {
-        $jobOrder = JobOrder::where('job_order_number', strtoupper($jobOrderNumber))
-            ->whereHas('shop', fn ($query) => $query->where('is_active', true))
+        $shop = Shop::where('slug', $validated['shop_slug'])
+            ->where('is_active', true)
             ->first();
 
-        if (!$jobOrder) {
+        if (!$shop) {
             return response()->json([
-                'message' => 'Job Order not found.',
+                'message' => 'Job Order not found for this shop.',
             ], 404);
         }
 
-        return response()->json($this->buildTrackingResponse($jobOrder));
+        return $this->showForShop($shop, $validated['job_order_number']);
+    }
+
+    public function show(Request $request, string $jobOrderNumber)
+    {
+        return response()->json([
+            'message' => 'Shop code is required for tracking.',
+            'errors' => [
+                'shop_slug' => ['The shop code field is required.'],
+            ],
+        ], 422);
     }
 
     public function searchForShop(Request $request, Shop $shop)

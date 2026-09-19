@@ -17,7 +17,7 @@ class PublicTrackingRateLimitTest extends TestCase
 
         for ($request = 1; $request <= 30; $request++) {
             $this->getJson('/api/track?job_order_number=missing-tracking-number')
-                ->assertNotFound();
+                ->assertUnprocessable();
         }
 
         $this->getJson('/api/track?job_order_number=missing-tracking-number')
@@ -43,7 +43,7 @@ class PublicTrackingRateLimitTest extends TestCase
 
         for ($request = 1; $request <= 30; $request++) {
             $this->getJson('/api/track/missing-tracking-number')
-                ->assertNotFound();
+                ->assertUnprocessable();
         }
 
         $this->getJson('/api/track/missing-tracking-number')

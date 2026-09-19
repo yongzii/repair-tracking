@@ -394,11 +394,75 @@ class PlatformProductionSafetyTest extends TestCase
         ]))->assertNotFound();
 
         $this->getJson("/api/track/{$jobOrder->job_order_number}")
-            ->assertNotFound();
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Shop code is required for tracking.');
 
         $this->getJson('/api/track?' . http_build_query([
             'job_order_number' => $jobOrder->job_order_number,
-        ]))->assertNotFound();
+        ]))->assertUnprocessable()
+            ->assertJsonPath('message', 'Shop code is required for tracking.');
+    }
+
+    public function test_public_tracking_requires_shop_code_and_matches_the_same_shop(): void
+    {
+        $shopA = $this->createShop('Tracking Shop A');
+        $shopA->update([
+            'address' => 'Shop A Address',
+            'business_hours' => ['monday' => ['open' => true, 'open_time' => '08:00', 'close_time' => '17:00']],
+        ]);
+        $shopB = $this->createShop('Tracking Shop B');
+
+        $jobA = JobOrder::create([
+            'shop_id' => $shopA->id,
+            'job_order_number' => 'TRACK-SHOP-A-001',
+            'customer_name' => 'Customer A',
+            'customer_phone' => '09123456789',
+            'device_type' => 'Phone',
+            'problem_description' => 'No power.',
+            'current_status' => 'RECEIVED',
+        ]);
+        $jobB = JobOrder::create([
+            'shop_id' => $shopB->id,
+            'job_order_number' => 'TRACK-SHOP-B-001',
+            'customer_name' => 'Customer B',
+            'customer_phone' => '09123456780',
+            'device_type' => 'Laptop',
+            'problem_description' => 'No display.',
+            'current_status' => 'RECEIVED',
+        ]);
+
+        $this->getJson('/api/track?' . http_build_query([
+            'job_order_number' => $jobA->job_order_number,
+        ]))->assertUnprocessable()
+            ->assertJsonPath('message', 'Shop code is required for tracking.')
+            ->assertJsonPath('errors.shop_slug.0', 'The shop code field is required.');
+
+        $this->getJson('/api/track/' . $jobA->job_order_number)
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Shop code is required for tracking.');
+
+        $this->getJson('/api/track?' . http_build_query([
+            'shop_slug' => $shopA->slug,
+            'job_order_number' => $jobA->job_order_number,
+        ]))->assertOk()
+            ->assertJsonPath('shop.name', $shopA->name)
+            ->assertJsonPath('shop.address', 'Shop A Address')
+            ->assertJsonPath('shop.business_hours.monday.open_time', '08:00');
+
+        $this->getJson("/api/shops/{$shopA->slug}/track/{$jobA->job_order_number}")
+            ->assertOk();
+
+        $this->getJson("/api/shops/{$shopB->slug}/track/{$jobA->job_order_number}")
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Job Order not found for this shop.');
+
+        $this->getJson("/api/shops/{$shopA->slug}/track/does-not-exist")
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Job Order not found for this shop.');
+
+        $this->getJson("/api/shops/{$shopA->slug}/track/{$jobB->job_order_number}")
+            ->assertNotFound()
+            ->assertJsonPath('message', 'Job Order not found for this shop.');
     }
 
     private function createShop(string $name, bool $isActive = true): Shop
