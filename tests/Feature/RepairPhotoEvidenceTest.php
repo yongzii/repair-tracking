@@ -257,6 +257,47 @@ class RepairPhotoEvidenceTest extends TestCase
             ->assertOk();
     }
 
+    public function test_assigned_technician_can_set_photo_visibility_and_audit_change(): void
+    {
+        Storage::fake('local');
+
+        [$shop, $technicianUser] = $this->createShopUser(User::ROLE_TECHNICIAN);
+        $technician = Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'Visibility Tech',
+            'email' => $technicianUser->email,
+            'is_active' => true,
+        ]);
+        $jobOrder = $this->createJobOrder($shop, $technician->id);
+        $photo = $this->createPhoto($shop, $jobOrder, $technicianUser, false);
+
+        $this->actingAs($technicianUser)
+            ->postJson("/api/technician/job-orders/{$jobOrder->id}/photos/{$photo->id}/visibility", [
+                'visible_to_customer' => true,
+            ])
+            ->assertOk()
+            ->assertJsonPath('photo.id', $photo->id)
+            ->assertJsonPath('photo.visible_to_customer', true);
+
+        $this->assertDatabaseHas('repair_photos', [
+            'id' => $photo->id,
+            'visible_to_customer' => true,
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $technicianUser->id,
+            'shop_id' => $shop->id,
+            'action' => 'job_order.photo_visibility_updated',
+            'record_id' => $jobOrder->id,
+        ]);
+
+        $this->actingAs($technicianUser)
+            ->postJson("/api/technician/job-orders/{$jobOrder->id}/photos/{$photo->id}/visibility", [
+                'visible_to_customer' => false,
+            ])
+            ->assertOk()
+            ->assertJsonPath('photo.visible_to_customer', false);
+    }
+
     public function test_technician_cannot_retrieve_an_unassigned_job_photo(): void
     {
         Storage::fake('local');
@@ -299,6 +340,37 @@ class RepairPhotoEvidenceTest extends TestCase
 
         $this->actingAs($technicianUser)
             ->get("/api/technician/job-orders/{$jobOrder->id}/photos/{$photo->id}/file")
+            ->assertNotFound();
+    }
+
+    public function test_technician_cannot_change_visibility_for_another_job_or_shop(): void
+    {
+        Storage::fake('local');
+
+        [$shopA, $technicianUser] = $this->createShopUser(User::ROLE_TECHNICIAN);
+        $technician = Technician::create([
+            'shop_id' => $shopA->id,
+            'name' => 'Isolation Tech',
+            'email' => $technicianUser->email,
+            'is_active' => true,
+        ]);
+        $jobA = $this->createJobOrder($shopA, $technician->id);
+        $jobB = $this->createJobOrder($shopA);
+        [$shopB, $staffB] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOtherShop = $this->createJobOrder($shopB);
+        $photoB = $this->createPhoto($shopA, $jobB, $staffB, false);
+        $photoOtherShop = $this->createPhoto($shopB, $jobOtherShop, $staffB, false);
+
+        $this->actingAs($technicianUser)
+            ->postJson("/api/technician/job-orders/{$jobA->id}/photos/{$photoB->id}/visibility", [
+                'visible_to_customer' => true,
+            ])
+            ->assertNotFound();
+
+        $this->actingAs($technicianUser)
+            ->postJson("/api/technician/job-orders/{$jobOtherShop->id}/photos/{$photoOtherShop->id}/visibility", [
+                'visible_to_customer' => true,
+            ])
             ->assertNotFound();
     }
 

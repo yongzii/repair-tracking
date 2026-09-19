@@ -150,6 +150,7 @@ Route::middleware('web')->group(function () {
         Route::post('/job-orders/{jobOrder}/update-status', [TechnicianPortalController::class, 'updateStatus']);
         Route::post('/job-orders/{jobOrder}/photos', [TechnicianPortalController::class, 'storePhoto']);
         Route::delete('/job-orders/{jobOrder}/photos/{photo}', [TechnicianPortalController::class, 'deletePhoto']);
+        Route::post('/job-orders/{jobOrder}/photos/{photo}/visibility', [TechnicianPortalController::class, 'updatePhotoVisibility']);
         Route::get('/job-orders/{jobOrder}/photos/{photo}/file', [RepairPhotoController::class, 'showForTechnician'])->name('technician.job-order.photos.file');
         Route::post('/job-orders/{jobOrder}/parts', [TechnicianPortalController::class, 'addPart']);
         Route::delete('/job-orders/{jobOrder}/parts/{part}', [TechnicianPortalController::class, 'removePart']);

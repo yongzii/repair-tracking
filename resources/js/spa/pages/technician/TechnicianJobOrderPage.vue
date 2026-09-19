@@ -159,6 +159,21 @@ const deletePhoto = async (photo) => {
     }
 };
 
+  const togglePhotoVisibility = async (photo) => {
+    errorMessage.value = '';
+    successMessage.value = '';
+
+    try {
+      const { data } = await window.axios.post(`/api/technician/job-orders/${props.params.id}/photos/${photo.id}/visibility`, {
+        visible_to_customer: !photo.visible_to_customer,
+      });
+      Object.assign(photo, data.photo);
+      successMessage.value = data.message || 'Photo visibility updated.';
+    } catch (error) {
+      errorMessage.value = error?.response?.data?.message || 'Unable to update photo visibility.';
+    }
+  };
+
 const addPart = async () => {
     errorMessage.value = '';
     successMessage.value = '';
@@ -321,9 +336,14 @@ onMounted(loadJob);
                     <button type="button" class="text-sm font-semibold text-rose-600 hover:text-rose-700" @click="deletePhoto(photo)">Delete</button>
                   </div>
                   <p v-if="photo.description" class="text-sm text-slate-700">{{ photo.description }}</p>
-                  <p class="text-xs font-semibold" :class="photo.visible_to_customer ? 'text-emerald-700' : 'text-slate-500'">
+                  <button
+                    type="button"
+                    class="rounded-full px-3 py-1 text-xs font-semibold"
+                    :class="photo.visible_to_customer ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200'"
+                    @click="togglePhotoVisibility(photo)"
+                  >
                     {{ photo.visible_to_customer ? 'Visible to customer' : 'Internal only' }}
-                  </p>
+                  </button>
                   <p class="text-xs text-slate-500">Uploaded by {{ photo.uploaded_by || 'Unknown' }}</p>
                 </div>
               </div>

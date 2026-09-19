@@ -219,6 +219,43 @@ class TechnicianPortalController extends Controller
         ]);
     }
 
+    public function updatePhotoVisibility(Request $request, JobOrder $jobOrder, RepairPhoto $photo)
+    {
+        $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
+        $technician = $this->resolveTechnician($user);
+        $this->ensureSameShop($request, $jobOrder);
+        $this->ensureAssignedToTechnician($jobOrder, $technician);
+
+        if ((int) $photo->job_order_id !== (int) $jobOrder->id || (int) $photo->shop_id !== (int) $jobOrder->shop_id) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $validated = $request->validate([
+            'visible_to_customer' => ['required', 'boolean'],
+        ]);
+
+        $before = $photo->only(['visible_to_customer']);
+        $photo->update([
+            'visible_to_customer' => $validated['visible_to_customer'],
+        ]);
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'job_order.photo_visibility_updated',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: ($photo->visible_to_customer ? 'Published' : 'Hid') . " photo from customer tracking for {$jobOrder->job_order_number}.",
+            oldValues: [...$before, 'photo_id' => $photo->id],
+            newValues: [...$photo->fresh()->only(['visible_to_customer']), 'photo_id' => $photo->id]
+        );
+
+        return response()->json([
+            'message' => $photo->visible_to_customer ? 'Photo is now visible to customer.' : 'Photo is now internal only.',
+            'photo' => $this->mapPhoto($photo->fresh()),
+        ]);
+    }
+
     public function addPart(Request $request, JobOrder $jobOrder)
     {
         $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
