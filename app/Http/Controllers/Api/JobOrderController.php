@@ -770,7 +770,7 @@ class JobOrderController extends Controller
         ]);
 
         $file = $validated['photo'];
-        $path = $file->store("repair-photos/{$jobOrder->shop_id}/{$jobOrder->id}", 'public');
+        $path = $file->store("repair-photos/{$jobOrder->shop_id}/{$jobOrder->id}", 'local');
 
         $photo = RepairPhoto::create([
             'shop_id' => $jobOrder->shop_id,
@@ -848,7 +848,7 @@ class JobOrderController extends Controller
 
         $before = $photo->only(['photo_type', 'photo_path', 'original_name', 'description', 'uploaded_by']);
 
-        Storage::disk('public')->delete($photo->photo_path);
+        Storage::disk('local')->delete($photo->photo_path);
         $photo->delete();
 
         AuditLogger::log(
@@ -1529,11 +1529,6 @@ class JobOrderController extends Controller
         $this->authorizeRoles($request, User::ROLE_ADMIN);
     }
 
-    private function authorizeStaffOrAdmin(Request $request): User
-    {
-        return $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
-    }
-
     private function createCoveredWarrantyService(
         JobOrder $jobOrder,
         Request $request,
@@ -1795,7 +1790,7 @@ class JobOrderController extends Controller
             'id' => $photo->id,
             'photo_type' => $photo->photo_type,
             'photo_type_label' => str_replace('_', ' ', $photo->photo_type),
-            'url' => $photo->publicUrl(),
+            'url' => route('admin.job-order.photos.file', ['jobOrder' => $photo->job_order_id, 'photo' => $photo->id]),
             'description' => $photo->description,
             'visible_to_customer' => (bool) $photo->visible_to_customer,
             'original_name' => $photo->original_name,

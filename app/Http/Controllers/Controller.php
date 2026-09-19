@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Database\Eloquent\Model;
+use App\Models\JobOrder;
+use App\Models\Technician;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -58,6 +60,37 @@ abstract class Controller
         }
 
         return (int) $user->shop_id;
+    }
+
+    protected function authorizeStaffOrAdmin(Request $request): User
+    {
+        return $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+    }
+
+    protected function resolveTechnician(User $user): Technician
+    {
+        $technician = Technician::query()
+            ->where('shop_id', $user->shop_id)
+            ->where('email', $user->email)
+            ->where('is_active', true)
+            ->first();
+
+        if (!$technician) {
+            abort(Response::HTTP_FORBIDDEN, 'No active technician profile is linked to this account.');
+        }
+
+        return $technician;
+    }
+
+    protected function ensureAssignedToTechnician(JobOrder $jobOrder, Technician $technician): void
+    {
+        if ((int) $jobOrder->shop_id !== (int) $technician->shop_id) {
+            abort(Response::HTTP_FORBIDDEN, 'You can only access jobs from your assigned shop.');
+        }
+
+        if ((int) $jobOrder->technician_id !== (int) $technician->id) {
+            abort(Response::HTTP_FORBIDDEN, 'You can only access jobs assigned to your technician profile.');
+        }
     }
 
     protected function ensureShopCanStartNewWork(Request $request): void

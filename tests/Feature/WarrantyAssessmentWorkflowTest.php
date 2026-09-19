@@ -156,11 +156,11 @@ class WarrantyAssessmentWorkflowTest extends TestCase
         $this->getJson("/api/shops/{$shop->slug}/track/{$jobOrder->job_order_number}")
             ->assertOk()
             ->assertJsonPath('jobOrder.is_under_warranty', true)
-            ->assertJsonPath('jobOrder.payment_status', 'PAID')
-            ->assertJsonPath('jobOrder.total_cost', 2500)
-            ->assertJsonPath('jobOrder.amount_paid', 2500)
-            ->assertJsonPath('jobOrder.balance', 0)
-            ->assertJsonPath('jobOrder.is_fully_paid', true)
+            ->assertJsonMissingPath('jobOrder.payment_status')
+            ->assertJsonMissingPath('jobOrder.total_cost')
+            ->assertJsonMissingPath('jobOrder.amount_paid')
+            ->assertJsonMissingPath('jobOrder.balance')
+            ->assertJsonMissingPath('jobOrder.is_fully_paid')
             ->assertJsonPath('warrantyAssessments.0.result', WarrantyAssessment::RESULT_NEEDS_DIAGNOSIS)
             ->assertJsonPath('warrantyAssessments.0.reported_issue', 'Screen flickers again after repair.');
     }

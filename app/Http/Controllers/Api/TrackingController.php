@@ -182,7 +182,11 @@ class TrackingController extends Controller
                 'id' => $photo->id,
                 'photo_type' => $photo->photo_type,
                 'photo_type_label' => str_replace('_', ' ', $photo->photo_type),
-                'url' => $photo->publicUrl(),
+                'url' => route('tracking.photos.file', [
+                    'shop' => $jobOrder->shop?->slug,
+                    'jobOrderNumber' => $jobOrder->job_order_number,
+                    'photo' => $photo->id,
+                ]),
                 'description' => $photo->description,
                 'created_at_formatted' => $photo->created_at?->format('M d, Y \a\t h:i A'),
             ])

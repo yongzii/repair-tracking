@@ -39,11 +39,6 @@ class RepairPhoto extends Model
         return $this->belongsTo(Shop::class);
     }
 
-    public function publicUrl(): string
-    {
-        return '/storage/' . ltrim(str_replace('\\', '/', $this->photo_path), '/');
-    }
-
     public static function types(): array
     {
         return [

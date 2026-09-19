@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\JobOrderController;
 use App\Http\Controllers\Api\PartRequestController;
 use App\Http\Controllers\Api\PlatformController;
 use App\Http\Controllers\Api\ReportsController;
+use App\Http\Controllers\Api\RepairPhotoController;
 use App\Http\Controllers\Api\ShopController;
 use App\Http\Controllers\Api\ShopOnboardingController;
 use App\Http\Controllers\Api\SubscriptionRequestController;
@@ -42,6 +43,7 @@ Route::middleware('web')->group(function () {
     Route::get('/shops/{shop:slug}/profile', [ShopController::class, 'publicProfile']);
     Route::get('/shops/{shop:slug}/track', [TrackingController::class, 'searchForShop'])->middleware('throttle:30,1');
     Route::get('/shops/{shop:slug}/track/{jobOrderNumber}', [TrackingController::class, 'showForShop'])->middleware('throttle:30,1');
+    Route::get('/shops/{shop:slug}/track/{jobOrderNumber}/photos/{photo}', [RepairPhotoController::class, 'showForCustomer'])->name('tracking.photos.file')->middleware('throttle:30,1');
     Route::post('/shops/{shop:slug}/appointments', [AppointmentController::class, 'storeForShop']);
     Route::get('/shops/{shop:slug}/appointments/{confirmationCode}', [AppointmentController::class, 'showForShop']);
 
@@ -92,6 +94,7 @@ Route::middleware('web')->group(function () {
         Route::post('/job-orders/{jobOrder}/photos', [JobOrderController::class, 'storePhoto']);
         Route::post('/job-orders/{jobOrder}/photos/{photo}/visibility', [JobOrderController::class, 'updatePhotoVisibility']);
         Route::delete('/job-orders/{jobOrder}/photos/{photo}', [JobOrderController::class, 'deletePhoto']);
+        Route::get('/job-orders/{jobOrder}/photos/{photo}/file', [RepairPhotoController::class, 'showForStaff'])->name('admin.job-order.photos.file');
         Route::post('/job-orders/{jobOrder}/notifications/{notification}/retry', [JobOrderController::class, 'retryNotification']);
         Route::post('/job-orders/{jobOrder}/parts', [JobOrderController::class, 'addPart']);
         Route::put('/job-orders/{jobOrder}/parts/{part}', [JobOrderController::class, 'updatePart']);
@@ -147,6 +150,7 @@ Route::middleware('web')->group(function () {
         Route::post('/job-orders/{jobOrder}/update-status', [TechnicianPortalController::class, 'updateStatus']);
         Route::post('/job-orders/{jobOrder}/photos', [TechnicianPortalController::class, 'storePhoto']);
         Route::delete('/job-orders/{jobOrder}/photos/{photo}', [TechnicianPortalController::class, 'deletePhoto']);
+        Route::get('/job-orders/{jobOrder}/photos/{photo}/file', [RepairPhotoController::class, 'showForTechnician'])->name('technician.job-order.photos.file');
         Route::post('/job-orders/{jobOrder}/parts', [TechnicianPortalController::class, 'addPart']);
         Route::delete('/job-orders/{jobOrder}/parts/{part}', [TechnicianPortalController::class, 'removePart']);
         Route::post('/job-orders/{jobOrder}/request-part', [TechnicianPortalController::class, 'requestPart']);

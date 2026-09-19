@@ -9,7 +9,6 @@ use App\Models\RepairPhoto;
 use App\Models\SparePart;
 use App\Models\StatusHistory;
 use App\Models\StockMovement;
-use App\Models\Technician;
 use App\Models\User;
 use App\Support\AuditLogger;
 use Illuminate\Http\Request;
@@ -158,7 +157,7 @@ class TechnicianPortalController extends Controller
         ]);
 
         $file = $validated['photo'];
-        $path = $file->store("repair-photos/{$jobOrder->shop_id}/{$jobOrder->id}", 'public');
+        $path = $file->store("repair-photos/{$jobOrder->shop_id}/{$jobOrder->id}", 'local');
 
         $photo = RepairPhoto::create([
             'shop_id' => $jobOrder->shop_id,
@@ -202,7 +201,7 @@ class TechnicianPortalController extends Controller
 
         $before = $photo->only(['photo_type', 'photo_path', 'original_name', 'description', 'uploaded_by']);
 
-        Storage::disk('public')->delete($photo->photo_path);
+        Storage::disk('local')->delete($photo->photo_path);
         $photo->delete();
 
         AuditLogger::log(
@@ -456,32 +455,6 @@ class TechnicianPortalController extends Controller
         return !in_array($jobOrder->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'UNREPAIRABLE'], true);
     }
 
-    private function resolveTechnician(User $user): Technician
-    {
-        $technician = Technician::query()
-            ->where('shop_id', $user->shop_id)
-            ->where('email', $user->email)
-            ->where('is_active', true)
-            ->first();
-
-        if (!$technician) {
-            abort(Response::HTTP_FORBIDDEN, 'No active technician profile is linked to this account.');
-        }
-
-        return $technician;
-    }
-
-    private function ensureAssignedToTechnician(JobOrder $jobOrder, Technician $technician): void
-    {
-        if ((int) $jobOrder->shop_id !== (int) $technician->shop_id) {
-            abort(Response::HTTP_FORBIDDEN, 'You can only access jobs from your assigned shop.');
-        }
-
-        if ((int) $jobOrder->technician_id !== (int) $technician->id) {
-            abort(Response::HTTP_FORBIDDEN, 'You can only access jobs assigned to your technician profile.');
-        }
-    }
-
     private function mapJob(JobOrder $job, bool $includeDetails = false): array
     {
         return [
@@ -517,7 +490,7 @@ class TechnicianPortalController extends Controller
             'id' => $photo->id,
             'photo_type' => $photo->photo_type,
             'photo_type_label' => str_replace('_', ' ', $photo->photo_type),
-            'url' => $photo->publicUrl(),
+            'url' => route('technician.job-order.photos.file', ['jobOrder' => $photo->job_order_id, 'photo' => $photo->id]),
             'description' => $photo->description,
             'visible_to_customer' => (bool) $photo->visible_to_customer,
             'original_name' => $photo->original_name,

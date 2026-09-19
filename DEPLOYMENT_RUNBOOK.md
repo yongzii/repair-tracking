@@ -46,6 +46,28 @@ php artisan view:cache
 
 Use full `php artisan db:seed --force` only when `REPAIR_SEED_DEMO_DATA=false` is already set.
 
+### Repair photo storage migration
+
+New repair photos are stored on Laravel's private local disk. Existing files under the old public path must be copied manually after taking a backup and before removing the old copies. The database `photo_path` values remain relative to `repair-photos/...`.
+
+Linux/macOS:
+
+```bash
+mkdir -p storage/app/private/repair-photos
+cp -a storage/app/public/repair-photos/. storage/app/private/repair-photos/
+find storage/app/private/repair-photos -type f | wc -l
+```
+
+Windows PowerShell:
+
+```powershell
+New-Item -ItemType Directory -Force storage/app/private/repair-photos
+Copy-Item storage/app/public/repair-photos/* storage/app/private/repair-photos -Recurse -Force
+Get-ChildItem storage/app/private/repair-photos -Recurse -File | Measure-Object
+```
+
+Verify the private copy and application photo access before deleting the old public directory. Only after verification, remove `storage/app/public/repair-photos` from the server. Do not remove the global `public/storage` link because shop logos and other public assets still use it.
+
 ## 3) Notifications
 
 ```
