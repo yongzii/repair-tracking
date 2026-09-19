@@ -37,11 +37,11 @@ Route::middleware('web')->group(function () {
         Route::post('/register-shop', [ShopOnboardingController::class, 'register']);
     });
 
-    Route::get('/track', [TrackingController::class, 'search']);
-    Route::get('/track/{jobOrderNumber}', [TrackingController::class, 'show']);
+    Route::get('/track', [TrackingController::class, 'search'])->middleware('throttle:30,1');
+    Route::get('/track/{jobOrderNumber}', [TrackingController::class, 'show'])->middleware('throttle:30,1');
     Route::get('/shops/{shop:slug}/profile', [ShopController::class, 'publicProfile']);
-    Route::get('/shops/{shop:slug}/track', [TrackingController::class, 'searchForShop']);
-    Route::get('/shops/{shop:slug}/track/{jobOrderNumber}', [TrackingController::class, 'showForShop']);
+    Route::get('/shops/{shop:slug}/track', [TrackingController::class, 'searchForShop'])->middleware('throttle:30,1');
+    Route::get('/shops/{shop:slug}/track/{jobOrderNumber}', [TrackingController::class, 'showForShop'])->middleware('throttle:30,1');
     Route::post('/shops/{shop:slug}/appointments', [AppointmentController::class, 'storeForShop']);
     Route::get('/shops/{shop:slug}/appointments/{confirmationCode}', [AppointmentController::class, 'showForShop']);
 
