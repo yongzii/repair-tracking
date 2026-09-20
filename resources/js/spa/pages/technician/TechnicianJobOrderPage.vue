@@ -46,6 +46,11 @@ const requestForm = ref({
     note: '',
 });
 
+const approvalForm = ref({
+  repair_approved_by_customer: '',
+  repair_approval_notes: '',
+});
+
 const resetForms = () => {
     form.value.note = '';
     partForm.value = {
@@ -87,6 +92,8 @@ const loadJob = async () => {
         allowedStatuses.value = data.allowedStatuses || [];
         availableParts.value = data.availableParts || [];
         form.value.status = data.job.current_status;
+        approvalForm.value.repair_approved_by_customer = data.job.repair_approved_by_customer || '';
+        approvalForm.value.repair_approval_notes = data.job.repair_approval_notes || '';
         resetForms();
         forbidden.value = false;
         errorMessage.value = '';
@@ -109,6 +116,22 @@ const submit = async () => {
     } catch (error) {
         errorMessage.value = error?.response?.data?.message || 'Unable to update job status.';
     }
+};
+
+const recordRepairApproval = async () => {
+  errorMessage.value = '';
+  successMessage.value = '';
+
+  try {
+    const { data } = await window.axios.post(`/api/technician/job-orders/${props.params.id}/record-repair-approval`, approvalForm.value);
+    job.value = { ...job.value, ...data.jobOrder };
+    successMessage.value = data.message || 'Customer repair approval recorded.';
+  } catch (error) {
+    const firstError = error?.response?.data?.errors
+      ? Object.values(error.response.data.errors)[0]?.[0]
+      : null;
+    errorMessage.value = firstError || error?.response?.data?.message || 'Unable to record customer approval.';
+  }
 };
 
 const onPhotoSelected = (event) => {
@@ -299,6 +322,18 @@ onMounted(loadJob);
                 <p class="font-semibold text-slate-900">{{ job.problem_description }}</p>
               </div>
             </div>
+          </div>
+
+          <div class="card p-6">
+            <h4 class="mb-4 text-lg font-semibold text-slate-900">Customer Repair Approval</h4>
+            <p v-if="job.repair_approved_at" class="mb-4 text-sm text-emerald-700">
+              Approved by {{ job.repair_approved_by_customer }} and recorded by {{ job.repair_approval_recorded_by }} on {{ job.repair_approved_at }}.
+            </p>
+            <form class="space-y-3" @submit.prevent="recordRepairApproval">
+              <input v-model="approvalForm.repair_approved_by_customer" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="Customer/authorized person name" required />
+              <textarea v-model="approvalForm.repair_approval_notes" rows="3" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="Approval method, approved estimate, or notes"></textarea>
+              <button type="submit" class="w-full rounded-lg bg-teal-600 py-2 font-semibold text-white hover:bg-teal-700">Record Customer Approval</button>
+            </form>
           </div>
 
           <div class="card p-6">

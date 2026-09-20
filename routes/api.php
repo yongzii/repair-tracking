@@ -147,6 +147,7 @@ Route::middleware('web')->group(function () {
     Route::middleware('auth')->prefix('technician')->group(function () {
         Route::get('/dashboard', [TechnicianPortalController::class, 'dashboard']);
         Route::get('/job-orders/{jobOrder}', [TechnicianPortalController::class, 'showJob']);
+        Route::post('/job-orders/{jobOrder}/record-repair-approval', [TechnicianPortalController::class, 'recordRepairApproval']);
         Route::post('/job-orders/{jobOrder}/update-status', [TechnicianPortalController::class, 'updateStatus']);
         Route::post('/job-orders/{jobOrder}/photos', [TechnicianPortalController::class, 'storePhoto']);
         Route::delete('/job-orders/{jobOrder}/photos/{photo}', [TechnicianPortalController::class, 'deletePhoto']);

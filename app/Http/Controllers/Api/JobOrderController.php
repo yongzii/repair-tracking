@@ -1361,7 +1361,7 @@ class JobOrderController extends Controller
         $this->ensureSameShop($request, $jobOrder);
         $shopId = $this->currentShopId($request);
 
-        if ($part->job_order_id !== $jobOrder->id) {
+        if ($part->job_order_id !== $jobOrder->id || (int) $part->shop_id !== (int) $jobOrder->shop_id) {
             abort(Response::HTTP_NOT_FOUND);
         }
 
@@ -1474,7 +1474,7 @@ class JobOrderController extends Controller
         $this->ensureSameShop($request, $jobOrder);
         $shopId = $this->currentShopId($request);
 
-        if ($part->job_order_id !== $jobOrder->id) {
+        if ($part->job_order_id !== $jobOrder->id || (int) $part->shop_id !== (int) $jobOrder->shop_id) {
             abort(Response::HTTP_NOT_FOUND);
         }
 

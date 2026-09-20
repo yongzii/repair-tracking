@@ -87,6 +87,83 @@ class JobOrderSafetyTest extends TestCase
         $this->assertSame('DIAGNOSING', $jobOrder->fresh()->current_status);
     }
 
+    public function test_assigned_technician_can_record_approval_and_start_repair(): void
+    {
+        [$shop, $technicianUser] = $this->createShopUser(User::ROLE_TECHNICIAN);
+        $technician = \App\Models\Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'Approval Technician',
+            'email' => $technicianUser->email,
+            'is_active' => true,
+        ]);
+        $jobOrder = JobOrder::create([
+            'shop_id' => $shop->id,
+            'technician_id' => $technician->id,
+            'job_order_number' => 'TEST-TECH-APPROVAL-001',
+            'customer_name' => 'Customer Name',
+            'customer_phone' => '09000000000',
+            'device_type' => 'Phone',
+            'problem_description' => 'Does not power on.',
+            'current_status' => 'DIAGNOSING',
+        ]);
+
+        $this->actingAs($technicianUser)
+            ->postJson("/api/technician/job-orders/{$jobOrder->id}/record-repair-approval", [
+                'repair_approved_by_customer' => 'Customer Name',
+                'repair_approval_notes' => 'Phone approval; approved estimate PHP 2500.',
+            ])
+            ->assertOk()
+            ->assertJsonPath('jobOrder.repair_approved_by_customer', 'Customer Name');
+
+        $this->assertDatabaseHas('job_orders', [
+            'id' => $jobOrder->id,
+            'repair_approved_by_customer' => 'Customer Name',
+            'repair_approval_recorded_by' => $technicianUser->name,
+            'repair_approval_notes' => 'Phone approval; approved estimate PHP 2500.',
+        ]);
+        $this->assertDatabaseHas('audit_logs', [
+            'shop_id' => $shop->id,
+            'user_id' => $technicianUser->id,
+            'user_role' => User::ROLE_TECHNICIAN,
+            'action' => 'job_order.repair_approved',
+            'record_id' => $jobOrder->id,
+        ]);
+
+        $this->actingAs($technicianUser)
+            ->postJson("/api/technician/job-orders/{$jobOrder->id}/update-status", [
+                'status' => 'IN_PROGRESS',
+                'note' => 'Customer approval recorded; repair started.',
+            ])
+            ->assertOk();
+    }
+
+    public function test_unassigned_technician_cannot_record_approval_for_another_job(): void
+    {
+        [$shop, $technicianUser] = $this->createShopUser(User::ROLE_TECHNICIAN);
+        $technician = \App\Models\Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'Unassigned Technician',
+            'email' => $technicianUser->email,
+            'is_active' => true,
+        ]);
+        $jobOrder = JobOrder::create([
+            'shop_id' => $shop->id,
+            'technician_id' => null,
+            'job_order_number' => 'TEST-TECH-UNASSIGNED-001',
+            'customer_name' => 'Customer Name',
+            'customer_phone' => '09000000000',
+            'device_type' => 'Phone',
+            'problem_description' => 'Does not power on.',
+            'current_status' => 'DIAGNOSING',
+        ]);
+
+        $this->actingAs($technicianUser)
+            ->postJson("/api/technician/job-orders/{$jobOrder->id}/record-repair-approval", [
+                'repair_approved_by_customer' => 'Customer Name',
+            ])
+            ->assertForbidden();
+    }
+
     public function test_job_order_can_be_created_without_email_or_accessories(): void
     {
         [, $staff] = $this->createShopUser(User::ROLE_STAFF);

@@ -143,6 +143,49 @@ class TechnicianPortalController extends Controller
         ]);
     }
 
+    public function recordRepairApproval(Request $request, JobOrder $jobOrder)
+    {
+        $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
+        $technician = $this->resolveTechnician($user);
+        $this->ensureSameShop($request, $jobOrder);
+        $this->ensureAssignedToTechnician($jobOrder, $technician);
+
+        $before = $jobOrder->only([
+            'repair_approved_at',
+            'repair_approved_by_customer',
+            'repair_approval_recorded_by',
+            'repair_approval_notes',
+        ]);
+
+        $validated = $request->validate([
+            'repair_approved_by_customer' => 'required|string|max:100',
+            'repair_approval_notes' => 'nullable|string|max:2000',
+        ]);
+
+        $jobOrder->update([
+            'repair_approved_at' => now(),
+            'repair_approved_by_customer' => $validated['repair_approved_by_customer'],
+            'repair_approval_recorded_by' => $user->name,
+            'repair_approval_notes' => $validated['repair_approval_notes'] ?? null,
+        ]);
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'job_order.repair_approved',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: "Recorded customer repair approval for {$jobOrder->job_order_number}.",
+            oldValues: $before,
+            newValues: $jobOrder->fresh()->only(array_keys($before))
+        );
+
+        return response()->json([
+            'message' => 'Customer repair approval recorded.',
+            'jobOrder' => $jobOrder->fresh(),
+        ]);
+    }
+
     public function storePhoto(Request $request, JobOrder $jobOrder)
     {
         $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
@@ -352,7 +395,7 @@ class TechnicianPortalController extends Controller
         $shopId = $this->currentShopId($request);
         $this->ensureAssignedToTechnician($jobOrder, $technician);
 
-        if ($part->job_order_id !== $jobOrder->id) {
+        if ($part->job_order_id !== $jobOrder->id || (int) $part->shop_id !== (int) $jobOrder->shop_id) {
             abort(Response::HTTP_NOT_FOUND);
         }
 
