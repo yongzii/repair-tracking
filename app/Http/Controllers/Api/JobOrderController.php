@@ -1129,10 +1129,10 @@ class JobOrderController extends Controller
     {
         $this->authorizeStaffOrAdmin($request);
         $this->ensureSameShop($request, $jobOrder);
-        $before = $jobOrder->only(['amount_paid', 'payment_status', 'payment_date', 'payment_notes']);
 
         $validated = $request->validate([
             'amount_paid' => 'required|numeric|min:0.01',
+            'idempotency_key' => ['required', 'uuid'],
             'payment_type' => 'nullable|in:PARTIAL_PAYMENT,FINAL_PAYMENT',
             'payment_method' => 'nullable|string|max:40',
             'reference_number' => 'nullable|string|max:100',
@@ -1140,65 +1140,102 @@ class JobOrderController extends Controller
             'payment_notes' => 'nullable|string',
         ]);
 
-        if ($jobOrder->balance <= 0) {
-            return response()->json([
-                'message' => 'Payment already settled. No balance remaining.',
-            ], 422);
-        }
+        [$jobOrder, $payment, $paymentStatus, $amountPaid] = DB::transaction(function () use ($request, $jobOrder, $validated) {
+            $shopId = $this->currentShopId($request);
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+            $before = $lockedJobOrder->only(['amount_paid', 'payment_status', 'payment_date', 'payment_notes']);
 
-        if ($validated['amount_paid'] > $jobOrder->balance) {
-            return response()->json([
-                'message' => 'Amount exceeds remaining balance.',
-            ], 422);
-        }
+            $existingPayment = JobOrderPayment::query()
+                ->where('idempotency_key', $validated['idempotency_key'])
+                ->lockForUpdate()
+                ->first();
 
-        $amountPaid = (float) $validated['amount_paid'];
-        $newAmountPaid = (float) $jobOrder->amount_paid + $amountPaid;
-        $paymentStatus = 'PARTIAL';
+            if ($existingPayment) {
+                $samePaymentIntent = (float) $existingPayment->amount === (float) $validated['amount_paid']
+                    && (!$request->filled('payment_type') || $existingPayment->payment_type === $validated['payment_type'])
+                    && ($existingPayment->payment_method ?? null) === ($validated['payment_method'] ?? null)
+                    && ($existingPayment->reference_number ?? null) === ($validated['reference_number'] ?? null)
+                    && ($existingPayment->notes ?? null) === ($validated['payment_notes'] ?? null)
+                    && ((int) $existingPayment->job_order_id === (int) $lockedJobOrder->id)
+                    && ((int) $existingPayment->shop_id === (int) $lockedJobOrder->shop_id);
 
-        if ($newAmountPaid >= $jobOrder->total_cost) {
-            $paymentStatus = 'PAID';
-            $newAmountPaid = $jobOrder->total_cost;
-        }
+                if (!$samePaymentIntent) {
+                    throw ValidationException::withMessages([
+                        'idempotency_key' => 'This idempotency key was already used with different payment data.',
+                    ]);
+                }
 
-        $paymentType = $validated['payment_type']
-            ?? ($paymentStatus === 'PAID' ? 'FINAL_PAYMENT' : 'PARTIAL_PAYMENT');
+                return [$lockedJobOrder->fresh(), $existingPayment->fresh(), $lockedJobOrder->payment_status, (float) $existingPayment->amount];
+            }
 
-        $payment = JobOrderPayment::create([
-            'shop_id' => $jobOrder->shop_id,
-            'job_order_id' => $jobOrder->id,
-            'amount' => $amountPaid,
-            'payment_type' => $paymentType,
-            'payment_method' => $validated['payment_method'] ?? null,
-            'reference_number' => $validated['reference_number'] ?? null,
-            'notes' => $validated['payment_notes'] ?? null,
-            'received_at' => $validated['received_at'] ?? now(),
-            'received_by' => $request->user()?->name,
-        ]);
+            if ($lockedJobOrder->balance <= 0) {
+                throw ValidationException::withMessages([
+                    'amount_paid' => 'Payment already settled. No balance remaining.',
+                ]);
+            }
 
-        $jobOrder->update([
-            'amount_paid' => $newAmountPaid,
-            'payment_status' => $paymentStatus,
-            'payment_date' => now(),
-            'payment_notes' => $validated['payment_notes'] ?? null,
-        ]);
+            if ((float) $validated['amount_paid'] > $lockedJobOrder->balance) {
+                throw ValidationException::withMessages([
+                    'amount_paid' => 'Amount exceeds remaining balance.',
+                ]);
+            }
 
-        AuditLogger::log(
-            request: $request,
-            user: $request->user(),
-            action: 'job_order.payment_recorded',
-            module: 'payments',
-            record: $jobOrder,
-            description: "Recorded payment for {$jobOrder->job_order_number}.",
-            oldValues: $before,
-            newValues: [
-                'amount_paid' => $jobOrder->fresh()->amount_paid,
-                'payment_status' => $jobOrder->fresh()->payment_status,
+            $amountPaid = (float) $validated['amount_paid'];
+            $newAmountPaid = (float) $lockedJobOrder->amount_paid + $amountPaid;
+            $paymentStatus = 'PARTIAL';
+
+            if ($newAmountPaid >= $lockedJobOrder->total_cost) {
+                $paymentStatus = 'PAID';
+                $newAmountPaid = $lockedJobOrder->total_cost;
+            }
+
+            $paymentType = $validated['payment_type']
+                ?? ($paymentStatus === 'PAID' ? 'FINAL_PAYMENT' : 'PARTIAL_PAYMENT');
+
+            $payment = JobOrderPayment::create([
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
+                'idempotency_key' => $validated['idempotency_key'],
+                'amount' => $amountPaid,
                 'payment_type' => $paymentType,
-                'payment_amount' => $amountPaid,
                 'payment_method' => $validated['payment_method'] ?? null,
-            ]
-        );
+                'reference_number' => $validated['reference_number'] ?? null,
+                'notes' => $validated['payment_notes'] ?? null,
+                'received_at' => $validated['received_at'] ?? now(),
+                'received_by' => $request->user()?->name,
+            ]);
+
+            $lockedJobOrder->update([
+                'amount_paid' => $newAmountPaid,
+                'payment_status' => $paymentStatus,
+                'payment_date' => now(),
+                'payment_notes' => $validated['payment_notes'] ?? null,
+            ]);
+
+            AuditLogger::log(
+                request: $request,
+                user: $request->user(),
+                action: 'job_order.payment_recorded',
+                module: 'payments',
+                record: $lockedJobOrder,
+                description: "Recorded payment for {$lockedJobOrder->job_order_number}.",
+                oldValues: $before,
+                newValues: [
+                    'amount_paid' => $lockedJobOrder->fresh()->amount_paid,
+                    'payment_status' => $lockedJobOrder->fresh()->payment_status,
+                    'payment_type' => $paymentType,
+                    'payment_amount' => $amountPaid,
+                    'payment_method' => $validated['payment_method'] ?? null,
+                    'payment_id' => $payment->id,
+                    'idempotency_key' => $payment->idempotency_key,
+                ]
+            );
+
+            return [$lockedJobOrder->fresh(), $payment->fresh(), $paymentStatus, $amountPaid];
+        });
 
         return response()->json([
             'message' => "Payment recorded. Status: {$paymentStatus}",

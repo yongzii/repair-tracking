@@ -29,6 +29,9 @@ const uploadingPhoto = ref(false);
 const issuingWarrantyService = ref(false);
 const cancelingWarrantyService = ref(false);
 const retryingNotificationId = ref(null);
+const recordingPayment = ref(false);
+const paymentIdempotencyKey = ref(null);
+const paymentIntentSignature = ref(null);
 const activeAction = ref('status');
 
 const statusForm = ref({
@@ -384,17 +387,32 @@ const updateCosts = async () => {
 const recordPayment = async () => {
     successMessage.value = '';
     errorMessage.value = '';
+  const paymentIntent = JSON.stringify(paymentForm.value);
+
+  if (!paymentIdempotencyKey.value || paymentIntentSignature.value !== paymentIntent) {
+    paymentIdempotencyKey.value = window.crypto.randomUUID();
+    paymentIntentSignature.value = paymentIntent;
+  }
+
+  recordingPayment.value = true;
     try {
-        const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/record-payment`, paymentForm.value);
+    const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/record-payment`, {
+      ...paymentForm.value,
+      idempotency_key: paymentIdempotencyKey.value,
+    });
         successMessage.value = data.message || 'Payment recorded.';
         paymentForm.value.amount_paid = '';
         paymentForm.value.payment_type = '';
         paymentForm.value.payment_method = 'CASH';
         paymentForm.value.reference_number = '';
         paymentForm.value.payment_notes = '';
+    paymentIdempotencyKey.value = null;
+    paymentIntentSignature.value = null;
         await loadJobOrder();
     } catch (error) {
         errorMessage.value = error?.response?.data?.message || 'Failed to record payment.';
+  } finally {
+    recordingPayment.value = false;
     }
 };
 
@@ -950,7 +968,9 @@ onMounted(loadJobOrder);
               </select>
               <input v-model="paymentForm.reference_number" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Reference number (optional)" />
               <textarea v-model="paymentForm.payment_notes" rows="2" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Payment notes"></textarea>
-              <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg">Record</button>
+              <button type="submit" :disabled="recordingPayment" class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-semibold py-2 rounded-lg">
+                {{ recordingPayment ? 'Recording...' : 'Record' }}
+              </button>
             </form>
           </div>
 

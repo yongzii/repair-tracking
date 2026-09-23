@@ -9,6 +9,7 @@ class JobOrderPayment extends Model
     protected $fillable = [
         'shop_id',
         'job_order_id',
+        'idempotency_key',
         'amount',
         'payment_type',
         'payment_method',
