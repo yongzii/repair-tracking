@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\TechnicianController;
 use App\Http\Controllers\Api\TechnicianPortalController;
 use App\Http\Controllers\Api\TrackingController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Middleware\EnsureActiveUser;
 use Illuminate\Support\Facades\Route;
 
 Route::middleware('web')->group(function () {
@@ -28,7 +29,7 @@ Route::middleware('web')->group(function () {
     });
 
     Route::prefix('auth')->group(function () {
-        Route::get('/user', [AuthController::class, 'user']);
+        Route::get('/user', [AuthController::class, 'user'])->middleware(['auth', EnsureActiveUser::class]);
         Route::post('/login', [AuthController::class, 'login']);
         Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth');
     });
@@ -47,7 +48,7 @@ Route::middleware('web')->group(function () {
     Route::post('/shops/{shop:slug}/appointments', [AppointmentController::class, 'storeForShop']);
     Route::get('/shops/{shop:slug}/appointments/{confirmationCode}', [AppointmentController::class, 'showForShop']);
 
-    Route::middleware('auth')->prefix('admin')->group(function () {
+    Route::middleware(['auth', EnsureActiveUser::class])->prefix('admin')->group(function () {
         Route::get('/subscription/options', [SubscriptionRequestController::class, 'options']);
         Route::post('/subscription/requests', [SubscriptionRequestController::class, 'store']);
 
@@ -130,7 +131,7 @@ Route::middleware('web')->group(function () {
         Route::delete('/inventory/{sparePart}', [InventoryController::class, 'destroy']);
     });
 
-    Route::middleware('auth')->prefix('platform')->group(function () {
+    Route::middleware(['auth', EnsureActiveUser::class])->prefix('platform')->group(function () {
         Route::get('/dashboard', [PlatformController::class, 'dashboard']);
         Route::get('/shops', [PlatformController::class, 'shops']);
         Route::get('/subscription-settings', [PlatformController::class, 'subscriptionSettings']);
@@ -144,7 +145,7 @@ Route::middleware('web')->group(function () {
         Route::post('/shops/{shop}/subscription-payments', [PlatformController::class, 'storeSubscriptionPayment']);
     });
 
-    Route::middleware('auth')->prefix('technician')->group(function () {
+    Route::middleware(['auth', EnsureActiveUser::class])->prefix('technician')->group(function () {
         Route::get('/dashboard', [TechnicianPortalController::class, 'dashboard']);
         Route::get('/job-orders/{jobOrder}', [TechnicianPortalController::class, 'showJob']);
         Route::post('/job-orders/{jobOrder}/record-repair-approval', [TechnicianPortalController::class, 'recordRepairApproval']);
