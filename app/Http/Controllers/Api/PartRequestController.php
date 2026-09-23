@@ -110,7 +110,18 @@ class PartRequestController extends Controller
         $quantity = (int) ($validated['quantity'] ?? $parsed['quantity']);
         $operatorNote = trim((string) ($validated['note'] ?? ''));
 
-        $part = DB::transaction(function () use ($validated, $quantity, $jobOrder, $request, $operatorNote, $shopId) {
+        [$jobOrder, $part, $previousStatus] = DB::transaction(function () use ($validated, $quantity, $jobOrder, $request, $operatorNote, $shopId) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+
+            if ($lockedJobOrder->current_status !== 'WAITING_PARTS') {
+                throw ValidationException::withMessages([
+                    'job_order' => 'This parts request has already been fulfilled or is no longer active.',
+                ]);
+            }
+
             $sparePart = SparePart::query()
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
@@ -130,10 +141,12 @@ class PartRequestController extends Controller
 
             $unitCost = (float) $sparePart->unit_cost;
             $total = $quantity * $unitCost;
+            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') + $total;
+            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
 
             $part = JobOrderPart::create([
-                'shop_id' => $jobOrder->shop_id,
-                'job_order_id' => $jobOrder->id,
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
                 'spare_part_id' => $sparePart->id,
                 'part_name' => $sparePart->name,
                 'quantity' => $quantity,
@@ -157,20 +170,23 @@ class PartRequestController extends Controller
                 'created_by' => $request->user()?->name,
             ]);
 
-            return $part;
+            $previousStatus = $lockedJobOrder->current_status;
+            $lockedJobOrder->update([
+                'parts_cost' => $partsTotal,
+                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
+                'payment_status' => $this->paymentStatusForTotal($lockedJobOrder->amount_paid, $partsTotal + (float) $lockedJobOrder->labor_cost),
+                'current_status' => 'IN_PROGRESS',
+            ]);
+
+            StatusHistory::create([
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
+                'status' => 'IN_PROGRESS',
+                'note' => "Parts request fulfilled using {$part->part_name} (Qty {$quantity})." . ($operatorNote !== '' ? " Note: {$operatorNote}" : ''),
+            ]);
+
+            return [$lockedJobOrder->fresh(), $part, $previousStatus];
         });
-
-        $this->recalculateCosts($jobOrder->fresh());
-
-        $previousStatus = $jobOrder->fresh()->current_status;
-        $jobOrder->update(['current_status' => 'IN_PROGRESS']);
-
-        StatusHistory::create([
-            'shop_id' => $jobOrder->shop_id,
-            'job_order_id' => $jobOrder->id,
-            'status' => 'IN_PROGRESS',
-            'note' => "Parts request fulfilled using {$part->part_name} (Qty {$quantity})." . ($operatorNote !== '' ? " Note: {$operatorNote}" : ''),
-        ]);
 
         AuditLogger::log(
             request: $request,
@@ -270,5 +286,21 @@ class PartRequestController extends Controller
                 ? 'PENDING'
                 : ($jobOrder->amount_paid >= ($partsTotal + $laborCost) ? 'PAID' : 'PARTIAL'),
         ]);
+    }
+
+    private function ensureTotalCoversCollectedAmount(float|int|string $totalCost, float|int|string $amountPaid): void
+    {
+        if ((float) $totalCost < (float) $amountPaid) {
+            throw ValidationException::withMessages([
+                'total_cost' => 'Total cost cannot be lower than the amount already paid.',
+            ]);
+        }
+    }
+
+    private function paymentStatusForTotal(float|int|string $amountPaid, float|int|string $totalCost): string
+    {
+        return (float) $amountPaid <= 0
+            ? 'PENDING'
+            : ((float) $amountPaid >= (float) $totalCost ? 'PAID' : 'PARTIAL');
     }
 }

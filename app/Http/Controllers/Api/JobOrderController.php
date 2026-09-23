@@ -1248,38 +1248,48 @@ class JobOrderController extends Controller
     {
         $this->authorizeStaffOrAdmin($request);
         $this->ensureSameShop($request, $jobOrder);
-        $before = $jobOrder->only(['parts_cost', 'labor_cost', 'total_cost', 'payment_status']);
 
         $validated = $request->validate([
             'parts_cost' => 'required|numeric|min:0',
             'labor_cost' => 'required|numeric|min:0',
         ]);
 
-        $partsTotal = $jobOrder->parts()->exists()
-            ? $jobOrder->parts()->sum('total_cost')
-            : $validated['parts_cost'];
+        $jobOrder = DB::transaction(function () use ($request, $jobOrder, $validated) {
+            $shopId = $this->currentShopId($request);
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+            $before = $lockedJobOrder->only(['parts_cost', 'labor_cost', 'total_cost', 'payment_status']);
+            $partsTotal = $lockedJobOrder->parts()->exists()
+                ? $lockedJobOrder->parts()->sum('total_cost')
+                : $validated['parts_cost'];
+            $totalCost = $partsTotal + $validated['labor_cost'];
 
-        $totalCost = $partsTotal + $validated['labor_cost'];
+            $this->ensureTotalCoversCollectedAmount($totalCost, $lockedJobOrder->amount_paid);
 
-        $jobOrder->update([
-            'parts_cost' => $partsTotal,
-            'labor_cost' => $validated['labor_cost'],
-            'total_cost' => $totalCost,
-            'payment_status' => $jobOrder->amount_paid <= 0
-                ? 'PENDING'
-                : ($jobOrder->amount_paid >= $totalCost ? 'PAID' : 'PARTIAL'),
-        ]);
+            $lockedJobOrder->update([
+                'parts_cost' => $partsTotal,
+                'labor_cost' => $validated['labor_cost'],
+                'total_cost' => $totalCost,
+                'payment_status' => $lockedJobOrder->amount_paid <= 0
+                    ? 'PENDING'
+                    : ($lockedJobOrder->amount_paid >= $totalCost ? 'PAID' : 'PARTIAL'),
+            ]);
 
-        AuditLogger::log(
-            request: $request,
-            user: $request->user(),
-            action: 'job_order.costs_updated',
-            module: 'job_orders',
-            record: $jobOrder,
-            description: "Updated cost breakdown for {$jobOrder->job_order_number}.",
-            oldValues: $before,
-            newValues: $jobOrder->fresh()->only(['parts_cost', 'labor_cost', 'total_cost', 'payment_status'])
-        );
+            AuditLogger::log(
+                request: $request,
+                user: $request->user(),
+                action: 'job_order.costs_updated',
+                module: 'job_orders',
+                record: $lockedJobOrder,
+                description: "Updated cost breakdown for {$lockedJobOrder->job_order_number}.",
+                oldValues: $before,
+                newValues: $lockedJobOrder->fresh()->only(['parts_cost', 'labor_cost', 'total_cost', 'payment_status'])
+            );
+
+            return $lockedJobOrder->fresh();
+        });
 
         return response()->json([
             'message' => 'Costs updated successfully.',
@@ -1320,7 +1330,12 @@ class JobOrderController extends Controller
             'notes' => 'nullable|string|max:255',
         ]);
 
-        $part = DB::transaction(function () use ($validated, $jobOrder, $request, $shopId) {
+        [$jobOrder, $part] = DB::transaction(function () use ($validated, $jobOrder, $request, $shopId) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+
             $sparePart = null;
             if (!empty($validated['spare_part_id'])) {
                 $sparePart = SparePart::query()
@@ -1344,10 +1359,12 @@ class JobOrderController extends Controller
             $unitCost = $validated['unit_cost'] ?? ($sparePart?->unit_cost ?? 0);
             $partName = $sparePart?->name ?? $validated['part_name'];
             $total = $validated['quantity'] * $unitCost;
+            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') + $total;
+            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
 
             $part = JobOrderPart::create([
-                'shop_id' => $jobOrder->shop_id,
-                'job_order_id' => $jobOrder->id,
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
                 'spare_part_id' => $sparePart?->id,
                 'part_name' => $partName,
                 'quantity' => $validated['quantity'],
@@ -1370,10 +1387,16 @@ class JobOrderController extends Controller
                 );
             }
 
-            return $part;
-        });
+            $lockedJobOrder->update([
+                'parts_cost' => $partsTotal,
+                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
+                'payment_status' => $lockedJobOrder->amount_paid <= 0
+                    ? 'PENDING'
+                    : ($lockedJobOrder->amount_paid >= ($partsTotal + (float) $lockedJobOrder->labor_cost) ? 'PAID' : 'PARTIAL'),
+            ]);
 
-        $this->recalculateCosts($jobOrder->fresh());
+            return [$lockedJobOrder->fresh(), $part];
+        });
 
         AuditLogger::log(
             request: $request,
@@ -1412,8 +1435,16 @@ class JobOrderController extends Controller
 
         $before = $part->only(['part_name', 'quantity', 'unit_cost', 'total_cost', 'spare_part_id', 'notes']);
 
-        DB::transaction(function () use ($validated, $part, $jobOrder, $request, $shopId) {
-            $existingPart = JobOrderPart::query()->lockForUpdate()->findOrFail($part->id);
+        [$jobOrder, $part] = DB::transaction(function () use ($validated, $part, $jobOrder, $request, $shopId) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+            $existingPart = JobOrderPart::query()
+                ->where('job_order_id', $lockedJobOrder->id)
+                ->where('shop_id', $lockedJobOrder->shop_id)
+                ->lockForUpdate()
+                ->findOrFail($part->id);
 
             $oldSparePart = null;
             if ($existingPart->spare_part_id) {
@@ -1460,6 +1491,10 @@ class JobOrderController extends Controller
             $unitCost = $validated['unit_cost'] ?? ($newSparePart?->unit_cost ?? 0);
             $partName = $newSparePart?->name ?? $validated['part_name'];
             $total = $validated['quantity'] * $unitCost;
+            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost')
+                - (float) $existingPart->total_cost
+                + $total;
+            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
 
             $existingPart->update([
                 'spare_part_id' => $newSparePart?->id,
@@ -1483,9 +1518,17 @@ class JobOrderController extends Controller
                     createdBy: $request->user()?->name
                 );
             }
-        });
 
-        $this->recalculateCosts($jobOrder->fresh());
+            $lockedJobOrder->update([
+                'parts_cost' => $partsTotal,
+                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
+                'payment_status' => $lockedJobOrder->amount_paid <= 0
+                    ? 'PENDING'
+                    : ($lockedJobOrder->amount_paid >= ($partsTotal + (float) $lockedJobOrder->labor_cost) ? 'PAID' : 'PARTIAL'),
+            ]);
+
+            return [$lockedJobOrder->fresh(), $existingPart->fresh()];
+        });
 
         AuditLogger::log(
             request: $request,
@@ -1517,8 +1560,19 @@ class JobOrderController extends Controller
 
         $before = $part->only(['part_name', 'quantity', 'unit_cost', 'total_cost', 'spare_part_id', 'notes']);
 
-        DB::transaction(function () use ($part, $jobOrder, $request, $shopId) {
-            $existingPart = JobOrderPart::query()->lockForUpdate()->findOrFail($part->id);
+        [$jobOrder, $before] = DB::transaction(function () use ($part, $jobOrder, $request, $shopId) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+            $existingPart = JobOrderPart::query()
+                ->where('job_order_id', $lockedJobOrder->id)
+                ->where('shop_id', $lockedJobOrder->shop_id)
+                ->lockForUpdate()
+                ->findOrFail($part->id);
+            $before = $existingPart->only(['part_name', 'quantity', 'unit_cost', 'total_cost', 'spare_part_id', 'notes']);
+            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') - (float) $existingPart->total_cost;
+            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
 
             if ($existingPart->spare_part_id) {
                 $sparePart = SparePart::query()
@@ -1541,9 +1595,17 @@ class JobOrderController extends Controller
             }
 
             $existingPart->delete();
-        });
 
-        $this->recalculateCosts($jobOrder->fresh());
+            $lockedJobOrder->update([
+                'parts_cost' => $partsTotal,
+                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
+                'payment_status' => $lockedJobOrder->amount_paid <= 0
+                    ? 'PENDING'
+                    : ($lockedJobOrder->amount_paid >= ($partsTotal + (float) $lockedJobOrder->labor_cost) ? 'PAID' : 'PARTIAL'),
+            ]);
+
+            return [$lockedJobOrder->fresh(), $before];
+        });
 
         AuditLogger::log(
             request: $request,
@@ -1564,6 +1626,15 @@ class JobOrderController extends Controller
     private function authorizeAdmin(Request $request): void
     {
         $this->authorizeRoles($request, User::ROLE_ADMIN);
+    }
+
+    private function ensureTotalCoversCollectedAmount(float|int|string $totalCost, float|int|string $amountPaid): void
+    {
+        if ((float) $totalCost < (float) $amountPaid) {
+            throw ValidationException::withMessages([
+                'total_cost' => 'Total cost cannot be lower than the amount already paid.',
+            ]);
+        }
     }
 
     private function createCoveredWarrantyService(

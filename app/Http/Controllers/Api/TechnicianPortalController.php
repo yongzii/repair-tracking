@@ -319,7 +319,13 @@ class TechnicianPortalController extends Controller
             'notes' => 'nullable|string|max:255',
         ]);
 
-        $part = DB::transaction(function () use ($validated, $jobOrder, $request, $shopId) {
+        [$jobOrder, $part] = DB::transaction(function () use ($validated, $jobOrder, $request, $shopId, $technician) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+            $this->ensureAssignedToTechnician($lockedJobOrder, $technician);
+
             $sparePart = SparePart::query()
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
@@ -339,10 +345,12 @@ class TechnicianPortalController extends Controller
 
             $unitCost = (float) $sparePart->unit_cost;
             $total = $validated['quantity'] * $unitCost;
+            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') + $total;
+            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
 
             $part = JobOrderPart::create([
-                'shop_id' => $jobOrder->shop_id,
-                'job_order_id' => $jobOrder->id,
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
                 'spare_part_id' => $sparePart->id,
                 'part_name' => $sparePart->name,
                 'quantity' => $validated['quantity'],
@@ -366,10 +374,14 @@ class TechnicianPortalController extends Controller
                 'created_by' => $request->user()?->name,
             ]);
 
-            return $part;
-        });
+            $lockedJobOrder->update([
+                'parts_cost' => $partsTotal,
+                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
+                'payment_status' => $this->paymentStatusForTotal($lockedJobOrder->amount_paid, $partsTotal + (float) $lockedJobOrder->labor_cost),
+            ]);
 
-        $this->recalculateCosts($jobOrder->fresh());
+            return [$lockedJobOrder->fresh(), $part];
+        });
 
         AuditLogger::log(
             request: $request,
@@ -407,8 +419,20 @@ class TechnicianPortalController extends Controller
 
         $before = $part->only(['part_name', 'quantity', 'unit_cost', 'total_cost', 'spare_part_id', 'notes']);
 
-        DB::transaction(function () use ($part, $jobOrder, $request, $shopId) {
-            $existingPart = JobOrderPart::query()->lockForUpdate()->findOrFail($part->id);
+        [$jobOrder, $before] = DB::transaction(function () use ($part, $jobOrder, $request, $shopId, $technician) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+            $this->ensureAssignedToTechnician($lockedJobOrder, $technician);
+            $existingPart = JobOrderPart::query()
+                ->where('job_order_id', $lockedJobOrder->id)
+                ->where('shop_id', $lockedJobOrder->shop_id)
+                ->lockForUpdate()
+                ->findOrFail($part->id);
+            $before = $existingPart->only(['part_name', 'quantity', 'unit_cost', 'total_cost', 'spare_part_id', 'notes']);
+            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') - (float) $existingPart->total_cost;
+            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
 
             if ($existingPart->spare_part_id) {
                 $sparePart = SparePart::query()
@@ -435,9 +459,15 @@ class TechnicianPortalController extends Controller
             }
 
             $existingPart->delete();
-        });
 
-        $this->recalculateCosts($jobOrder->fresh());
+            $lockedJobOrder->update([
+                'parts_cost' => $partsTotal,
+                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
+                'payment_status' => $this->paymentStatusForTotal($lockedJobOrder->amount_paid, $partsTotal + (float) $lockedJobOrder->labor_cost),
+            ]);
+
+            return [$lockedJobOrder->fresh(), $before];
+        });
 
         AuditLogger::log(
             request: $request,
@@ -533,6 +563,22 @@ class TechnicianPortalController extends Controller
     private function canRecordParts(JobOrder $jobOrder): bool
     {
         return !in_array($jobOrder->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'UNREPAIRABLE'], true);
+    }
+
+    private function ensureTotalCoversCollectedAmount(float|int|string $totalCost, float|int|string $amountPaid): void
+    {
+        if ((float) $totalCost < (float) $amountPaid) {
+            throw ValidationException::withMessages([
+                'total_cost' => 'Total cost cannot be lower than the amount already paid.',
+            ]);
+        }
+    }
+
+    private function paymentStatusForTotal(float|int|string $amountPaid, float|int|string $totalCost): string
+    {
+        return (float) $amountPaid <= 0
+            ? 'PENDING'
+            : ((float) $amountPaid >= (float) $totalCost ? 'PAID' : 'PARTIAL');
     }
 
     private function mapJob(JobOrder $job, bool $includeDetails = false): array
