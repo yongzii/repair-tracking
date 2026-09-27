@@ -46,6 +46,11 @@ const onLogout = async () => {
           <span>Shop Workspaces</span>
         </AppLink>
 
+        <AppLink to="/platform/failed-jobs" class="nav-link" :class="currentPath === '/platform/failed-jobs' ? 'nav-link-active' : ''">
+          <i class="fas fa-triangle-exclamation w-5"></i>
+          <span>Failed Jobs</span>
+        </AppLink>
+
         <AppLink to="/get-started" class="nav-link">
           <i class="fas fa-plus-circle w-5"></i>
           <span>Create Shop</span>

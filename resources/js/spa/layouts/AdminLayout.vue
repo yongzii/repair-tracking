@@ -176,11 +176,6 @@ const submitSubscriptionRequest = async () => {
           <span>Reports</span>
         </AppLink>
 
-        <AppLink v-if="isAdmin" to="/admin/failed-jobs" class="nav-link" :class="isSectionActive('/admin/failed-jobs') ? 'nav-link-active' : ''">
-          <i class="fas fa-triangle-exclamation w-5"></i>
-          <span>Failed Jobs</span>
-        </AppLink>
-
         <AppLink v-if="canViewInventory" to="/admin/inventory" class="nav-link" :class="isSectionActive('/admin/inventory') ? 'nav-link-active' : ''">
           <i class="fas fa-boxes-stacked w-5"></i>
           <span>Inventory</span>

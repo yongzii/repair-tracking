@@ -105,10 +105,6 @@ Route::middleware('web')->group(function () {
         Route::get('/reports/export/csv', [ReportsController::class, 'exportCsv']);
         Route::get('/reports/export/pdf', [ReportsController::class, 'exportPdf']);
 
-        Route::get('/failed-jobs', [FailedJobController::class, 'index']);
-        Route::post('/failed-jobs/{id}/retry', [FailedJobController::class, 'retry']);
-        Route::delete('/failed-jobs/{id}', [FailedJobController::class, 'destroy']);
-
         Route::get('/technicians', [TechnicianController::class, 'index']);
         Route::post('/technicians', [TechnicianController::class, 'store']);
         Route::get('/technicians/{technician}', [TechnicianController::class, 'show']);
@@ -133,6 +129,9 @@ Route::middleware('web')->group(function () {
 
     Route::middleware(['auth', EnsureActiveUser::class])->prefix('platform')->group(function () {
         Route::get('/dashboard', [PlatformController::class, 'dashboard']);
+        Route::get('/failed-jobs', [FailedJobController::class, 'index']);
+        Route::post('/failed-jobs/{id}/retry', [FailedJobController::class, 'retry']);
+        Route::delete('/failed-jobs/{id}', [FailedJobController::class, 'destroy']);
         Route::get('/shops', [PlatformController::class, 'shops']);
         Route::get('/subscription-settings', [PlatformController::class, 'subscriptionSettings']);
         Route::put('/subscription-settings', [PlatformController::class, 'updateSubscriptionSettings']);

@@ -13,7 +13,7 @@ class FailedJobController extends Controller
 {
     public function index(Request $request)
     {
-        $this->authorizeAdmin($request);
+        $this->authorizePlatformAdmin($request);
 
         $failedJobs = DB::table('failed_jobs')
             ->orderByDesc('failed_at')
@@ -26,7 +26,7 @@ class FailedJobController extends Controller
 
     public function retry(Request $request, int $id)
     {
-        $this->authorizeAdmin($request);
+        $this->authorizePlatformAdmin($request);
 
         Artisan::call('queue:retry', ['id' => $id]);
 
@@ -37,7 +37,7 @@ class FailedJobController extends Controller
 
     public function destroy(Request $request, int $id)
     {
-        $this->authorizeAdmin($request);
+        $this->authorizePlatformAdmin($request);
 
         DB::table('failed_jobs')->where('id', $id)->delete();
 
@@ -46,8 +46,8 @@ class FailedJobController extends Controller
         ]);
     }
 
-    private function authorizeAdmin(Request $request): void
+    private function authorizePlatformAdmin(Request $request): void
     {
-        $this->authorizeRoles($request, User::ROLE_ADMIN);
+        $this->authorizeRoles($request, User::ROLE_PLATFORM_ADMIN);
     }
 }

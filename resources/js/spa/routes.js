@@ -13,7 +13,7 @@ import JobOrderTrashPage from './pages/admin/JobOrderTrashPage.vue';
 import PartRequestsPage from './pages/admin/PartRequestsPage.vue';
 import AppointmentsPage from './pages/admin/AppointmentsPage.vue';
 import ReportsPage from './pages/admin/ReportsPage.vue';
-import FailedJobsPage from './pages/admin/FailedJobsPage.vue';
+import FailedJobsPage from './pages/platform/FailedJobsPage.vue';
 import AuditLogsPage from './pages/admin/AuditLogsPage.vue';
 import InventoryPage from './pages/admin/InventoryPage.vue';
 import TechniciansPage from './pages/admin/TechniciansPage.vue';
@@ -96,6 +96,10 @@ export const resolveRoute = (path) => {
         return { component: PlatformDashboardPage, params: { view: 'shops' }, title: 'Shop Workspaces' };
     }
 
+    if (path === '/platform/failed-jobs') {
+        return { component: FailedJobsPage, params: {}, title: 'Failed Jobs' };
+    }
+
     if (path.startsWith('/technician/job-orders/')) {
         const id = path.replace('/technician/job-orders/', '');
         if (id) {
@@ -169,10 +173,6 @@ export const resolveRoute = (path) => {
 
     if (path === '/admin/reports') {
         return { component: ReportsPage, params: {}, title: 'Reports' };
-    }
-
-    if (path === '/admin/failed-jobs') {
-        return { component: FailedJobsPage, params: {}, title: 'Failed Jobs' };
     }
 
     if (path === '/admin/audit-logs') {
