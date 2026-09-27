@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Support\AuditLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -32,11 +33,27 @@ class AuthController extends Controller
             'password' => ['required'],
         ]);
 
+        $loginLimiter = RateLimiter::limiter('login');
+        $limit = $loginLimiter($request);
+        $limiterKey = $limit->key;
+
+        if (RateLimiter::tooManyAttempts($limiterKey, $limit->maxAttempts)) {
+            $retryAfter = RateLimiter::availableIn($limiterKey);
+
+            return response()->json([
+                'message' => 'Too many login attempts. Please try again later.',
+            ], 429)->header('Retry-After', (string) $retryAfter);
+        }
+
         if (!Auth::attempt($credentials)) {
+            RateLimiter::hit($limiterKey, $limit->decaySeconds);
+
             throw ValidationException::withMessages([
                 'email' => 'The provided credentials do not match our records.',
             ]);
         }
+
+        RateLimiter::clear($limiterKey);
 
         $request->session()->regenerate();
         $request->session()->regenerateToken();
