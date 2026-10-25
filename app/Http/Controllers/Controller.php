@@ -69,17 +69,33 @@ abstract class Controller
 
     protected function resolveTechnician(User $user): Technician
     {
-        $technician = Technician::query()
-            ->where('shop_id', $user->shop_id)
-            ->where('email', $user->email)
-            ->where('is_active', true)
-            ->first();
+        $technician = $this->findTechnician($user);
 
         if (!$technician) {
             abort(Response::HTTP_FORBIDDEN, 'No active technician profile is linked to this account.');
         }
 
         return $technician;
+    }
+
+    protected function findTechnician(User $user): ?Technician
+    {
+        if ($user->technician_id) {
+            return $user->technician()
+                ->where('shop_id', $user->shop_id)
+                ->where('is_active', true)
+                ->first();
+        }
+
+        if (!$user->email) {
+            return null;
+        }
+
+        return Technician::query()
+            ->where('shop_id', $user->shop_id)
+            ->where('email', $user->email)
+            ->where('is_active', true)
+            ->first();
     }
 
     protected function ensureAssignedToTechnician(JobOrder $jobOrder, Technician $technician): void

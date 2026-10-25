@@ -44,6 +44,8 @@ const form = reactive({
             IN_PROGRESS: true,
             READY_FOR_PICKUP: true,
             PICKED_UP: true,
+            RTO: true,
+            RTO_RELEASED: true,
             UNREPAIRABLE: true,
         },
     },
@@ -56,6 +58,8 @@ const notificationEvents = [
     { key: 'IN_PROGRESS', label: 'Repair in progress' },
     { key: 'READY_FOR_PICKUP', label: 'Ready for pickup' },
     { key: 'PICKED_UP', label: 'RELEASED' },
+    { key: 'RTO', label: 'RTO awaiting return' },
+    { key: 'RTO_RELEASED', label: 'RTO released' },
     { key: 'UNREPAIRABLE', label: 'RTO' },
 ];
 

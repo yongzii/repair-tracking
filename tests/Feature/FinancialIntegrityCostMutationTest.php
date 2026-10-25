@@ -190,7 +190,7 @@ class FinancialIntegrityCostMutationTest extends TestCase
         $sparePart = $this->createSparePart($shop, 0, 2);
 
         $this->actingAs($staff)
-            ->postJson("/api/admin/part-requests/{$jobOrder->id}/fulfill", [
+            ->postJson("/api/admin/blocked-job-orders/{$jobOrder->id}/fulfill-parts-request", [
                 'spare_part_id' => $sparePart->id,
                 'quantity' => 1,
             ])
@@ -215,7 +215,7 @@ class FinancialIntegrityCostMutationTest extends TestCase
         $sparePart = $this->createSparePart($shop, 100, 2);
 
         $this->actingAs($staff)
-            ->postJson("/api/admin/part-requests/{$jobOrder->id}/fulfill", [
+            ->postJson("/api/admin/blocked-job-orders/{$jobOrder->id}/fulfill-parts-request", [
                 'spare_part_id' => $sparePart->id,
                 'quantity' => 1,
             ])

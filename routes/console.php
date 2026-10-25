@@ -1,12 +1,14 @@
 <?php
 
 use App\Jobs\SendCustomerNotification;
+use App\Models\Appointment;
 use App\Models\CustomerNotification;
 use App\Models\Shop;
 use App\Models\User;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 Artisan::command('inspire', function () {
@@ -117,6 +119,77 @@ Artisan::command('repair:production-check {--allow-local : Do not fail only beca
 
     return $failures ? self::FAILURE : self::SUCCESS;
 })->purpose('Check whether the app configuration is safe enough for production publishing');
+
+Artisan::command('appointments:photos:privatize {--dry-run : Report legacy public photos without moving or deleting files}', function () {
+    $publicDisk = Storage::disk('public');
+    $privateDisk = Storage::disk('local');
+    $dryRun = (bool) $this->option('dry-run');
+    $copied = 0;
+    $alreadyPrivate = 0;
+    $failures = 0;
+
+    Appointment::query()
+        ->whereNotNull('photo_path')
+        ->chunkById(100, function ($appointments) use ($publicDisk, $privateDisk, $dryRun, &$copied, &$alreadyPrivate, &$failures) {
+            foreach ($appointments as $appointment) {
+                $path = str_replace('\\', '/', (string) $appointment->photo_path);
+                $expectedPrefix = "appointments/{$appointment->shop_id}/";
+
+                if (!str_starts_with($path, $expectedPrefix) || in_array('..', explode('/', $path), true)) {
+                    $this->error("Skipped appointment #{$appointment->id}: photo path is outside its shop folder.");
+                    $failures++;
+                    continue;
+                }
+
+                $hasPrivate = $privateDisk->exists($path);
+                $hasPublic = $publicDisk->exists($path);
+
+                if (!$hasPublic && $hasPrivate) {
+                    $alreadyPrivate++;
+                    continue;
+                }
+
+                if (!$hasPublic) {
+                    $this->error("Appointment #{$appointment->id}: photo file was not found on either disk.");
+                    $failures++;
+                    continue;
+                }
+
+                if ($dryRun) {
+                    $this->line("Would privatize appointment photo: {$path}");
+                    continue;
+                }
+
+                try {
+                    $contents = $publicDisk->get($path);
+
+                    if (!$hasPrivate && !$privateDisk->put($path, $contents)) {
+                        throw new \RuntimeException('Could not write private copy.');
+                    }
+
+                    $privateContents = $privateDisk->get($path);
+                    if (!hash_equals(hash('sha256', $contents), hash('sha256', $privateContents))) {
+                        throw new \RuntimeException('Private copy verification failed.');
+                    }
+
+                    if (!$publicDisk->delete($path)) {
+                        throw new \RuntimeException('Could not remove verified public copy.');
+                    }
+
+                    $copied++;
+                } catch (\Throwable $exception) {
+                    $this->error("Appointment #{$appointment->id}: {$exception->getMessage()}");
+                    $failures++;
+                }
+            }
+        });
+
+    $this->info($dryRun
+        ? 'Dry run complete. No appointment photo files were changed.'
+        : "Photo migration complete. Migrated {$copied}; already private {$alreadyPrivate}; failures {$failures}.");
+
+    return $failures > 0 ? self::FAILURE : self::SUCCESS;
+})->purpose('Move legacy appointment photos from public storage to private storage');
 
 Artisan::command('platform:subscription-reminders', function () {
     $reminders = [

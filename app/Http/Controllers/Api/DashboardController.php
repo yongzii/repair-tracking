@@ -18,8 +18,8 @@ class DashboardController extends Controller
         $shopId = $this->currentShopId($request);
 
         $activeStatuses = ['RECEIVED', 'DIAGNOSING', 'WAITING_PARTS', 'IN_PROGRESS'];
-        $resolvedStatuses = ['PICKED_UP', 'UNREPAIRABLE'];
-        $repairCompletedStatuses = ['READY_FOR_PICKUP', 'PICKED_UP', 'UNREPAIRABLE'];
+        $resolvedStatuses = ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'];
+        $repairCompletedStatuses = ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'];
         $jobOrders = JobOrder::query()->where('shop_id', $shopId);
 
         $totalJobs = (clone $jobOrders)->count();
@@ -28,7 +28,7 @@ class DashboardController extends Controller
         $waitingParts = (clone $jobOrders)->where('current_status', 'WAITING_PARTS')->count();
         $readyForPickup = (clone $jobOrders)->where('current_status', 'READY_FOR_PICKUP')->count();
         $pickedUp = (clone $jobOrders)->where('current_status', 'PICKED_UP')->count();
-        $unrepairable = (clone $jobOrders)->where('current_status', 'UNREPAIRABLE')->count();
+        $unrepairable = (clone $jobOrders)->whereIn('current_status', ['RTO', 'RTO_RELEASED', 'UNREPAIRABLE'])->count();
         $warrantyServiceJobs = (clone $jobOrders)->where('service_type', 'WARRANTY_SERVICE')->count();
         $overdueJobs = (clone $jobOrders)->whereIn('current_status', $activeStatuses)
             ->whereNotNull('estimated_completion')

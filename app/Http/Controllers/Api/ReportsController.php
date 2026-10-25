@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\JobOrder;
 use App\Models\JobOrderPayment;
+use App\Models\JobOrderRefund;
 use App\Models\ServiceCategory;
 use App\Models\ServiceItem;
 use App\Models\User;
@@ -26,14 +27,14 @@ class ReportsController extends Controller
     {
         $this->authorizeAdmin($request);
 
-        $report = $this->buildReportData($request);
+        $report = $this->sanitizeCsvValues($this->buildReportData($request));
         $filters = $report['filters'];
         $reportType = $this->reportType($request);
         $filename = "{$reportType}-reports-" . now()->format('Ymd-Hi') . '.csv';
 
         return response()->streamDownload(function () use ($report, $filters, $reportType) {
             $handle = fopen('php://output', 'w');
-            $appName = config('app.name', 'Repair Service Management System');
+            $appName = $this->sanitizeCsvText((string) config('app.name', 'Repair Service Management System'));
             $includeOperations = in_array($reportType, ['operations', 'all'], true);
             $includePayments = in_array($reportType, ['payments', 'all'], true);
 
@@ -114,8 +115,11 @@ class ReportsController extends Controller
 
             if ($includePayments) {
                 fputcsv($handle, ['Financial Summary']);
-                fputcsv($handle, ['Total Revenue', $report['totalRevenue']]);
+                fputcsv($handle, ['Original Repair Costs', $report['totalRevenue']]);
                 fputcsv($handle, ['Total Collected', $report['totalCollected']]);
+                fputcsv($handle, ['Pending RTO Refund Obligations', $report['pendingRtoRefunds']]);
+                fputcsv($handle, ['RTO Refunds Issued', $report['issuedRtoRefunds']]);
+                fputcsv($handle, ['Net Retained After Issued Refunds', $report['netRetained']]);
                 fputcsv($handle, ['Pending Receivables', $report['pendingReceivables']]);
                 fputcsv($handle, ['Estimated Gross Profit', $report['estimatedGrossProfit']]);
                 fputcsv($handle, ['Gross Profit Margin (%)', $report['grossProfitMargin']]);
@@ -128,6 +132,26 @@ class ReportsController extends Controller
                 fputcsv($handle, ['Held Partial Payments', $report['paymentSummary']['held_partial_payments']]);
                 fputcsv($handle, ['Applied Partial Payments', $report['paymentSummary']['applied_partial_payments']]);
                 fputcsv($handle, ['Partial Payments Needing Review', $report['paymentSummary']['review_partial_payments']]);
+                fputcsv($handle, ['Pending Refund Obligations', $report['paymentSummary']['pending_refund_obligations']]);
+                fputcsv($handle, ['Refunds Issued', $report['paymentSummary']['issued_refunds']]);
+                fputcsv($handle, ['Net Cash Retained in Payment Date Range', $report['paymentSummary']['net_cash_retained']]);
+                fputcsv($handle, []);
+
+                fputcsv($handle, ['RTO Refund Ledger']);
+                fputcsv($handle, ['Job Order', 'Customer', 'Reason', 'Status', 'Amount', 'Method', 'Reference', 'Initiated', 'Issued']);
+                foreach ($report['refundRecords'] as $refund) {
+                    fputcsv($handle, [
+                        $refund['job_order_number'],
+                        $refund['customer_name'],
+                        $refund['reason'],
+                        $refund['status'],
+                        $refund['amount'],
+                        $refund['refund_method'],
+                        $refund['reference_number'],
+                        $refund['initiated_at'],
+                        $refund['issued_at'],
+                    ]);
+                }
                 fputcsv($handle, []);
 
                 fputcsv($handle, ['Payment Methods']);
@@ -203,6 +227,33 @@ class ReportsController extends Controller
         return in_array($type, ['operations', 'payments', 'all'], true) ? $type : 'all';
     }
 
+    private function sanitizeCsvValues(mixed $value): mixed
+    {
+        if (is_array($value)) {
+            foreach ($value as $key => $item) {
+                $value[$key] = $this->sanitizeCsvValues($item);
+            }
+
+            return $value;
+        }
+
+        return is_string($value) ? $this->sanitizeCsvText($value) : $value;
+    }
+
+    private function sanitizeCsvText(string $value): string
+    {
+        if (is_numeric($value)) {
+            return $value;
+        }
+
+        $dangerousPrefix = preg_match('/^[\p{C}\p{Z}\s]*[=+\-@]/u', $value);
+        if ($dangerousPrefix === false) {
+            $dangerousPrefix = preg_match('/^[\x00-\x20\x7F]*[=+\-@]/', $value);
+        }
+
+        return $dangerousPrefix === 1 ? "'" . $value : $value;
+    }
+
     private function buildReportData(Request $request): array
     {
         $shopId = $this->currentShopId($request);
@@ -224,7 +275,7 @@ class ReportsController extends Controller
             $baseQuery->whereDate('job_orders.created_at', '<=', $endDate);
         }
         if ($statusFilter === 'OPEN') {
-            $baseQuery->whereNotIn('job_orders.current_status', ['PICKED_UP', 'UNREPAIRABLE']);
+            $baseQuery->whereNotIn('job_orders.current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE']);
         } elseif ($statusFilter) {
             $baseQuery->where('job_orders.current_status', $statusFilter);
         }
@@ -259,8 +310,8 @@ class ReportsController extends Controller
 
         $monthGrowth = $lastMonth > 0 ? round((($thisMonth - $lastMonth) / $lastMonth) * 100, 1) : 0;
 
-        $totalCompleted = (clone $baseQuery)->whereIn('current_status', ['PICKED_UP', 'UNREPAIRABLE'])->count();
-        $totalPending = (clone $baseQuery)->whereNotIn('current_status', ['PICKED_UP', 'UNREPAIRABLE'])->count();
+        $totalCompleted = (clone $baseQuery)->whereIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'])->count();
+        $totalPending = (clone $baseQuery)->whereNotIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'])->count();
 
         $deviceBreakdown = (clone $baseQuery)->groupBy('device_type')
             ->select('device_type', DB::raw('count(*) as total'))
@@ -335,7 +386,7 @@ class ReportsController extends Controller
             ];
         }
 
-        $turnaroundStats = (clone $baseQuery)->whereIn('current_status', ['PICKED_UP', 'UNREPAIRABLE'])
+        $turnaroundStats = (clone $baseQuery)->whereIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'])
             ->get()
             ->map(fn ($job) => $job->created_at->diffInDays($job->updated_at, true))
             ->filter(fn ($days) => $days !== null);
@@ -346,7 +397,21 @@ class ReportsController extends Controller
 
         $totalRevenue = round((float) (clone $baseQuery)->sum('total_cost'), 2);
         $totalCollected = round((float) (clone $baseQuery)->sum('amount_paid'), 2);
-        $pendingReceivables = round((float) (clone $baseQuery)->sum(DB::raw('total_cost - amount_paid')), 2);
+        $filteredJobOrderIds = (clone $baseQuery)->select('job_orders.id');
+        $pendingRtoRefunds = round((float) JobOrderRefund::query()
+            ->where('shop_id', $shopId)
+            ->whereIn('job_order_id', $filteredJobOrderIds)
+            ->where('status', JobOrderRefund::STATUS_PENDING)
+            ->sum('amount'), 2);
+        $issuedRtoRefunds = round((float) JobOrderRefund::query()
+            ->where('shop_id', $shopId)
+            ->whereIn('job_order_id', $filteredJobOrderIds)
+            ->where('status', JobOrderRefund::STATUS_ISSUED)
+            ->sum('amount'), 2);
+        $netRetained = round($totalCollected - $issuedRtoRefunds, 2);
+        $pendingReceivables = round((float) (clone $baseQuery)
+            ->whereNotIn('current_status', ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'])
+            ->sum(DB::raw('CASE WHEN total_cost > amount_paid THEN total_cost - amount_paid ELSE 0 END')), 2);
         $partsCostTotal = round((float) (clone $baseQuery)->sum('parts_cost'), 2);
         $estimatedGrossProfit = round($totalRevenue - $partsCostTotal, 2);
         $grossProfitMargin = $totalRevenue > 0 ? round(($estimatedGrossProfit / $totalRevenue) * 100, 1) : 0;
@@ -397,6 +462,9 @@ class ReportsController extends Controller
             'maxTurnaround' => $maxTurnaround,
             'totalRevenue' => $totalRevenue,
             'totalCollected' => $totalCollected,
+            'pendingRtoRefunds' => $pendingRtoRefunds,
+            'issuedRtoRefunds' => $issuedRtoRefunds,
+            'netRetained' => $netRetained,
             'pendingReceivables' => $pendingReceivables,
             'estimatedGrossProfit' => $estimatedGrossProfit,
             'grossProfitMargin' => $grossProfitMargin,
@@ -463,14 +531,27 @@ class ReportsController extends Controller
 
         $partialPaymentTotal = round((float) $partialPayments->sum('amount'), 2);
         $heldPartialPayments = round((float) $partialPayments
-            ->filter(fn (JobOrderPayment $payment) => !in_array($payment->jobOrder?->current_status, ['PICKED_UP', 'UNREPAIRABLE'], true))
+            ->filter(fn (JobOrderPayment $payment) => !in_array($payment->jobOrder?->current_status, ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true))
             ->sum('amount'), 2);
         $appliedPartialPayments = round((float) $partialPayments
             ->filter(fn (JobOrderPayment $payment) => $payment->jobOrder?->current_status === 'PICKED_UP')
             ->sum('amount'), 2);
         $reviewPartialPayments = round((float) $partialPayments
-            ->filter(fn (JobOrderPayment $payment) => $payment->jobOrder?->current_status === 'UNREPAIRABLE')
+            ->filter(fn (JobOrderPayment $payment) => in_array($payment->jobOrder?->current_status, ['RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true))
             ->sum('amount'), 2);
+
+        $refunds = JobOrderRefund::query()
+            ->where('shop_id', $shopId)
+            ->with('jobOrder:id,job_order_number,customer_name')
+            ->when($startDate, fn ($query) => $query->whereDate('initiated_at', '>=', $startDate))
+            ->when($endDate, fn ($query) => $query->whereDate('initiated_at', '<=', $endDate));
+        $pendingRefunds = (clone $refunds)->where('status', JobOrderRefund::STATUS_PENDING);
+        $issuedRefunds = JobOrderRefund::query()
+            ->where('shop_id', $shopId)
+            ->where('status', JobOrderRefund::STATUS_ISSUED)
+            ->when($startDate, fn ($query) => $query->whereDate('issued_at', '>=', $startDate))
+            ->when($endDate, fn ($query) => $query->whereDate('issued_at', '<=', $endDate));
+        $issuedRefundTotal = round((float) (clone $issuedRefunds)->sum('amount'), 2);
 
         return [
             'paymentSummary' => [
@@ -484,6 +565,9 @@ class ReportsController extends Controller
                 'held_down_payments' => $heldPartialPayments,
                 'applied_down_payments' => $appliedPartialPayments,
                 'review_down_payments' => $reviewPartialPayments,
+                'pending_refund_obligations' => round((float) $pendingRefunds->sum('amount'), 2),
+                'issued_refunds' => $issuedRefundTotal,
+                'net_cash_retained' => round((float) $allPayments->sum('amount') - $issuedRefundTotal, 2),
             ],
             'paymentMethodBreakdown' => $paymentMethodBreakdown,
             'paymentTypeBreakdown' => $paymentTypeBreakdown,
@@ -497,6 +581,24 @@ class ReportsController extends Controller
                 ->map(fn (JobOrderPayment $payment) => $this->mapPaymentRecord($payment))
                 ->values()
                 ->all(),
+            'refundRecords' => (clone $refunds)
+                ->latest('initiated_at')
+                ->take(30)
+                ->get()
+                ->map(fn (JobOrderRefund $refund) => [
+                    'id' => $refund->id,
+                    'job_order_number' => $refund->jobOrder?->job_order_number,
+                    'customer_name' => $refund->jobOrder?->customer_name,
+                    'amount' => (float) $refund->amount,
+                    'status' => $refund->status,
+                    'reason' => $refund->reason,
+                    'refund_method' => $refund->refund_method,
+                    'reference_number' => $refund->reference_number,
+                    'initiated_at' => $refund->initiated_at?->format('M d, Y h:i A'),
+                    'issued_at' => $refund->issued_at?->format('M d, Y h:i A'),
+                ])
+                ->values()
+                ->all(),
         ];
     }
 
@@ -508,7 +610,7 @@ class ReportsController extends Controller
         if ($this->normalizedPaymentType($payment) === 'PARTIAL_PAYMENT') {
             $partialPaymentState = match ($status) {
                 'PICKED_UP' => 'APPLIED',
-                'UNREPAIRABLE' => 'NEEDS_REVIEW',
+                'UNREPAIRABLE', 'RTO', 'RTO_RELEASED' => 'NEEDS_REVIEW',
                 default => 'HELD',
             };
         }
@@ -560,7 +662,9 @@ class ReportsController extends Controller
             'estimated_completion_formatted' => $jobOrder->estimated_completion?->format('M d, Y h:i A'),
             'total_cost' => (float) $jobOrder->total_cost,
             'amount_paid' => (float) $jobOrder->amount_paid,
-            'balance' => round(max((float) $jobOrder->total_cost - (float) $jobOrder->amount_paid, 0), 2),
+            'balance' => (float) $jobOrder->balance,
+            'refunds_pending' => round((float) $jobOrder->refunds()->where('status', JobOrderRefund::STATUS_PENDING)->sum('amount'), 2),
+            'refunds_issued' => round((float) $jobOrder->refunds()->where('status', JobOrderRefund::STATUS_ISSUED)->sum('amount'), 2),
         ];
     }
 
@@ -579,6 +683,10 @@ class ReportsController extends Controller
 
         if ($status === 'UNREPAIRABLE') {
             return 'RTO';
+        }
+
+        if ($status === 'RTO_RELEASED') {
+            return 'RTO RELEASED';
         }
 
         if ($status === 'PICKED_UP') {

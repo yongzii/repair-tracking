@@ -90,7 +90,8 @@ class RepairPhotoEvidenceTest extends TestCase
             ->assertJsonPath('photos.0.description', 'Ready for customer review.');
 
         $this->get("/api/shops/{$shop->slug}/track/{$jobOrder->job_order_number}/photos/{$visiblePhoto->id}")
-            ->assertOk();
+            ->assertOk()
+            ->assertHeader('Content-Type', 'image/jpeg');
 
         $this->get("/api/shops/{$shop->slug}/track/{$jobOrder->job_order_number}/photos/{$hiddenPhoto->id}")
             ->assertNotFound();
@@ -103,6 +104,63 @@ class RepairPhotoEvidenceTest extends TestCase
             ]),
             $this->getJson("/api/shops/{$shop->slug}/track/{$jobOrder->job_order_number}")->json('photos.0.url')
         );
+    }
+
+    public function test_customer_visible_repair_photo_uses_detected_mime_not_client_declared_mime(): void
+    {
+        Storage::fake('local');
+
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOrder = $this->createJobOrder($shop);
+        $fakeImage = UploadedFile::fake()->image('customer.jpg', 640, 480);
+        $spoofedMimeImage = new UploadedFile(
+            $fakeImage->getPathname(),
+            'customer.jpg',
+            'text/html',
+            UPLOAD_ERR_OK,
+            true
+        );
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/photos", [
+                'photo' => $spoofedMimeImage,
+                'photo_type' => RepairPhoto::TYPE_AFTER,
+                'visible_to_customer' => true,
+            ])
+            ->assertCreated();
+
+        $photo = RepairPhoto::firstOrFail();
+        $this->assertSame('image/jpeg', $photo->mime_type);
+
+        $this->get("/api/shops/{$shop->slug}/track/{$jobOrder->job_order_number}/photos/{$photo->id}")
+            ->assertOk()
+            ->assertHeader('Content-Type', 'image/jpeg')
+            ->assertHeader('X-Content-Type-Options', 'nosniff');
+    }
+
+    public function test_customer_visible_repair_photo_with_unsupported_detected_mime_is_rejected(): void
+    {
+        Storage::fake('local');
+
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOrder = $this->createJobOrder($shop);
+        $path = "repair-photos/{$shop->id}/{$jobOrder->id}/not-an-image.bin";
+        Storage::disk('local')->put($path, '<!doctype html><script>alert(1)</script>');
+        $photo = RepairPhoto::create([
+            'shop_id' => $shop->id,
+            'job_order_id' => $jobOrder->id,
+            'photo_type' => RepairPhoto::TYPE_EVIDENCE,
+            'photo_path' => $path,
+            'mime_type' => 'text/html',
+            'visible_to_customer' => true,
+            'uploaded_by' => $staff->name,
+            'uploaded_by_role' => $staff->role,
+        ]);
+
+        $response = $this->get("/api/shops/{$shop->slug}/track/{$jobOrder->job_order_number}/photos/{$photo->id}")
+            ->assertStatus(415);
+
+        $this->assertNotSame('text/html', $response->headers->get('Content-Type'));
     }
 
     public function test_staff_can_publish_and_hide_photo_from_customer_tracking(): void
@@ -164,6 +222,7 @@ class RepairPhotoEvidenceTest extends TestCase
             ->assertCreated()
             ->assertJsonPath('photo.uploaded_by', 'Tech User');
 
+        $this->assertSame('image/png', RepairPhoto::firstOrFail()->mime_type);
         $this->assertDatabaseHas('repair_photos', [
             'shop_id' => $shop->id,
             'job_order_id' => $jobOrder->id,

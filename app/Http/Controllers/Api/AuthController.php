@@ -3,12 +3,13 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\Technician;
 use App\Models\User;
 use App\Support\AuditLogger;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -29,9 +30,17 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $credentials = $request->validate([
-            'email' => ['required', 'email'],
+            'email' => ['required', 'string', 'max:255'],
             'password' => ['required'],
         ]);
+        $identifier = trim($credentials['email']);
+        $isEmail = filter_var($identifier, FILTER_VALIDATE_EMAIL) !== false;
+        $identityCredential = $isEmail
+            ? ['email' => $identifier]
+            : ['username' => Str::lower($identifier)];
+        $roles = $isEmail
+            ? [User::ROLE_PLATFORM_ADMIN, User::ROLE_SHOP_ADMIN, User::ROLE_ADMIN]
+            : [User::ROLE_STAFF, User::ROLE_TECHNICIAN];
 
         $loginLimiter = RateLimiter::limiter('login');
         $limit = $loginLimiter($request);
@@ -45,7 +54,18 @@ class AuthController extends Controller
             ], 429)->header('Retry-After', (string) $retryAfter);
         }
 
-        if (!Auth::attempt($credentials)) {
+        $authenticated = false;
+        foreach ($roles as $role) {
+            if (Auth::attempt($identityCredential + [
+                'password' => $credentials['password'],
+                'role' => $role,
+            ])) {
+                $authenticated = true;
+                break;
+            }
+        }
+
+        if (!$authenticated) {
             RateLimiter::hit($limiterKey, $limit->decaySeconds);
 
             throw ValidationException::withMessages([
@@ -90,13 +110,7 @@ class AuthController extends Controller
         }
 
         if ($user->isTechnician()) {
-            $hasTechnicianProfile = Technician::query()
-                ->where('shop_id', $user->shop_id)
-                ->where('email', $user->email)
-                ->where('is_active', true)
-                ->exists();
-
-            if (!$hasTechnicianProfile) {
+            if (!$this->findTechnician($user)) {
                 Auth::logout();
                 $request->session()->invalidate();
                 $request->session()->regenerateToken();
@@ -148,6 +162,31 @@ class AuthController extends Controller
 
         return response()->json([
             'message' => 'Logged out successfully.',
+        ]);
+    }
+
+    public function changePassword(Request $request)
+    {
+        $validated = $request->validate([
+            'current_password' => ['required', 'current_password'],
+            'password' => ['required', 'string', 'min:8', 'confirmed', 'different:current_password'],
+        ]);
+
+        $user = $request->user();
+        $user->forceFill([
+            'password' => Hash::make($validated['password']),
+        ])->save();
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'auth.password_changed',
+            module: 'authentication',
+            description: 'User changed their password.'
+        );
+
+        return response()->json([
+            'message' => 'Password changed successfully.',
         ]);
     }
 

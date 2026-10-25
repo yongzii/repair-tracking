@@ -3,16 +3,15 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
-use App\Models\JobOrder;
-use App\Models\JobOrderPart;
+use App\Models\PartRequest;
 use App\Models\SparePart;
-use App\Models\StatusHistory;
 use App\Models\StockMovement;
 use App\Models\User;
 use App\Support\AuditLogger;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class PartRequestController extends Controller
@@ -22,285 +21,354 @@ class PartRequestController extends Controller
         $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
         $shopId = $this->currentShopId($request);
 
-        $requests = JobOrder::query()
+        $requests = PartRequest::query()
             ->with([
-                'technician:id,name',
-                'statusHistories' => function ($query) {
-                    $query
-                        ->where('status', 'WAITING_PARTS')
-                        ->where('note', 'like', 'Parts requested:%')
-                        ->latest('created_at');
-                },
+                'jobOrder:id,job_order_number',
+                'requestedBy:id,name',
+                'updatedBy:id,name',
+                'receivedBy:id,name',
+                'inventoryPart:id,name,stock_quantity',
             ])
             ->where('shop_id', $shopId)
-            ->where('current_status', 'WAITING_PARTS')
             ->latest()
             ->get()
-            ->map(function (JobOrder $jobOrder) use ($shopId) {
-                $history = $jobOrder->statusHistories->first();
-                if (!$history) {
-                    return null;
-                }
-
-                $parsed = $this->parseRequestNote($history);
-                if (!$parsed) {
-                    return null;
-                }
-
-                return [
-                    'job_id' => $jobOrder->id,
-                    'job_order_number' => $jobOrder->job_order_number,
-                    'customer_name' => $jobOrder->customer_name,
-                    'device_type' => $jobOrder->device_type,
-                    'technician_name' => $jobOrder->technician?->name,
-                    'current_status' => $jobOrder->current_status,
-                    'estimated_completion_formatted' => $jobOrder->estimated_completion?->format('M d, Y h:i A'),
-                    'requested_part' => $parsed['part_name'],
-                    'requested_quantity' => $parsed['quantity'],
-                    'request_note' => $parsed['note'],
-                    'requested_at' => $history->created_at,
-                    'requested_at_formatted' => $history->created_at?->format('M d, Y h:i A'),
-                    'inventory_matches' => $this->findInventoryMatches($shopId, $parsed['part_name']),
-                ];
-            })
-            ->filter()
-            ->values();
+            ->map(fn (PartRequest $partRequest) => $this->mapRequest($partRequest));
 
         return response()->json([
             'requests' => $requests,
             'summary' => [
                 'total' => $requests->count(),
-                'withStockMatches' => $requests->filter(fn ($request) => count($request['inventory_matches']) > 0)->count(),
-                'withoutStockMatches' => $requests->filter(fn ($request) => count($request['inventory_matches']) === 0)->count(),
+                'pending' => $requests->where('status', PartRequest::STATUS_PENDING)->count(),
+                'approved' => $requests->where('status', PartRequest::STATUS_APPROVED)->count(),
+                'ordered' => $requests->where('status', PartRequest::STATUS_ORDERED)->count(),
+                'received' => $requests->where('status', PartRequest::STATUS_RECEIVED)->count(),
+                'cancelled' => $requests->where('status', PartRequest::STATUS_CANCELLED)->count(),
             ],
         ]);
     }
 
-    public function fulfill(Request $request, JobOrder $jobOrder)
+    public function store(Request $request)
     {
-        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
-        $this->ensureSameShop($request, $jobOrder);
+        $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
         $shopId = $this->currentShopId($request);
-
-        $history = $jobOrder->statusHistories()
-            ->where('status', 'WAITING_PARTS')
-            ->where('note', 'like', 'Parts requested:%')
-            ->latest('created_at')
-            ->first();
-
-        if (!$history || $jobOrder->current_status !== 'WAITING_PARTS') {
-            return response()->json([
-                'message' => 'This job does not have an active parts request that can be fulfilled from the queue.',
-            ], 422);
-        }
-
-        $parsed = $this->parseRequestNote($history);
-        if (!$parsed) {
-            return response()->json([
-                'message' => 'The latest parts request note could not be parsed.',
-            ], 422);
-        }
+        $this->resolveTechnician($user);
 
         $validated = $request->validate([
-            'spare_part_id' => 'required|exists:spare_parts,id',
-            'quantity' => 'nullable|integer|min:1',
-            'note' => 'nullable|string|max:255',
+            'job_order_id' => ['prohibited'],
+            'idempotency_key' => ['nullable', 'uuid'],
+            'part_name' => ['required', 'string', 'max:150'],
+            'quantity' => ['required', 'integer', 'min:1', 'max:1000000'],
+            'note' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $quantity = (int) ($validated['quantity'] ?? $parsed['quantity']);
-        $operatorNote = trim((string) ($validated['note'] ?? ''));
+        [$partRequest, $created] = $this->createPartRequest($request, $user, $validated, $shopId);
 
-        [$jobOrder, $part, $previousStatus] = DB::transaction(function () use ($validated, $quantity, $jobOrder, $request, $operatorNote, $shopId) {
-            $lockedJobOrder = JobOrder::query()
-                ->where('shop_id', $shopId)
+        if ($created) {
+            AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'part_request.created',
+            module: 'part_requests',
+            record: $partRequest,
+            description: "{$user->name} requested {$partRequest->quantity} {$partRequest->part_name} for shop purchasing.",
+            newValues: $partRequest->only(['part_name', 'quantity', 'note', 'status'])
+            );
+        }
+
+        return response()->json([
+            'message' => 'Internal purchasing request submitted.',
+            'request' => $this->mapRequest($partRequest->load(['jobOrder', 'requestedBy', 'updatedBy'])),
+        ], $created ? 201 : 200);
+    }
+
+    public function storeForShop(Request $request)
+    {
+        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $shopId = $this->currentShopId($request);
+
+        $validated = $request->validate([
+            'job_order_id' => ['prohibited'],
+            'idempotency_key' => ['nullable', 'uuid'],
+            'part_name' => ['required', 'string', 'max:150'],
+            'quantity' => ['required', 'integer', 'min:1', 'max:1000000'],
+            'note' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        [$partRequest, $created] = $this->createPartRequest($request, $user, $validated, $shopId);
+
+        if ($created) {
+            AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'part_request.created',
+            module: 'part_requests',
+            record: $partRequest,
+            description: "{$user->name} requested {$partRequest->quantity} {$partRequest->part_name} for shop purchasing.",
+            newValues: $partRequest->only(['part_name', 'quantity', 'note', 'status'])
+            );
+        }
+
+        return response()->json([
+            'message' => 'Part added to the shop ordering queue.',
+            'request' => $this->mapRequest($partRequest->load(['jobOrder', 'requestedBy', 'updatedBy', 'inventoryPart', 'receivedBy'])),
+        ], $created ? 201 : 200);
+    }
+
+    public function updateStatus(Request $request, PartRequest $partRequest)
+    {
+        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $this->ensureSameShop($request, $partRequest);
+
+        $validated = $request->validate([
+            'status' => ['required', Rule::in([
+                PartRequest::STATUS_PENDING,
+                PartRequest::STATUS_APPROVED,
+                PartRequest::STATUS_ORDERED,
+                PartRequest::STATUS_RECEIVED,
+                PartRequest::STATUS_CANCELLED,
+            ])],
+        ]);
+
+        $previousStatus = $partRequest->status;
+        $nextStatus = $validated['status'];
+
+        if ($previousStatus === $nextStatus) {
+            return response()->json([
+                'message' => 'Part request status is already up to date.',
+                'request' => $this->mapRequest($partRequest->load(['jobOrder', 'requestedBy', 'updatedBy'])),
+            ]);
+        }
+
+        $allowedTransitions = [
+            PartRequest::STATUS_PENDING => [PartRequest::STATUS_APPROVED, PartRequest::STATUS_ORDERED, PartRequest::STATUS_CANCELLED],
+            PartRequest::STATUS_APPROVED => [PartRequest::STATUS_ORDERED, PartRequest::STATUS_CANCELLED],
+            PartRequest::STATUS_ORDERED => [PartRequest::STATUS_CANCELLED],
+            PartRequest::STATUS_RECEIVED => [],
+            PartRequest::STATUS_CANCELLED => [],
+        ];
+        if ($nextStatus === PartRequest::STATUS_RECEIVED) {
+            throw ValidationException::withMessages([
+                'status' => 'Use the inventory receiving action to mark a request received.',
+            ]);
+        }
+
+        if (!in_array($nextStatus, $allowedTransitions[$previousStatus] ?? [], true)) {
+            throw ValidationException::withMessages([
+                'status' => "A part request cannot move from {$previousStatus} to {$nextStatus}.",
+            ]);
+        }
+
+        DB::transaction(function () use ($partRequest, $user, $nextStatus): void {
+            $lockedRequest = PartRequest::query()
+                ->where('shop_id', $partRequest->shop_id)
                 ->lockForUpdate()
-                ->findOrFail($jobOrder->id);
+                ->findOrFail($partRequest->id);
 
-            if ($lockedJobOrder->current_status !== 'WAITING_PARTS') {
+            if ($lockedRequest->status !== $partRequest->status) {
                 throw ValidationException::withMessages([
-                    'job_order' => 'This parts request has already been fulfilled or is no longer active.',
+                    'status' => 'This part request was updated by another user. Refresh and try again.',
                 ]);
             }
 
-            $sparePart = SparePart::query()
-                ->where('shop_id', $shopId)
-                ->lockForUpdate()
-                ->findOrFail($validated['spare_part_id']);
-
-            if (!$sparePart->is_active) {
-                throw ValidationException::withMessages([
-                    'spare_part_id' => 'Selected spare part is inactive.',
-                ]);
-            }
-
-            if ((int) $sparePart->stock_quantity < $quantity) {
-                throw ValidationException::withMessages([
-                    'quantity' => 'Selected inventory part does not have enough stock to fulfill this request.',
-                ]);
-            }
-
-            $unitCost = (float) $sparePart->unit_cost;
-            $total = $quantity * $unitCost;
-            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') + $total;
-            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
-
-            $part = JobOrderPart::create([
-                'shop_id' => $lockedJobOrder->shop_id,
-                'job_order_id' => $lockedJobOrder->id,
-                'spare_part_id' => $sparePart->id,
-                'part_name' => $sparePart->name,
-                'quantity' => $quantity,
-                'unit_cost' => $unitCost,
-                'total_cost' => $total,
-                'notes' => $operatorNote !== '' ? $operatorNote : 'Fulfilled from parts request queue',
+            $lockedRequest->update([
+                'status' => $nextStatus,
+                'updated_by_user_id' => $user->id,
             ]);
-
-            $sparePart->decrement('stock_quantity', $quantity);
-            $sparePart->refresh();
-
-            StockMovement::create([
-                'shop_id' => $jobOrder->shop_id,
-                'spare_part_id' => $sparePart->id,
-                'job_order_id' => $jobOrder->id,
-                'job_order_part_id' => $part->id,
-                'type' => 'OUT',
-                'quantity_change' => -$quantity,
-                'balance_after' => $sparePart->stock_quantity,
-                'note' => "Fulfilled from parts request queue for job order {$jobOrder->job_order_number}",
-                'created_by' => $request->user()?->name,
-            ]);
-
-            $previousStatus = $lockedJobOrder->current_status;
-            $lockedJobOrder->update([
-                'parts_cost' => $partsTotal,
-                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
-                'payment_status' => $this->paymentStatusForTotal($lockedJobOrder->amount_paid, $partsTotal + (float) $lockedJobOrder->labor_cost),
-                'current_status' => 'IN_PROGRESS',
-            ]);
-
-            StatusHistory::create([
-                'shop_id' => $lockedJobOrder->shop_id,
-                'job_order_id' => $lockedJobOrder->id,
-                'status' => 'IN_PROGRESS',
-                'note' => "Parts request fulfilled using {$part->part_name} (Qty {$quantity})." . ($operatorNote !== '' ? " Note: {$operatorNote}" : ''),
-            ]);
-
-            return [$lockedJobOrder->fresh(), $part, $previousStatus];
         });
+
+        $partRequest->refresh();
 
         AuditLogger::log(
             request: $request,
             user: $user,
-            action: 'part_request.fulfilled',
+            action: 'part_request.status_updated',
             module: 'part_requests',
-            record: $jobOrder,
-            description: "{$user->name} fulfilled a parts request for {$jobOrder->job_order_number} using {$part->part_name}.",
-            oldValues: [
-                'current_status' => $previousStatus,
-                'requested_part' => $parsed['part_name'],
-                'requested_quantity' => $parsed['quantity'],
-            ],
-            newValues: [
-                'current_status' => 'IN_PROGRESS',
-                'fulfilled_part' => $part->part_name,
-                'fulfilled_quantity' => $quantity,
-                'spare_part_id' => $part->spare_part_id,
-            ]
+            record: $partRequest,
+            description: "Updated part request status from {$previousStatus} to {$nextStatus}.",
+            oldValues: ['status' => $previousStatus],
+            newValues: ['status' => $nextStatus]
         );
 
         return response()->json([
-            'message' => 'Parts request fulfilled. Stock was deducted and the job is back in progress.',
+            'message' => 'Part request status updated.',
+            'request' => $this->mapRequest($partRequest->load(['jobOrder', 'requestedBy', 'updatedBy'])),
         ]);
     }
 
-    private function parseRequestNote(StatusHistory $history): ?array
+    public function receive(Request $request, PartRequest $partRequest)
     {
-        $note = trim((string) $history->note);
+        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $this->ensureSameShop($request, $partRequest);
+        $shopId = $this->currentShopId($request);
 
-        if (!preg_match('/^Parts requested:\s*(.+?)\s*\(Qty\s+(\d+)\)(?:\.\s*Note:\s*(.+))?$/', $note, $matches)) {
-            return null;
-        }
+        $validated = $request->validate([
+            'spare_part_id' => [
+                'required',
+                Rule::exists('spare_parts', 'id')->where(fn ($query) => $query->where('shop_id', $shopId)),
+            ],
+        ]);
 
-        return [
-            'part_name' => trim($matches[1]),
-            'quantity' => (int) $matches[2],
-            'note' => isset($matches[3]) ? trim($matches[3]) : null,
-        ];
-    }
+        [$updated, $changed] = DB::transaction(function () use ($partRequest, $validated, $shopId, $user) {
+            $lockedRequest = PartRequest::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($partRequest->id);
 
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    private function findInventoryMatches(int $shopId, string $requestedPart): array
-    {
-        $searchTerms = collect(preg_split('/\s+/', Str::lower($requestedPart)) ?: [])
-            ->map(fn ($term) => preg_replace('/[^a-z0-9]/', '', $term))
-            ->filter(fn ($term) => strlen($term) >= 3)
-            ->take(4)
-            ->values();
-
-        $query = SparePart::query()
-            ->where('shop_id', $shopId)
-            ->where('is_active', true)
-            ->orderByDesc('stock_quantity')
-            ->orderBy('name');
-
-        if ($searchTerms->isNotEmpty()) {
-            $query->where(function ($builder) use ($searchTerms, $requestedPart) {
-                $builder->where('name', 'like', '%' . $requestedPart . '%')
-                    ->orWhere('part_number', 'like', '%' . $requestedPart . '%');
-
-                foreach ($searchTerms as $term) {
-                    $builder->orWhere('name', 'like', '%' . $term . '%')
-                        ->orWhere('part_number', 'like', '%' . $term . '%');
+            if ($lockedRequest->status === PartRequest::STATUS_RECEIVED) {
+                if ((int) $lockedRequest->inventory_spare_part_id !== (int) $validated['spare_part_id']) {
+                    throw ValidationException::withMessages([
+                        'spare_part_id' => 'This request has already been received into a different inventory item.',
+                    ]);
                 }
-            });
-        } else {
-            $query->where('name', 'like', '%' . $requestedPart . '%');
+
+                return [$lockedRequest->fresh()->load(['jobOrder', 'requestedBy', 'updatedBy', 'inventoryPart', 'receivedBy']), false];
+            }
+
+            if ($lockedRequest->status !== PartRequest::STATUS_ORDERED) {
+                throw ValidationException::withMessages([
+                    'status' => 'Only an ordered part request can be received.',
+                ]);
+            }
+
+            $inventoryPart = SparePart::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($validated['spare_part_id']);
+            if (!$inventoryPart->is_active || strcasecmp(trim($inventoryPart->name), trim($lockedRequest->part_name)) !== 0) {
+                throw ValidationException::withMessages([
+                    'spare_part_id' => 'Select an active inventory item whose name matches the requested part.',
+                ]);
+            }
+
+            $inventoryPart->increment('stock_quantity', (int) $lockedRequest->quantity);
+            $inventoryPart->refresh();
+            $lockedRequest->update([
+                'status' => PartRequest::STATUS_RECEIVED,
+                'inventory_spare_part_id' => $inventoryPart->id,
+                'received_at' => now(),
+                'received_by_user_id' => $user->id,
+                'updated_by_user_id' => $user->id,
+            ]);
+            StockMovement::create([
+                'shop_id' => $shopId,
+                'spare_part_id' => $inventoryPart->id,
+                'type' => 'IN',
+                'quantity_change' => (int) $lockedRequest->quantity,
+                'balance_after' => $inventoryPart->stock_quantity,
+                'note' => "Received {$lockedRequest->quantity} for general part request #{$lockedRequest->id}.",
+                'created_by' => $user->name,
+            ]);
+
+            return [$lockedRequest->fresh()->load(['jobOrder', 'requestedBy', 'updatedBy', 'inventoryPart', 'receivedBy']), true];
+        });
+
+        if ($changed) {
+            AuditLogger::log(
+                request: $request,
+                user: $user,
+                action: 'part_request.received',
+                module: 'part_requests',
+                record: $updated,
+                description: "Received {$updated->quantity} {$updated->part_name} into inventory.",
+                newValues: $updated->only(['status', 'inventory_spare_part_id', 'received_at', 'received_by_user_id'])
+            );
         }
 
-        return $query
-            ->limit(3)
-            ->get(['id', 'name', 'part_number', 'stock_quantity', 'unit', 'unit_cost'])
-            ->map(fn (SparePart $part) => [
-                'id' => $part->id,
-                'name' => $part->name,
-                'part_number' => $part->part_number,
-                'stock_quantity' => $part->stock_quantity,
-                'unit' => $part->unit,
-                'unit_cost' => $part->unit_cost,
-                'has_stock' => (int) $part->stock_quantity > 0,
-            ])
-            ->all();
-    }
-
-    private function recalculateCosts(JobOrder $jobOrder): void
-    {
-        $partsTotal = $jobOrder->parts()->sum('total_cost');
-        $laborCost = $jobOrder->labor_cost;
-
-        $jobOrder->update([
-            'parts_cost' => $partsTotal,
-            'total_cost' => $partsTotal + $laborCost,
-            'payment_status' => $jobOrder->amount_paid <= 0
-                ? 'PENDING'
-                : ($jobOrder->amount_paid >= ($partsTotal + $laborCost) ? 'PAID' : 'PARTIAL'),
+        return response()->json([
+            'message' => 'Part request received into inventory.',
+            'request' => $this->mapRequest($updated),
         ]);
     }
 
-    private function ensureTotalCoversCollectedAmount(float|int|string $totalCost, float|int|string $amountPaid): void
+    private function createPartRequest(Request $request, User $user, array $validated, int $shopId): array
     {
-        if ((float) $totalCost < (float) $amountPaid) {
-            throw ValidationException::withMessages([
-                'total_cost' => 'Total cost cannot be lower than the amount already paid.',
-            ]);
+        $idempotencyKey = $validated['idempotency_key'] ?? null;
+        $partName = trim($validated['part_name']);
+        $quantity = (int) $validated['quantity'];
+        $note = isset($validated['note']) ? trim($validated['note']) : null;
+        $payloadHash = hash('sha256', json_encode([
+            'part_name' => $partName,
+            'quantity' => $quantity,
+            'note' => $note,
+        ], JSON_THROW_ON_ERROR));
+
+        try {
+            return DB::transaction(function () use ($idempotencyKey, $payloadHash, $shopId, $user, $partName, $quantity, $note) {
+                if ($idempotencyKey !== null) {
+                    $existing = PartRequest::query()
+                        ->where('shop_id', $shopId)
+                        ->where('idempotency_key', $idempotencyKey)
+                        ->lockForUpdate()
+                        ->first();
+                    if ($existing) {
+                        if ($existing->idempotency_payload_hash !== $payloadHash) {
+                            abort(409, 'This idempotency key was already used with different request data.');
+                        }
+
+                        return [$existing, false];
+                    }
+                }
+
+                return [PartRequest::create([
+                    'shop_id' => $shopId,
+                    'requested_by_user_id' => $user->id,
+                    'idempotency_key' => $idempotencyKey,
+                    'idempotency_payload_hash' => $payloadHash,
+                    'part_name' => $partName,
+                    'quantity' => $quantity,
+                    'note' => $note,
+                    'status' => PartRequest::STATUS_PENDING,
+                ]), true];
+            }, 3);
+        } catch (QueryException $exception) {
+            if (!$this->isIdempotencyConstraintViolation($exception, 'preq_shop_idempotency_unique') || $idempotencyKey === null) {
+                throw $exception;
+            }
+
+            $existing = PartRequest::query()
+                ->where('shop_id', $shopId)
+                ->where('idempotency_key', $idempotencyKey)
+                ->firstOrFail();
+            if ($existing->idempotency_payload_hash !== $payloadHash) {
+                abort(409, 'This idempotency key was already used with different request data.');
+            }
+
+            return [$existing, false];
         }
     }
 
-    private function paymentStatusForTotal(float|int|string $amountPaid, float|int|string $totalCost): string
+    private function isIdempotencyConstraintViolation(QueryException $exception, string $constraint): bool
     {
-        return (float) $amountPaid <= 0
-            ? 'PENDING'
-            : ((float) $amountPaid >= (float) $totalCost ? 'PAID' : 'PARTIAL');
+        return $exception->getCode() === '23000'
+            && str_contains($exception->getMessage(), $constraint);
+    }
+
+    private function mapRequest(PartRequest $partRequest): array
+    {
+        return [
+            'id' => $partRequest->id,
+            'part_name' => $partRequest->part_name,
+            'quantity' => $partRequest->quantity,
+            'note' => $partRequest->note,
+            'status' => $partRequest->status,
+            'shop_id' => $partRequest->shop_id,
+            'inventory_spare_part' => $partRequest->inventoryPart ? [
+                'id' => $partRequest->inventoryPart->id,
+                'name' => $partRequest->inventoryPart->name,
+                'stock_quantity' => $partRequest->inventoryPart->stock_quantity,
+            ] : null,
+            'received_at' => $partRequest->received_at,
+            'received_by' => $partRequest->receivedBy?->name,
+            'job_order' => $partRequest->jobOrder ? [
+                'id' => $partRequest->jobOrder->id,
+                'job_order_number' => $partRequest->jobOrder->job_order_number,
+            ] : null,
+            'requested_by' => $partRequest->requestedBy?->name,
+            'updated_by' => $partRequest->updatedBy?->name,
+            'created_at' => $partRequest->created_at,
+            'created_at_formatted' => $partRequest->created_at?->format('M d, Y h:i A'),
+            'updated_at' => $partRequest->updated_at,
+            'updated_at_formatted' => $partRequest->updated_at?->format('M d, Y h:i A'),
+        ];
     }
 }

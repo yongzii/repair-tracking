@@ -72,8 +72,14 @@ class RepairPhotoController extends Controller
             abort(Response::HTTP_NOT_FOUND, 'Photo file not found.');
         }
 
+        $mimeType = $disk->mimeType($photo->photo_path);
+        if (!in_array($mimeType, ['image/jpeg', 'image/png', 'image/webp'], true)) {
+            abort(Response::HTTP_UNSUPPORTED_MEDIA_TYPE, 'Unsupported photo type.');
+        }
+
         return response()->file($disk->path($photo->photo_path), [
-            'Content-Type' => $photo->mime_type ?: 'application/octet-stream',
+            'Content-Type' => $mimeType,
+            'X-Content-Type-Options' => 'nosniff',
         ]);
     }
 }

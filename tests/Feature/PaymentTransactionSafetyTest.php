@@ -23,10 +23,12 @@ class PaymentTransactionSafetyTest extends TestCase
             ->postJson("/api/admin/job-orders/{$jobOrder->id}/record-payment", [
                 'amount_paid' => 1000,
                 'idempotency_key' => (string) Str::uuid(),
+                'payment_type' => 'FINAL_PAYMENT',
             ])
             ->assertOk()
             ->assertJsonPath('jobOrder.amount_paid', '1000.00')
-            ->assertJsonPath('jobOrder.payment_status', 'PAID');
+            ->assertJsonPath('jobOrder.payment_status', 'PAID')
+            ->assertJsonPath('payment.payment_type', 'FINAL_PAYMENT');
 
         $this->assertDatabaseCount('job_order_payments', 1);
         $this->assertDatabaseHas('job_orders', [
@@ -45,6 +47,7 @@ class PaymentTransactionSafetyTest extends TestCase
             ->postJson("/api/admin/job-orders/{$jobOrder->id}/record-payment", [
                 'amount_paid' => 300,
                 'idempotency_key' => (string) Str::uuid(),
+                'payment_type' => 'PARTIAL_PAYMENT',
             ])
             ->assertOk()
             ->assertJsonPath('jobOrder.amount_paid', '300.00')
@@ -55,6 +58,28 @@ class PaymentTransactionSafetyTest extends TestCase
             'id' => $jobOrder->id,
             'amount_paid' => 300,
             'payment_status' => 'PARTIAL',
+        ]);
+    }
+
+    public function test_partial_payment_cannot_be_labeled_as_final(): void
+    {
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOrder = $this->createJobOrder($shop, 1000);
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/record-payment", [
+                'amount_paid' => 300,
+                'idempotency_key' => (string) Str::uuid(),
+                'payment_type' => 'FINAL_PAYMENT',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('payment_type');
+
+        $this->assertDatabaseCount('job_order_payments', 0);
+        $this->assertDatabaseHas('job_orders', [
+            'id' => $jobOrder->id,
+            'amount_paid' => 0,
+            'payment_status' => 'PENDING',
         ]);
     }
 

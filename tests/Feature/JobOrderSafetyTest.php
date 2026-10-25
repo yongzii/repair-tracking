@@ -102,18 +102,43 @@ class JobOrderSafetyTest extends TestCase
             'job_order_number' => 'TEST-TECH-APPROVAL-001',
             'customer_name' => 'Customer Name',
             'customer_phone' => '09000000000',
+            'customer_email' => 'customer@example.test',
             'device_type' => 'Phone',
             'problem_description' => 'Does not power on.',
             'current_status' => 'DIAGNOSING',
+            'serial_number' => 'SERIAL-SECRET',
+            'internal_notes' => 'Staff-only secret note.',
+            'amount_paid' => 500,
+            'payment_status' => 'PARTIAL',
+            'payment_notes' => 'Private payment note.',
         ]);
 
-        $this->actingAs($technicianUser)
+        $response = $this->actingAs($technicianUser)
             ->postJson("/api/technician/job-orders/{$jobOrder->id}/record-repair-approval", [
                 'repair_approved_by_customer' => 'Customer Name',
                 'repair_approval_notes' => 'Phone approval; approved estimate PHP 2500.',
             ])
             ->assertOk()
-            ->assertJsonPath('jobOrder.repair_approved_by_customer', 'Customer Name');
+            ->assertJsonPath('message', 'Customer repair approval recorded.')
+            ->assertJsonPath('jobOrder.repair_approved_by_customer', 'Customer Name')
+            ->assertJsonPath('jobOrder.repair_approval_recorded_by', $technicianUser->name)
+            ->assertJsonStructure([
+                'message',
+                'jobOrder' => [
+                    'repair_approved_at',
+                    'repair_approved_by_customer',
+                    'repair_approval_recorded_by',
+                ],
+            ])
+            ->assertJsonMissingPath('jobOrder.customer_email')
+            ->assertJsonMissingPath('jobOrder.customer_phone')
+            ->assertJsonMissingPath('jobOrder.internal_notes')
+            ->assertJsonMissingPath('jobOrder.amount_paid')
+            ->assertJsonMissingPath('jobOrder.payment_status')
+            ->assertJsonMissingPath('jobOrder.payment_notes')
+            ->assertJsonMissingPath('jobOrder.serial_number');
+
+        $this->assertNotEmpty($response->json('jobOrder.repair_approved_at'));
 
         $this->assertDatabaseHas('job_orders', [
             'id' => $jobOrder->id,

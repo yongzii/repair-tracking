@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue';
+import { onMounted, reactive, ref, watch } from 'vue';
 import AdminLayout from '../../layouts/AdminLayout.vue';
 import AppLink from '../../components/AppLink.vue';
 import { ensureAdmin } from '../../composables/auth';
@@ -13,12 +13,21 @@ const loading = ref(true);
 const forbidden = ref(false);
 const errorMessage = ref('');
 const roles = ref([]);
+const technicians = ref([]);
 
 const form = reactive({
     name: '',
     email: '',
+    username: '',
     role: 'staff',
+    technician_id: '',
     is_active: true,
+});
+
+watch(() => form.role, (role) => {
+    if (role !== 'technician') {
+        form.technician_id = '';
+    }
 });
 
 const loadUser = async () => {
@@ -36,9 +45,12 @@ const loadUser = async () => {
     try {
         const { data } = await window.axios.get(`/api/admin/users/${props.params.id}`);
         roles.value = data.roles || [];
+        technicians.value = data.technicians || [];
         form.name = data.user.name || '';
         form.email = data.user.email || '';
+        form.username = data.user.username || '';
         form.role = data.user.role || 'staff';
+        form.technician_id = data.user.technician_id || '';
         form.is_active = Boolean(data.user.is_active);
     } catch (error) {
         forbidden.value = true;
@@ -54,8 +66,10 @@ const submit = async () => {
     try {
         await window.axios.put(`/api/admin/users/${props.params.id}`, {
             name: form.name,
-            email: form.email,
+            email: form.email || null,
+            username: form.username || null,
             role: form.role,
+            technician_id: form.technician_id || null,
             is_active: form.is_active,
         });
         navigate('/admin/users', { replace: true });
@@ -85,9 +99,14 @@ onMounted(loadUser);
 
       <form class="space-y-3" @submit.prevent="submit">
         <input v-model="form.name" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Full name" required />
-        <input v-model="form.email" type="email" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Email" required />
+        <input v-model="form.username" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Username" :required="['staff', 'technician'].includes(form.role)" />
+        <input v-model="form.email" type="email" class="w-full px-4 py-2 border border-slate-300 rounded-lg" :placeholder="['shop_admin', 'admin'].includes(form.role) ? 'Email (required)' : 'Email (optional)'" :required="['shop_admin', 'admin'].includes(form.role)" />
         <select v-model="form.role" class="w-full px-4 py-2 border border-slate-300 rounded-lg">
           <option v-for="role in roles" :key="role" :value="role">{{ role }}</option>
+        </select>
+        <select v-if="form.role === 'technician'" v-model="form.technician_id" class="w-full px-4 py-2 border border-slate-300 rounded-lg" required>
+          <option value="" disabled>Select technician profile</option>
+          <option v-for="technician in technicians" :key="technician.id" :value="technician.id">{{ technician.name }} ({{ technician.email }})</option>
         </select>
         <label class="flex items-center gap-2 text-sm text-slate-700">
           <input v-model="form.is_active" type="checkbox" />

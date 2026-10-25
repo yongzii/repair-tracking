@@ -161,26 +161,32 @@ class PlatformController extends Controller
     {
         $user = $this->authorizeRoles($request, User::ROLE_PLATFORM_ADMIN);
 
-        if ($subscriptionRequest->status !== SubscriptionRequest::STATUS_PENDING) {
-            return response()->json(['message' => 'This subscription request was already reviewed.'], 422);
-        }
-
         $validated = $request->validate([
             'admin_notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $shop = $subscriptionRequest->shop;
-        $start = $shop->trial_ends_at && $shop->trial_ends_at->isFuture()
-            ? $shop->trial_ends_at->copy()->addDay()->startOfDay()
-            : now()->startOfDay();
-        $end = $start->copy()->addMonths($subscriptionRequest->duration_months ?: 1)->subDay()->endOfDay();
+        $approved = DB::transaction(function () use ($subscriptionRequest, $user, $validated) {
+            $lockedRequest = SubscriptionRequest::query()
+                ->lockForUpdate()
+                ->findOrFail($subscriptionRequest->id);
 
-        DB::transaction(function () use ($subscriptionRequest, $shop, $user, $validated, $start, $end) {
+            if ($lockedRequest->status !== SubscriptionRequest::STATUS_PENDING) {
+                return false;
+            }
+
+            $shop = Shop::query()
+                ->lockForUpdate()
+                ->findOrFail($lockedRequest->shop_id);
+            $start = $shop->trial_ends_at && $shop->trial_ends_at->isFuture()
+                ? $shop->trial_ends_at->copy()->addDay()->startOfDay()
+                : now()->startOfDay();
+            $end = $start->copy()->addMonths($lockedRequest->duration_months ?: 1)->subDay()->endOfDay();
+
             PlatformSubscriptionPayment::create([
                 'shop_id' => $shop->id,
-                'amount' => $subscriptionRequest->amount,
-                'payment_method' => $subscriptionRequest->payment_method_name,
-                'reference_number' => $subscriptionRequest->reference_number,
+                'amount' => $lockedRequest->amount,
+                'payment_method' => $lockedRequest->payment_method_name,
+                'reference_number' => $lockedRequest->reference_number,
                 'covered_from' => $start,
                 'covered_until' => $end,
                 'notes' => $validated['admin_notes'] ?? 'Approved subscription request.',
@@ -189,18 +195,27 @@ class PlatformController extends Controller
             ]);
 
             $shop->forceFill([
-                'subscription_plan' => $subscriptionRequest->plan_key,
+                'subscription_plan' => $lockedRequest->plan_key,
                 'trial_ends_at' => $end,
                 'is_active' => true,
             ])->save();
 
-            $subscriptionRequest->forceFill([
+            $lockedRequest->forceFill([
                 'status' => SubscriptionRequest::STATUS_APPROVED,
                 'reviewed_by_id' => $user->id,
                 'reviewed_at' => now(),
                 'admin_notes' => $validated['admin_notes'] ?? null,
             ])->save();
+
+            return true;
         });
+
+        if (!$approved) {
+            return response()->json(['message' => 'This subscription request was already reviewed.'], 422);
+        }
+
+        $subscriptionRequest->refresh();
+        $shop = $subscriptionRequest->shop;
 
         AuditLogger::log(
             request: $request,
@@ -227,20 +242,34 @@ class PlatformController extends Controller
     {
         $user = $this->authorizeRoles($request, User::ROLE_PLATFORM_ADMIN);
 
-        if ($subscriptionRequest->status !== SubscriptionRequest::STATUS_PENDING) {
-            return response()->json(['message' => 'This subscription request was already reviewed.'], 422);
-        }
-
         $validated = $request->validate([
             'admin_notes' => ['nullable', 'string', 'max:1000'],
         ]);
 
-        $subscriptionRequest->forceFill([
-            'status' => SubscriptionRequest::STATUS_REJECTED,
-            'reviewed_by_id' => $user->id,
-            'reviewed_at' => now(),
-            'admin_notes' => $validated['admin_notes'] ?? null,
-        ])->save();
+        $rejected = DB::transaction(function () use ($subscriptionRequest, $user, $validated) {
+            $lockedRequest = SubscriptionRequest::query()
+                ->lockForUpdate()
+                ->findOrFail($subscriptionRequest->id);
+
+            if ($lockedRequest->status !== SubscriptionRequest::STATUS_PENDING) {
+                return false;
+            }
+
+            $lockedRequest->forceFill([
+                'status' => SubscriptionRequest::STATUS_REJECTED,
+                'reviewed_by_id' => $user->id,
+                'reviewed_at' => now(),
+                'admin_notes' => $validated['admin_notes'] ?? null,
+            ])->save();
+
+            return true;
+        });
+
+        if (!$rejected) {
+            return response()->json(['message' => 'This subscription request was already reviewed.'], 422);
+        }
+
+        $subscriptionRequest->refresh();
 
         AuditLogger::log(
             request: $request,

@@ -192,11 +192,45 @@ class WarrantyAssessmentWorkflowTest extends TestCase
             ->assertJsonPath('invoice.invoice_number', 'WS-' . str_pad((string) $jobOrder->id, 6, '0', STR_PAD_LEFT));
     }
 
+    public function test_general_and_dedicated_updates_enforce_the_warranty_duration_limit(): void
+    {
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOrder = $this->createPickedUpWarrantyJob($shop);
+
+        $this->actingAs($staff)
+            ->putJson("/api/admin/job-orders/{$jobOrder->id}", $this->jobOrderUpdatePayload(3650))
+            ->assertOk()
+            ->assertJsonPath('jobOrder.warranty_days', 3650);
+
+        $this->actingAs($staff)
+            ->putJson("/api/admin/job-orders/{$jobOrder->id}", $this->jobOrderUpdatePayload(3651))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('warranty_days');
+
+        $this->assertSame(3650, $jobOrder->fresh()->warranty_days);
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/update-warranty", [
+                'warranty_days' => 3650,
+            ])
+            ->assertOk();
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/update-warranty", [
+                'warranty_days' => 3651,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('warranty_days');
+
+        $this->assertSame(3650, $jobOrder->fresh()->warranty_days);
+    }
+
     private function createShopUser(string $role): array
     {
         $shop = Shop::create([
             'name' => 'Warranty Test Shop ' . $role,
             'slug' => 'warranty-test-shop-' . $role,
+            'trial_ends_at' => now()->addDays(30),
             'is_active' => true,
         ]);
 
@@ -230,5 +264,26 @@ class WarrantyAssessmentWorkflowTest extends TestCase
             'picked_up_at' => now()->subDays(5),
             'picked_up_by' => 'Customer Name',
         ]);
+    }
+
+    private function jobOrderUpdatePayload(int $warrantyDays): array
+    {
+        return [
+            'customer_name' => 'Customer Name',
+            'customer_email' => 'customer@example.com',
+            'customer_phone' => '09123456789',
+            'device_type' => 'Phone',
+            'service_category_id' => null,
+            'service_item_id' => null,
+            'brand' => 'Apple',
+            'model' => 'iPhone',
+            'serial_number' => null,
+            'problem_description' => 'Screen replacement.',
+            'included_accessories' => null,
+            'priority' => 'STANDARD',
+            'warranty_days' => $warrantyDays,
+            'estimated_completion' => null,
+            'technician_id' => null,
+        ];
     }
 }

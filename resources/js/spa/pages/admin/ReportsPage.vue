@@ -93,7 +93,8 @@ const paymentStateClass = (state) => {
 
 const formatStatus = (status) => {
     if (status === 'PICKED_UP') return 'RELEASED';
-    if (status === 'UNREPAIRABLE') return 'RTO';
+    if (status === 'RTO_RELEASED') return 'RTO RELEASED';
+    if (status === 'RTO' || status === 'UNREPAIRABLE') return 'RTO';
     return status ? status.replaceAll('_', ' ') : '';
 };
 
@@ -177,6 +178,8 @@ onMounted(loadReport);
                 <option value="IN_PROGRESS">IN PROGRESS</option>
                 <option value="READY_FOR_PICKUP">READY FOR PICKUP</option>
                 <option value="PICKED_UP">RELEASED</option>
+                <option value="RTO">RTO AWAITING RETURN</option>
+                <option value="RTO_RELEASED">RTO RELEASED</option>
                 <option value="UNREPAIRABLE">RTO</option>
               </select>
               <select v-model="filters.service_type" class="border border-slate-300 px-4 py-3">
@@ -237,8 +240,9 @@ onMounted(loadReport);
 
       <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4" v-if="report && reportMode === 'payments'">
         <div class="metric-card">
-          <p class="text-slate-500 text-sm">Total Revenue</p>
+          <p class="text-slate-500 text-sm">Original Repair Costs</p>
           <p class="text-2xl font-bold text-slate-900">{{ formatCurrency(report.totalRevenue) }}</p>
+          <p class="mt-1 text-xs text-slate-500">Historical estimates retained, including unsuccessful repairs.</p>
         </div>
         <div class="metric-card">
           <p class="text-slate-500 text-sm">Total Collected</p>
@@ -254,6 +258,22 @@ onMounted(loadReport);
             {{ formatCurrency(report.estimatedGrossProfit) }}
           </p>
           <p class="mt-1 text-xs text-slate-500">Margin: {{ report.grossProfitMargin }}%</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 gap-4 md:grid-cols-3" v-if="report && reportMode === 'payments'">
+        <div class="metric-card">
+          <p class="text-slate-500 text-sm">Pending RTO Refund Obligations</p>
+          <p class="text-2xl font-bold text-amber-700">{{ formatCurrency(report.pendingRtoRefunds) }}</p>
+        </div>
+        <div class="metric-card">
+          <p class="text-slate-500 text-sm">RTO Refunds Issued</p>
+          <p class="text-2xl font-bold text-rose-700">{{ formatCurrency(report.issuedRtoRefunds) }}</p>
+        </div>
+        <div class="metric-card">
+          <p class="text-slate-500 text-sm">Net Retained</p>
+          <p class="text-2xl font-bold text-emerald-700">{{ formatCurrency(report.netRetained) }}</p>
+          <p class="mt-1 text-xs text-slate-500">Historical receipts less issued refunds for the selected job orders.</p>
         </div>
       </div>
 
@@ -529,6 +549,40 @@ onMounted(loadReport);
                 </tr>
                 <tr v-if="!report.paymentRecords.length">
                   <td colspan="6" class="px-4 py-8 text-center text-slate-500">No payment records found.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="admin-panel overflow-hidden">
+          <div class="border-b border-slate-200 p-5">
+            <h4 class="font-bold text-slate-950">RTO Refund Ledger</h4>
+            <p class="mt-1 text-sm text-slate-500">Pending obligations are not counted as issued cash refunds.</p>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th class="px-4 py-3 text-left text-slate-600">Job Order</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Customer</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Reason</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Status</th>
+                  <th class="px-4 py-3 text-right text-slate-600">Amount</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Issued</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="refund in report.refundRecords" :key="refund.id">
+                  <td class="px-4 py-3 font-semibold text-slate-900">{{ refund.job_order_number }}</td>
+                  <td class="px-4 py-3 text-slate-700">{{ refund.customer_name }}</td>
+                  <td class="px-4 py-3 text-slate-700">{{ refund.reason }}</td>
+                  <td class="px-4 py-3 text-slate-700">{{ refund.status }}</td>
+                  <td class="px-4 py-3 text-right font-semibold text-slate-900">{{ formatCurrency(refund.amount) }}</td>
+                  <td class="px-4 py-3 text-slate-700">{{ refund.issued_at || 'Not issued' }}</td>
+                </tr>
+                <tr v-if="!report.refundRecords.length">
+                  <td colspan="6" class="px-4 py-8 text-center text-slate-500">No RTO refunds found for this report range.</td>
                 </tr>
               </tbody>
             </table>

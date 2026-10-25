@@ -103,7 +103,7 @@
     @if ($includePayments)
     <div class="grid">
         <div class="card">
-            <strong>Total Revenue</strong>
+            <strong>Original Repair Costs</strong>
             <div>PHP {{ number_format($totalRevenue, 2) }}</div>
         </div>
         <div class="card">
@@ -113,6 +113,18 @@
         <div class="card">
             <strong>Pending Receivables</strong>
             <div>PHP {{ number_format($pendingReceivables, 2) }}</div>
+        </div>
+        <div class="card">
+            <strong>Pending RTO Refund Obligations</strong>
+            <div>PHP {{ number_format($pendingRtoRefunds, 2) }}</div>
+        </div>
+        <div class="card">
+            <strong>RTO Refunds Issued</strong>
+            <div>PHP {{ number_format($issuedRtoRefunds, 2) }}</div>
+        </div>
+        <div class="card">
+            <strong>Net Retained</strong>
+            <div>PHP {{ number_format($netRetained, 2) }}</div>
         </div>
         <div class="card">
             <strong>Estimated Gross Profit</strong>
@@ -240,6 +252,36 @@
             <div>PHP {{ number_format($paymentSummary['review_partial_payments'], 2) }}</div>
         </div>
     </div>
+
+    <h2>RTO Refund Ledger</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Job Order</th>
+                <th>Customer</th>
+                <th>Reason</th>
+                <th>Status</th>
+                <th>Amount</th>
+                <th>Method / Reference</th>
+                <th>Issued At</th>
+            </tr>
+        </thead>
+        <tbody>
+            @forelse ($refundRecords as $refund)
+                <tr>
+                    <td>{{ $refund['job_order_number'] }}</td>
+                    <td>{{ $refund['customer_name'] }}</td>
+                    <td>{{ $refund['reason'] }}</td>
+                    <td>{{ $refund['status'] }}</td>
+                    <td>PHP {{ number_format($refund['amount'], 2) }}</td>
+                    <td>{{ str_replace('_', ' ', $refund['refund_method'] ?? '-') }} {{ $refund['reference_number'] ? ' / ' . $refund['reference_number'] : '' }}</td>
+                    <td>{{ $refund['issued_at'] ?? 'Not issued' }}</td>
+                </tr>
+            @empty
+                <tr><td colspan="7">No RTO refund records found.</td></tr>
+            @endforelse
+        </tbody>
+    </table>
 
     <h2>Collections by Method</h2>
     <table>

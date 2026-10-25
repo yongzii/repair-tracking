@@ -30,16 +30,21 @@ class Technician extends Model
         return $this->belongsTo(Shop::class);
     }
 
+    public function user()
+    {
+        return $this->hasOne(User::class);
+    }
+
     // Get count of jobs currently assigned
     public function currentJobsCount()
     {
-        return $this->jobOrders()->whereNotIn('current_status', ['PICKED_UP', 'UNREPAIRABLE'])->count();
+        return $this->jobOrders()->whereNotIn('current_status', ['PICKED_UP', 'RTO_RELEASED', 'UNREPAIRABLE'])->count();
     }
 
     // Get count of completed jobs
     public function completedJobsCount()
     {
-        return $this->jobOrders()->whereIn('current_status', ['PICKED_UP'])->count();
+        return $this->jobOrders()->whereIn('current_status', ['PICKED_UP', 'RTO_RELEASED', 'UNREPAIRABLE'])->count();
     }
 
     // Get average rating

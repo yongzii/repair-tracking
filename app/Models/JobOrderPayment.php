@@ -38,4 +38,9 @@ class JobOrderPayment extends Model
     {
         return $this->belongsTo(Shop::class);
     }
+
+    public function refund()
+    {
+        return $this->hasOne(JobOrderRefund::class);
+    }
 }

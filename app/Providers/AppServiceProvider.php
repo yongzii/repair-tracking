@@ -26,8 +26,8 @@ class AppServiceProvider extends ServiceProvider
         Schema::defaultStringLength(191);
 
         RateLimiter::for('login', function (Request $request) {
-            $email = strtolower(trim((string) $request->input('email')));
-            $identity = hash('sha256', $email . '|' . $request->ip());
+            $loginIdentifier = strtolower(trim((string) $request->input('email')));
+            $identity = hash('sha256', $loginIdentifier . '|' . $request->ip());
 
             return Limit::perMinute(5)->by('login|' . $identity);
         });

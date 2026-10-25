@@ -185,6 +185,14 @@ class CustomerNotificationHistoryTest extends TestCase
         $this->assertNull($notification->failed_at);
         $this->assertNull($notification->error_message);
         Queue::assertPushed(SendCustomerNotification::class, 1);
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/notifications/{$notification->id}/retry")
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('notification');
+
+        Queue::assertPushed(SendCustomerNotification::class, 1);
+        $this->assertDatabaseCount('audit_logs', 1);
     }
 
     public function test_sent_customer_notification_cannot_be_retried(): void
@@ -217,6 +225,7 @@ class CustomerNotificationHistoryTest extends TestCase
         $shop = Shop::create([
             'name' => 'Notification Test Shop ' . $role,
             'slug' => 'notification-test-shop-' . $role,
+            'trial_ends_at' => now()->addDays(30),
             'is_active' => true,
         ]);
 

@@ -3,6 +3,7 @@ import { computed, ref } from 'vue';
 import { adminRoles, authState, logout } from '../composables/auth';
 import { useNavigation, navigate } from '../navigation';
 import AppLink from '../components/AppLink.vue';
+import ChangePasswordButton from '../components/ChangePasswordButton.vue';
 import { appConfig } from '../config';
 
 const props = defineProps({
@@ -13,6 +14,7 @@ const props = defineProps({
 });
 
 const { location } = useNavigation();
+const mobileNavOpen = ref(false);
 
 const normalizePath = (path) => {
     if (!path) return '/';
@@ -134,7 +136,17 @@ const submitSubscriptionRequest = async () => {
 
 <template>
   <div class="app-shell flex min-h-screen">
-    <aside class="sidebar app-scrollbar flex min-h-screen w-72 shrink-0 flex-col overflow-hidden">
+    <button
+      v-if="mobileNavOpen"
+      type="button"
+      class="fixed inset-0 z-40 bg-slate-950/55 backdrop-blur-sm lg:hidden"
+      aria-label="Close navigation menu"
+      @click="mobileNavOpen = false"
+    ></button>
+    <aside
+      class="sidebar app-scrollbar fixed inset-y-0 left-0 z-50 flex h-screen min-h-screen w-72 shrink-0 flex-col overflow-hidden transition-transform duration-200 lg:sticky lg:z-auto lg:translate-x-0"
+      :class="mobileNavOpen ? 'translate-x-0' : '-translate-x-full'"
+    >
       <div class="border-b border-white/10 p-5">
         <AppLink to="/admin" class="flex items-start gap-3">
           <span class="mt-1 flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white text-sm font-bold text-slate-950">
@@ -150,7 +162,7 @@ const submitSubscriptionRequest = async () => {
         <p v-if="isPreviewMode" class="mt-3 rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-100">Preview Mode</p>
       </div>
 
-      <nav class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto pb-6">
+      <nav id="admin-navigation" class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto pb-6" @click="mobileNavOpen = false">
         <AppLink to="/admin" class="nav-link" :class="isExactActive('/admin') ? 'nav-link-active' : ''">
           <i class="fas fa-chart-line w-5"></i>
           <span>Dashboard</span>
@@ -163,7 +175,7 @@ const submitSubscriptionRequest = async () => {
 
         <AppLink to="/admin/part-requests" class="nav-link" :class="isSectionActive('/admin/part-requests') ? 'nav-link-active' : ''">
           <i class="fas fa-screwdriver-wrench w-5"></i>
-          <span>Part Requests</span>
+          <span>Parts &amp; Orders</span>
         </AppLink>
 
         <AppLink to="/admin/appointments" class="nav-link" :class="isSectionActive('/admin/appointments') ? 'nav-link-active' : ''">
@@ -214,6 +226,7 @@ const submitSubscriptionRequest = async () => {
           <p class="truncate text-xs text-slate-300">{{ user.email }}</p>
           <p class="mt-2 inline-flex rounded-full bg-teal-400/15 px-2 py-1 text-xs font-bold uppercase text-teal-200">{{ user.role }}</p>
           <p v-if="user.shop?.name" class="mt-2 truncate text-xs text-slate-300">{{ user.shop.name }}</p>
+          <ChangePasswordButton />
         </div>
         <button type="button" class="flex w-full items-center justify-center rounded-lg bg-white/10 py-2 font-bold text-white hover:bg-white/20" @click="onLogout">
           <i class="fas fa-sign-out-alt mr-2"></i>
@@ -223,17 +236,27 @@ const submitSubscriptionRequest = async () => {
     </aside>
 
     <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-      <div class="content-header px-6 py-4">
-        <div class="flex items-center justify-between">
+      <div class="content-header sticky top-0 z-30 px-4 py-3 sm:px-6 sm:py-4">
+        <div class="flex items-center justify-between gap-3">
           <div>
             <p class="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">Operations</p>
-            <h2 class="text-2xl font-bold text-slate-950">{{ title }}</h2>
+            <h2 class="text-xl font-bold text-slate-950 sm:text-2xl">{{ title }}</h2>
           </div>
+          <button
+            type="button"
+            class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-teal-200 hover:text-teal-700 lg:hidden"
+            :aria-expanded="mobileNavOpen"
+            aria-controls="admin-navigation"
+            :aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
+            @click="mobileNavOpen = !mobileNavOpen"
+          >
+            <i :class="mobileNavOpen ? 'fas fa-xmark' : 'fas fa-bars'" aria-hidden="true"></i>
+          </button>
         </div>
       </div>
 
       <div class="app-scrollbar flex-1 overflow-auto">
-        <div class="space-y-4 p-6">
+        <div class="space-y-4 p-4 sm:space-y-5 sm:p-6">
           <div v-if="isCloseOutMode" class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <p class="font-bold">Shop access expired{{ accessUntil ? ` on ${accessUntil}` : '' }}.</p>
             <p class="mt-1">Close-out mode is active: existing job orders can still be completed and released, but new intake is locked until the subscription is renewed.</p>

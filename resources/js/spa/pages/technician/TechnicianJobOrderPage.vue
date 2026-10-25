@@ -45,11 +45,22 @@ const requestForm = ref({
     quantity: 1,
     note: '',
 });
+const submittingRequest = ref(false);
+const requestIdempotencyKey = ref(null);
+
+const partOrderForm = ref({
+    part_name: '',
+    quantity: 1,
+    reason: '',
+    estimated_unit_price: '',
+});
 
 const approvalForm = ref({
   repair_approved_by_customer: '',
   repair_approval_notes: '',
 });
+
+const formatDateTime = (value) => value ? new Date(value).toLocaleString() : '';
 
 const resetForms = () => {
     form.value.note = '';
@@ -62,6 +73,13 @@ const resetForms = () => {
         part_name: '',
         quantity: 1,
         note: '',
+    };
+    requestIdempotencyKey.value = null;
+    partOrderForm.value = {
+        part_name: '',
+        quantity: 1,
+        reason: '',
+        estimated_unit_price: '',
     };
     selectedPhoto.value = null;
     photoForm.value = {
@@ -218,6 +236,60 @@ const addPart = async () => {
     }
 };
 
+const submitPartOrder = async () => {
+    errorMessage.value = '';
+    successMessage.value = '';
+
+    try {
+        const { data } = await window.axios.post(`/api/technician/job-orders/${props.params.id}/part-orders`, partOrderForm.value);
+        successMessage.value = data.message || 'Customer-specific parts order submitted.';
+        await loadJob();
+    } catch (error) {
+        const firstError = error?.response?.data?.errors
+            ? Object.values(error.response.data.errors)[0]?.[0]
+            : null;
+        errorMessage.value = firstError || error?.response?.data?.message || 'Unable to submit parts order.';
+    }
+};
+
+const issueReceivedPartOrder = async (partOrder) => {
+    if (!window.confirm(`Issue ${partOrder.quantity} ${partOrder.part_name} from inventory to this repair?`)) {
+        return;
+    }
+
+    errorMessage.value = '';
+    successMessage.value = '';
+
+    try {
+        const { data } = await window.axios.patch(`/api/technician/job-orders/${props.params.id}/part-orders/${partOrder.id}/issue`);
+        successMessage.value = data.message || 'Received part issued to the Job Order.';
+        await loadJob();
+    } catch (error) {
+        const firstError = error?.response?.data?.errors
+            ? Object.values(error.response.data.errors)[0]?.[0]
+            : null;
+        errorMessage.value = firstError || error?.response?.data?.message || 'Unable to issue this received part.';
+    }
+};
+
+const updateDeviceLocation = async (deviceLocation) => {
+    errorMessage.value = '';
+    successMessage.value = '';
+
+    try {
+        const { data } = await window.axios.patch(`/api/technician/job-orders/${props.params.id}/device-location`, {
+            device_location: deviceLocation,
+        });
+        job.value = { ...job.value, ...data.job_order };
+        successMessage.value = data.message || 'Device location updated.';
+    } catch (error) {
+        const firstError = error?.response?.data?.errors
+            ? Object.values(error.response.data.errors)[0]?.[0]
+            : null;
+        errorMessage.value = firstError || error?.response?.data?.message || 'Unable to update device location.';
+    }
+};
+
 const removePart = async (part) => {
     if (!window.confirm(`Remove ${part.part_name} from this job and restore the stock?`)) {
         return;
@@ -241,21 +313,53 @@ const removePart = async (part) => {
 const requestPart = async () => {
     errorMessage.value = '';
     successMessage.value = '';
+    submittingRequest.value = true;
+    if (!requestIdempotencyKey.value) {
+        requestIdempotencyKey.value = window.crypto.randomUUID();
+    }
 
     try {
-        const { data } = await window.axios.post(`/api/technician/job-orders/${props.params.id}/request-part`, {
+        const { data } = await window.axios.post('/api/technician/part-requests', {
             part_name: requestForm.value.part_name,
             quantity: requestForm.value.quantity,
             note: requestForm.value.note || null,
+            idempotency_key: requestIdempotencyKey.value,
         });
 
-        successMessage.value = data.message || 'Parts request recorded successfully.';
-        await loadJob();
+        successMessage.value = data.message || 'Internal purchasing request submitted.';
+        requestForm.value = { part_name: '', quantity: 1, note: '' };
+        requestIdempotencyKey.value = null;
     } catch (error) {
         const firstError = error?.response?.data?.errors
             ? Object.values(error.response.data.errors)[0]?.[0]
             : null;
         errorMessage.value = firstError || error?.response?.data?.message || 'Unable to record parts request.';
+    } finally {
+        submittingRequest.value = false;
+    }
+};
+
+const requestBlockedJobPart = async () => {
+    if (!window.confirm('This is a job-linked repair blockage and will mark this Job Order as Waiting for Parts. Continue?')) {
+        return;
+    }
+
+    errorMessage.value = '';
+    successMessage.value = '';
+
+    try {
+        const { data } = await window.axios.post(`/api/technician/job-orders/${props.params.id}/blocked-part-requests`, {
+            part_name: requestForm.value.part_name,
+            quantity: requestForm.value.quantity,
+            note: requestForm.value.note || null,
+        });
+        successMessage.value = data.message || 'Job marked Waiting for Parts.';
+        await loadJob();
+    } catch (error) {
+        const firstError = error?.response?.data?.errors
+            ? Object.values(error.response.data.errors)[0]?.[0]
+            : null;
+        errorMessage.value = firstError || error?.response?.data?.message || 'Unable to mark this job as waiting for parts.';
     }
 };
 
@@ -266,7 +370,8 @@ const formatCurrency = (value) => {
 
 const formatStatus = (status) => {
     if (status === 'PICKED_UP') return 'Released';
-    if (status === 'UNREPAIRABLE') return 'RTO';
+    if (status === 'RTO_RELEASED') return 'RTO Released';
+    if (status === 'RTO' || status === 'UNREPAIRABLE') return 'RTO';
     return status ? status.replaceAll('_', ' ') : '';
 };
 
@@ -288,12 +393,13 @@ onMounted(loadJob);
         {{ errorMessage }}
       </div>
 
-      <div class="flex items-center justify-between">
-        <div>
-          <h3 class="text-2xl font-bold text-slate-900">{{ job.job_order_number }}</h3>
-          <p class="text-slate-600">{{ job.customer_name }} - {{ job.device_type }}</p>
+      <div class="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div class="min-w-0">
+          <p class="text-xs font-bold uppercase tracking-[0.16em] text-teal-700">Assigned repair</p>
+          <h3 class="mt-1 break-words text-2xl font-bold text-slate-950">{{ job.job_order_number }}</h3>
+          <p class="mt-1 text-sm text-slate-600">{{ job.customer_name }} · {{ [job.brand, job.model].filter(Boolean).join(' ') || job.device_type }}</p>
         </div>
-        <AppLink to="/technician" class="font-semibold text-slate-700 hover:text-slate-900">Back to My Jobs</AppLink>
+        <AppLink to="/technician" class="btn-soft inline-flex shrink-0 items-center justify-center px-4 py-2 text-sm">Back to My Jobs</AppLink>
       </div>
 
       <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -308,6 +414,15 @@ onMounted(loadJob);
               <div>
                 <p class="text-slate-500">Priority</p>
                 <p class="font-semibold text-slate-900">{{ job.priority }}</p>
+              </div>
+              <div class="md:col-span-2">
+                <p class="text-slate-500">Device Location</p>
+                <p class="font-semibold text-slate-900">{{ job.device_location === 'AT_SHOP' ? 'At Shop' : job.device_location === 'WITH_CUSTOMER' ? 'With Customer' : 'Not recorded' }}</p>
+                <p v-if="job.device_location_updated_at" class="mt-1 text-xs text-slate-500">Updated {{ formatDateTime(job.device_location_updated_at) }} by {{ job.device_location_updated_by || 'a shop user' }}</p>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50" :disabled="job.device_location === 'AT_SHOP'" @click="updateDeviceLocation('AT_SHOP')">Record Returned to Shop</button>
+                  <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50" :disabled="job.device_location === 'WITH_CUSTOMER'" @click="updateDeviceLocation('WITH_CUSTOMER')">Record Released to Customer</button>
+                </div>
               </div>
               <div>
                 <p class="text-slate-500">Device</p>
@@ -409,7 +524,7 @@ onMounted(loadJob);
                 <p class="text-sm font-semibold text-slate-800">{{ formatCurrency(part.total_cost) }}</p>
                 <p v-if="part.notes" class="mt-1 text-sm text-slate-600">{{ part.notes }}</p>
                 <button
-                  v-if="job.can_record_parts"
+                  v-if="job.can_record_parts && !part.job_order_part_order_id"
                   type="button"
                   class="mt-3 text-sm font-semibold text-rose-700 hover:text-rose-800 disabled:opacity-60"
                   :disabled="removingPartId === part.id"
@@ -417,9 +532,42 @@ onMounted(loadJob);
                 >
                   {{ removingPartId === part.id ? 'Removing...' : 'Remove Part Entry' }}
                 </button>
+                <p v-else-if="part.job_order_part_order_id" class="mt-3 text-xs text-slate-500">This part is linked to a customer order and cannot be removed from the technician workspace.</p>
               </div>
             </div>
             <p v-else class="text-sm text-slate-500">No parts recorded yet.</p>
+          </div>
+
+          <div class="card p-6">
+            <h4 class="mb-2 text-lg font-semibold text-slate-900">Parts &amp; Orders for This Repair</h4>
+            <p class="mb-4 text-sm text-slate-600">Customer-specific orders require an authorized staff member to record the customer's decision and verify the required downpayment before ordering.</p>
+            <div v-if="job.part_orders?.length" class="mb-5 space-y-3">
+              <article v-for="partOrder in job.part_orders" :key="partOrder.id" class="rounded-lg border border-slate-200 p-3">
+                <div class="flex flex-wrap justify-between gap-2">
+                  <p class="font-semibold text-slate-900">{{ partOrder.part_name }} · Qty {{ partOrder.quantity }}</p>
+                  <span class="text-xs font-bold capitalize text-slate-600">{{ partOrder.status.replaceAll('_', ' ') }}</span>
+                </div>
+                <p class="mt-1 text-sm text-slate-600">{{ partOrder.reason }}</p>
+                <p class="mt-1 text-xs text-slate-500">Estimate {{ formatCurrency(partOrder.estimated_total) }} · Customer decision {{ partOrder.customer_decision }}</p>
+                <p v-if="partOrder.required_downpayment_amount" class="mt-1 text-xs text-slate-500">Required downpayment {{ formatCurrency(partOrder.required_downpayment_amount) }}</p>
+                <p v-if="partOrder.supplier_name" class="mt-1 text-xs text-slate-500">Supplier {{ partOrder.supplier_name }}<span v-if="partOrder.expected_arrival_date"> · Expected {{ partOrder.expected_arrival_date }}</span></p>
+                <button
+                  v-if="partOrder.status === 'received' && !partOrder.issued_at && job.device_location === 'AT_SHOP' && job.can_record_parts"
+                  type="button"
+                  class="mt-3 rounded-lg bg-teal-700 px-3 py-2 text-xs font-bold text-white hover:bg-teal-800"
+                  @click="issueReceivedPartOrder(partOrder)"
+                >Issue Received Part to Repair</button>
+                <p v-else-if="partOrder.issued_at" class="mt-2 text-xs font-semibold text-emerald-700">Issued to repair; Job Order status remains independently controlled.</p>
+                <p v-else-if="partOrder.status === 'received' && job.device_location === 'WITH_CUSTOMER'" class="mt-2 text-xs font-semibold text-amber-700">Part received. Ask the customer to return the device and record its location before issuing.</p>
+              </article>
+            </div>
+            <form v-if="job.can_record_parts" class="grid grid-cols-1 gap-3 md:grid-cols-2" @submit.prevent="submitPartOrder">
+              <input v-model="partOrderForm.part_name" class="rounded-lg border border-slate-300 px-4 py-2" placeholder="Required part" required maxlength="150" />
+              <input v-model.number="partOrderForm.quantity" type="number" min="1" class="rounded-lg border border-slate-300 px-4 py-2" placeholder="Quantity" required />
+              <input v-model.number="partOrderForm.estimated_unit_price" type="number" min="0.01" step="0.01" class="rounded-lg border border-slate-300 px-4 py-2" placeholder="Estimated unit price" required />
+              <textarea v-model="partOrderForm.reason" rows="2" class="rounded-lg border border-slate-300 px-4 py-2" placeholder="Diagnosis / why the repair needs this part" required maxlength="2000"></textarea>
+              <button type="submit" class="rounded-lg bg-teal-700 py-2 font-semibold text-white hover:bg-teal-800 md:col-span-2">Submit Customer Parts Order</button>
+            </form>
           </div>
 
           <div class="card p-6">
@@ -450,21 +598,23 @@ onMounted(loadJob);
           </div>
 
           <div class="card p-6">
-            <h4 class="mb-4 text-lg font-semibold text-slate-900">Request Missing Part</h4>
-            <div v-if="job.can_record_parts">
-              <form class="grid grid-cols-1 gap-3 md:grid-cols-3" @submit.prevent="requestPart">
-                <input v-model="requestForm.part_name" class="rounded-lg border border-slate-300 px-4 py-2 md:col-span-2" placeholder="Requested part name" required />
-                <input v-model.number="requestForm.quantity" type="number" min="1" class="rounded-lg border border-slate-300 px-4 py-2" placeholder="Quantity" required />
-                <input v-model="requestForm.note" class="rounded-lg border border-slate-300 px-4 py-2 md:col-span-3" placeholder="Why this part is needed / note" />
-                <button type="submit" class="rounded-lg bg-amber-600 py-2 font-semibold text-white hover:bg-amber-700 md:col-span-3">
-                  Request Part and Mark Waiting
-                </button>
-              </form>
-              <p class="mt-3 text-xs text-slate-500">
-                This will add a timeline entry and move the job to <span class="font-semibold">WAITING FOR PARTS</span> so staff and admin can see it in the queue.
-              </p>
+            <h4 class="mb-2 text-lg font-semibold text-slate-900">Internal Purchase / Restock Request</h4>
+            <p class="mb-4 text-sm text-slate-600">This is a shop purchasing request only. It is not linked to this Job Order and does not change repair status.</p>
+            <form class="grid grid-cols-1 gap-3 md:grid-cols-3" @submit.prevent="requestPart">
+              <input v-model="requestForm.part_name" class="rounded-lg border border-slate-300 px-4 py-2 md:col-span-2" placeholder="Part name" required />
+              <input v-model.number="requestForm.quantity" type="number" min="1" class="rounded-lg border border-slate-300 px-4 py-2" placeholder="Quantity" required />
+              <input v-model="requestForm.note" class="rounded-lg border border-slate-300 px-4 py-2 md:col-span-3" placeholder="Restock / future repair note (optional)" />
+              <button type="submit" class="rounded-lg bg-amber-600 py-2 font-semibold text-white hover:bg-amber-700 disabled:opacity-60 md:col-span-3" :disabled="submittingRequest">
+                {{ submittingRequest ? 'Submitting...' : 'Submit Purchase Request' }}
+              </button>
+            </form>
+            <div v-if="job.can_record_parts" class="mt-5 border-t border-slate-200 pt-4">
+              <p class="text-sm font-semibold text-slate-800">Repair cannot proceed?</p>
+              <p class="mt-1 text-xs text-slate-500">This separate, explicitly job-linked action records the unavailable part on the Job Order and marks it Waiting for Parts.</p>
+              <button type="button" class="mt-3 rounded-lg border border-amber-300 px-4 py-2 text-sm font-bold text-amber-800 hover:bg-amber-50" @click="requestBlockedJobPart">
+                Report Part Blocking This Job
+              </button>
             </div>
-            <p v-else class="text-sm text-slate-500">Parts request is locked for this job because it is already finalized or ready for pickup.</p>
           </div>
         </div>
 

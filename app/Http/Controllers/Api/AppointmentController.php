@@ -11,8 +11,10 @@ use App\Models\Shop;
 use App\Models\StatusHistory;
 use App\Models\User;
 use App\Support\AuditLogger;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 
@@ -48,7 +50,7 @@ class AppointmentController extends Controller
         $photoOriginalName = null;
         if ($request->hasFile('photo')) {
             $photo = $request->file('photo');
-            $photoPath = $photo->store("appointments/{$shop->id}", 'public');
+            $photoPath = $photo->store("appointments/{$shop->id}", 'local');
             $photoOriginalName = $photo->getClientOriginalName();
         }
 
@@ -63,7 +65,7 @@ class AppointmentController extends Controller
 
         return response()->json([
             'message' => 'Appointment request submitted.',
-            'appointment' => $this->mapAppointment($appointment),
+            'appointment' => $this->mapAppointment($appointment, $this->publicPhotoUrl($shop, $appointment)),
         ], 201);
     }
 
@@ -100,7 +102,10 @@ class AppointmentController extends Controller
             ->paginate((int) $request->query('per_page', 15))
             ->withQueryString();
 
-        $appointments->getCollection()->transform(fn (Appointment $appointment) => $this->mapAppointment($appointment));
+        $appointments->getCollection()->transform(fn (Appointment $appointment) => $this->mapAppointment(
+            $appointment,
+            $this->staffPhotoUrl($appointment)
+        ));
 
         return response()->json([
             'appointments' => $appointments,
@@ -129,8 +134,38 @@ class AppointmentController extends Controller
         }
 
         return response()->json([
-            'appointment' => $this->mapAppointment($appointment),
+            'appointment' => $this->mapPublicAppointment($appointment),
         ]);
+    }
+
+    public function showPublicPhoto(Shop $shop, string $confirmationCode)
+    {
+        if (!$shop->is_active) {
+            abort(404, 'Shop not found.');
+        }
+
+        $appointment = Appointment::query()
+            ->where('shop_id', $shop->id)
+            ->where('confirmation_code', Str::upper($confirmationCode))
+            ->first();
+
+        if (!$appointment || !$appointment->photo_path) {
+            abort(404, 'Appointment photo not found.');
+        }
+
+        return $this->streamAppointmentPhoto($appointment);
+    }
+
+    public function showStaffPhoto(Request $request, Appointment $appointment)
+    {
+        $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $this->ensureSameShop($request, $appointment);
+
+        if (!$appointment->photo_path) {
+            abort(404, 'Appointment photo not found.');
+        }
+
+        return $this->streamAppointmentPhoto($appointment);
     }
 
     public function show(Request $request, Appointment $appointment)
@@ -139,7 +174,7 @@ class AppointmentController extends Controller
         $this->ensureSameShop($request, $appointment);
 
         return response()->json([
-            'appointment' => $this->mapAppointment($appointment),
+            'appointment' => $this->mapAppointment($appointment, $this->staffPhotoUrl($appointment)),
         ]);
     }
 
@@ -180,7 +215,7 @@ class AppointmentController extends Controller
 
         return response()->json([
             'message' => 'Appointment updated successfully.',
-            'appointment' => $this->mapAppointment($appointment->fresh()),
+            'appointment' => $this->mapAppointment($appointment->fresh(), $this->staffPhotoUrl($appointment)),
         ]);
     }
 
@@ -190,41 +225,47 @@ class AppointmentController extends Controller
         $this->ensureSameShop($request, $appointment);
         $this->ensureShopCanStartNewWork($request);
 
-        if ($appointment->converted_job_order_id) {
-            return response()->json([
-                'message' => 'This appointment is already linked to a job order.',
-                'jobOrder' => $appointment->convertedJobOrder,
-            ], 422);
-        }
-
-        if ($appointment->status === 'CANCELLED') {
-            return response()->json([
-                'message' => 'Cancelled appointments cannot be converted to job orders.',
-            ], 422);
-        }
-
         $validated = $request->validate([
             'priority' => ['nullable', Rule::in(['STANDARD', 'EXPRESS', 'EMERGENCY'])],
             'estimated_completion' => ['nullable', 'date'],
         ]);
 
-        $jobOrder = DB::transaction(function () use ($appointment, $request, $validated) {
+        $conversion = DB::transaction(function () use ($appointment, $request, $validated, $user) {
+            $lockedAppointment = Appointment::query()
+                ->where('shop_id', $appointment->shop_id)
+                ->lockForUpdate()
+                ->findOrFail($appointment->id);
+
+            if ($lockedAppointment->converted_job_order_id) {
+                return response()->json([
+                    'message' => 'This appointment is already linked to a job order.',
+                    'jobOrder' => $lockedAppointment->convertedJobOrder,
+                ], 422);
+            }
+
+            if ($lockedAppointment->status === 'CANCELLED') {
+                return response()->json([
+                    'message' => 'Cancelled appointments cannot be converted to job orders.',
+                ], 422);
+            }
+
             $jobOrder = JobOrder::create([
-                'shop_id' => $appointment->shop_id,
+                'shop_id' => $lockedAppointment->shop_id,
                 'job_order_number' => $this->generateJobOrderNumber(),
-                'customer_name' => $appointment->customer_name,
-                'customer_contact' => $appointment->customer_phone ?: $appointment->customer_email,
-                'customer_email' => $appointment->customer_email,
-                'customer_phone' => $appointment->customer_phone,
-                'device_type' => $appointment->device_type,
-                'service_category_id' => $appointment->service_category_id,
-                'service_item_id' => $appointment->service_item_id,
-                'brand' => $appointment->brand,
-                'model' => $appointment->model,
-                'problem_description' => $appointment->concern,
+                'customer_name' => $lockedAppointment->customer_name,
+                'customer_contact' => $lockedAppointment->customer_phone ?: $lockedAppointment->customer_email,
+                'customer_email' => $lockedAppointment->customer_email,
+                'customer_phone' => $lockedAppointment->customer_phone,
+                'device_type' => $lockedAppointment->device_type,
+                'service_category_id' => $lockedAppointment->service_category_id,
+                'service_item_id' => $lockedAppointment->service_item_id,
+                'brand' => $lockedAppointment->brand,
+                'model' => $lockedAppointment->model,
+                'problem_description' => $lockedAppointment->concern,
                 'included_accessories' => null,
-                'received_by' => $user?->name,
+                'received_by' => $user->name,
                 'current_status' => 'RECEIVED',
+                'device_location' => 'AT_SHOP',
                 'priority' => $validated['priority'] ?? 'STANDARD',
                 'warranty_days' => 0,
                 'payment_status' => 'PENDING',
@@ -233,26 +274,33 @@ class AppointmentController extends Controller
                 'total_cost' => 0,
                 'amount_paid' => 0,
                 'estimated_completion' => $validated['estimated_completion'] ?? null,
-                'internal_notes' => "Created from appointment {$appointment->confirmation_code}.",
+                'internal_notes' => "Created from appointment {$lockedAppointment->confirmation_code}.",
             ]);
 
             StatusHistory::create([
-                'shop_id' => $appointment->shop_id,
+                'shop_id' => $lockedAppointment->shop_id,
                 'job_order_id' => $jobOrder->id,
                 'status' => 'RECEIVED',
-                'note' => "Converted from appointment {$appointment->confirmation_code}.",
+                'note' => "Converted from appointment {$lockedAppointment->confirmation_code}.",
             ]);
 
-            $appointment->update([
+            $lockedAppointment->update([
                 'status' => 'COMPLETED',
                 'recommended_action' => 'JOB_ORDER_CREATED',
                 'converted_job_order_id' => $jobOrder->id,
                 'responded_at' => now(),
-                'responded_by' => $request->user()?->name,
+                'responded_by' => $user->name,
             ]);
 
-            return $jobOrder;
+            return ['appointment' => $lockedAppointment, 'jobOrder' => $jobOrder];
         });
+
+        if ($conversion instanceof JsonResponse) {
+            return $conversion;
+        }
+
+        $appointment = $conversion['appointment'];
+        $jobOrder = $conversion['jobOrder'];
 
         AuditLogger::log(
             request: $request,
@@ -269,7 +317,7 @@ class AppointmentController extends Controller
 
         return response()->json([
             'message' => 'Appointment converted to job order.',
-            'appointment' => $this->mapAppointment($appointment->fresh()),
+            'appointment' => $this->mapAppointment($appointment->fresh(), $this->staffPhotoUrl($appointment)),
             'jobOrder' => [
                 'id' => $jobOrder->id,
                 'job_order_number' => $jobOrder->job_order_number,
@@ -289,7 +337,7 @@ class AppointmentController extends Controller
         ];
     }
 
-    private function mapAppointment(Appointment $appointment): array
+    private function mapAppointment(Appointment $appointment, ?string $photoUrl = null): array
     {
         return [
             'id' => $appointment->id,
@@ -306,7 +354,7 @@ class AppointmentController extends Controller
             'brand' => $appointment->brand,
             'model' => $appointment->model,
             'concern' => $appointment->concern,
-            'photo_url' => $appointment->photo_path ? '/storage/' . ltrim($appointment->photo_path, '/') : null,
+            'photo_url' => $appointment->photo_path ? $photoUrl : null,
             'photo_original_name' => $appointment->photo_original_name,
             'preferred_at' => $appointment->preferred_at,
             'preferred_at_formatted' => $appointment->preferred_at?->format('M d, Y h:i A'),
@@ -329,10 +377,78 @@ class AppointmentController extends Controller
         ];
     }
 
+    private function mapPublicAppointment(Appointment $appointment): array
+    {
+        return [
+            'confirmation_code' => $appointment->confirmation_code,
+            'customer_name' => $appointment->customer_name,
+            'booking_type' => $appointment->booking_type,
+            'device_type' => $appointment->device_type,
+            'service_category_name' => $appointment->serviceCategory?->name,
+            'service_item_name' => $appointment->serviceItem?->name,
+            'brand' => $appointment->brand,
+            'model' => $appointment->model,
+            'concern' => $appointment->concern,
+            'photo_url' => $appointment->photo_path ? $this->publicPhotoUrl($appointment->shop, $appointment) : null,
+            'preferred_at_formatted' => $appointment->preferred_at?->format('M d, Y h:i A'),
+            'scheduled_at_formatted' => $appointment->scheduled_at?->format('M d, Y h:i A'),
+            'status' => $appointment->status,
+            'customer_response' => $appointment->customer_response,
+            'recommended_action_label' => $appointment->recommended_action
+                ? ($this->recommendedActions()[$appointment->recommended_action] ?? $appointment->recommended_action)
+                : null,
+        ];
+    }
+
+    private function publicPhotoUrl(Shop $shop, Appointment $appointment): string
+    {
+        return route('public.appointment.photo', [
+            'shop' => $shop->slug,
+            'confirmationCode' => $appointment->confirmation_code,
+        ]);
+    }
+
+    private function staffPhotoUrl(Appointment $appointment): string
+    {
+        return route('admin.appointment.photo', ['appointment' => $appointment->id]);
+    }
+
+    private function streamAppointmentPhoto(Appointment $appointment)
+    {
+        $path = (string) $appointment->photo_path;
+        $expectedPrefix = "appointments/{$appointment->shop_id}/";
+
+        if (!str_starts_with($path, $expectedPrefix) || in_array('..', explode('/', $path), true)) {
+            abort(404, 'Appointment photo not found.');
+        }
+
+        $disk = Storage::disk('local');
+
+        if (!$disk->exists($path)) {
+            // Legacy appointment photos remain on the public disk until migrated.
+            $disk = Storage::disk('public');
+        }
+
+        if (!$disk->exists($path)) {
+            abort(404, 'Appointment photo not found.');
+        }
+
+        $mimeType = match (strtolower(pathinfo($path, PATHINFO_EXTENSION))) {
+            'jpg', 'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'webp' => 'image/webp',
+            default => 'application/octet-stream',
+        };
+
+        return response()->file($disk->path($path), [
+            'Content-Type' => $mimeType,
+        ]);
+    }
+
     private function generateConfirmationCode(): string
     {
         do {
-            $code = 'APT-' . now()->format('Y') . '-' . Str::upper(Str::random(6));
+            $code = 'APT-' . now()->format('Y') . '-' . Str::upper(Str::random(12));
         } while (Appointment::where('confirmation_code', $code)->exists());
 
         return $code;

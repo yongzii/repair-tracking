@@ -10,6 +10,7 @@ class JobOrderPart extends Model
         'shop_id',
         'job_order_id',
         'spare_part_id',
+        'job_order_part_order_id',
         'part_name',
         'quantity',
         'unit_cost',
@@ -35,5 +36,10 @@ class JobOrderPart extends Model
     public function sparePart()
     {
         return $this->belongsTo(SparePart::class);
+    }
+
+    public function partOrder()
+    {
+        return $this->belongsTo(JobOrderPartOrder::class, 'job_order_part_order_id');
     }
 }

@@ -46,13 +46,14 @@ const statusClass = (status, overdue = false) => {
     if (overdue) return 'bg-rose-50 text-rose-700 ring-rose-200';
     if (status === 'READY_FOR_PICKUP' || status === 'PICKED_UP') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
     if (status === 'WAITING_PARTS') return 'bg-amber-50 text-amber-700 ring-amber-200';
-    if (status === 'UNREPAIRABLE') return 'bg-slate-100 text-slate-700 ring-slate-200';
+    if (['UNREPAIRABLE', 'RTO', 'RTO_RELEASED'].includes(status)) return 'bg-slate-100 text-slate-700 ring-slate-200';
     return 'bg-teal-50 text-teal-700 ring-teal-200';
 };
 
 const formatStatus = (status) => {
     if (status === 'PICKED_UP') return 'RELEASED';
-    if (status === 'UNREPAIRABLE') return 'RTO';
+    if (status === 'RTO_RELEASED') return 'RTO RELEASED';
+    if (status === 'RTO' || status === 'UNREPAIRABLE') return 'RTO';
     return status ? status.replaceAll('_', ' ') : '';
 };
 
@@ -92,40 +93,40 @@ onMounted(loadDashboard);
     <div v-else-if="errorMessage" class="rounded-xl border border-rose-200 bg-rose-50 p-6 text-rose-700">{{ errorMessage }}</div>
 
     <div v-else class="space-y-6">
-      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950 shadow-xl shadow-slate-900/10">
-        <div class="grid gap-6 p-6 text-white lg:grid-cols-[1.1fr_0.9fr] lg:p-8">
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="grid gap-6 p-5 sm:p-7 lg:grid-cols-[1.1fr_0.9fr] lg:p-8">
           <div>
-            <p class="text-xs font-bold uppercase text-teal-300">Operations overview</p>
-            <h3 class="mt-3 font-display text-4xl leading-tight">Repair queue and shop performance</h3>
-            <p class="mt-4 max-w-2xl text-sm leading-6 text-slate-300">
+            <p class="text-xs font-bold uppercase tracking-[0.16em] text-teal-700">Operations overview</p>
+            <h3 class="mt-3 max-w-2xl font-display text-3xl leading-tight text-slate-950 sm:text-4xl">Repair queue and shop performance</h3>
+            <p class="mt-4 max-w-2xl text-sm leading-6 text-slate-600">
               Monitor active repairs, pending payments, parts requests, technician workload, and recent customer jobs from one dashboard.
             </p>
             <div class="mt-6 flex flex-wrap gap-3">
-              <AppLink to="/admin/job-orders/create" class="rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-slate-950 hover:bg-amber-300">New Job Order</AppLink>
-              <AppLink to="/admin/part-requests" class="rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-white hover:bg-white/15">Review Parts</AppLink>
-              <AppLink to="/admin/reports" class="rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-white hover:bg-white/15">Open Reports</AppLink>
+              <AppLink to="/admin/job-orders/create" class="rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-teal-900/10 hover:bg-teal-700">New Job Order</AppLink>
+              <AppLink to="/admin/part-requests" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Review Parts</AppLink>
+              <AppLink to="/admin/reports" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Open Reports</AppLink>
             </div>
           </div>
 
           <div class="grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-            <div v-for="item in healthCards" :key="item.label" class="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p class="text-xs font-bold uppercase text-slate-400">{{ item.label }}</p>
-              <p class="mt-2 text-2xl font-bold text-white">
-                {{ item.value }} <span v-if="item.suffix" class="text-sm font-semibold text-slate-300">{{ item.suffix }}</span>
+            <div v-for="item in healthCards" :key="item.label" class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p class="text-xs font-bold uppercase tracking-wide text-slate-500">{{ item.label }}</p>
+              <p class="mt-2 text-2xl font-bold text-slate-950">
+                {{ item.value }} <span v-if="item.suffix" class="text-sm font-semibold text-slate-500">{{ item.suffix }}</span>
               </p>
-              <p class="mt-1 text-xs leading-5 text-slate-400">{{ item.detail }}</p>
+              <p class="mt-1 text-xs leading-5 text-slate-500">{{ item.detail }}</p>
             </div>
           </div>
         </div>
       </section>
 
-      <section class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <section class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <component
           :is="metric.to ? AppLink : 'div'"
           v-for="metric in metricCards"
           :key="metric.label"
           :to="metric.to"
-          class="rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-lg hover:shadow-slate-900/5"
+          class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-lg hover:shadow-slate-900/5 sm:p-5"
         >
           <div class="flex items-start justify-between gap-4">
             <div>
@@ -174,7 +175,7 @@ onMounted(loadDashboard);
         <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div class="mb-5 flex items-center justify-between gap-4">
             <div>
-              <h3 class="text-lg font-bold text-slate-950">Open Part Requests</h3>
+              <h3 class="text-lg font-bold text-slate-950">Open Parts &amp; Orders</h3>
               <p class="mt-1 text-sm text-slate-500">Requested parts that may affect repair completion.</p>
             </div>
             <AppLink to="/admin/part-requests" class="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Open Queue</AppLink>

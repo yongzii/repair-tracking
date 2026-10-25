@@ -66,6 +66,32 @@ class ActiveUserAuthenticationTest extends TestCase
         }
     }
 
+    public function test_shop_user_loses_existing_authenticated_read_access_when_shop_is_deactivated(): void
+    {
+        [$shop, $user] = $this->createShopUser(User::ROLE_SHOP_ADMIN);
+
+        $this->actingAs($user)
+            ->getJson('/api/admin/dashboard')
+            ->assertOk();
+
+        $shop->update(['is_active' => false]);
+
+        $this->getJson('/api/admin/dashboard')
+            ->assertForbidden();
+    }
+
+    public function test_shop_admin_cannot_read_another_shops_user(): void
+    {
+        [$shopA, $admin] = $this->createShopUser(User::ROLE_SHOP_ADMIN);
+        [$shopB, $userB] = $this->createShopUser(User::ROLE_STAFF);
+
+        $this->assertNotSame($shopA->id, $shopB->id);
+
+        $this->actingAs($admin)
+            ->getJson("/api/admin/users/{$userB->id}")
+            ->assertNotFound();
+    }
+
     public function test_deactivated_technician_loses_existing_authenticated_access(): void
     {
         [$shop, $user] = $this->createShopUser(User::ROLE_TECHNICIAN);
@@ -106,10 +132,11 @@ class ActiveUserAuthenticationTest extends TestCase
     public function test_inactive_user_cannot_login(): void
     {
         [$shop, $user] = $this->createShopUser(User::ROLE_STAFF);
+        $user->update(['username' => 'inactive-staff']);
         $user->update(['is_active' => false]);
 
         $this->postJson('/api/auth/login', [
-            'email' => $user->email,
+            'email' => $user->username,
             'password' => 'password',
         ])
             ->assertUnprocessable()

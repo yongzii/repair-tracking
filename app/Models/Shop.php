@@ -81,6 +81,11 @@ class Shop extends Model
         return $this->hasMany(JobOrderPart::class);
     }
 
+    public function jobOrderPartOrders()
+    {
+        return $this->hasMany(JobOrderPartOrder::class);
+    }
+
     public function jobOrderPayments()
     {
         return $this->hasMany(JobOrderPayment::class);

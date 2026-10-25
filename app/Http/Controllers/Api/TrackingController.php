@@ -105,7 +105,7 @@ class TrackingController extends Controller
     private function formatJobOrder(JobOrder $jobOrder): array
     {
         $warrantyDays = (int) ($jobOrder->warranty_days ?? 0);
-        $warrantyExpiresAt = $warrantyDays > 0 && $jobOrder->picked_up_at
+        $warrantyExpiresAt = $warrantyDays > 0 && $jobOrder->current_status === 'PICKED_UP' && $jobOrder->picked_up_at
             ? $jobOrder->picked_up_at->copy()->addDays($warrantyDays)
             : null;
 

@@ -53,7 +53,16 @@ class TechnicianPortalController extends Controller
         $this->ensureSameShop($request, $jobOrder);
         $this->ensureAssignedToTechnician($jobOrder, $technician);
 
-        $jobOrder->load(['statusHistories', 'parts', 'payments', 'repairPhotos']);
+        $jobOrder->load([
+            'deviceLocationUpdatedBy:id,name',
+            'statusHistories',
+            'parts',
+            'payments',
+            'repairPhotos',
+            'partOrders.requestedBy',
+            'partOrders.issuedBy',
+            'partOrders.issuedJobOrderPart',
+        ]);
 
         return response()->json([
             'job' => $this->mapJob($jobOrder, true),
@@ -103,28 +112,48 @@ class TechnicianPortalController extends Controller
             'note' => 'nullable|string|max:1000',
         ]);
 
-        if ($jobOrder->current_status === $validated['status']) {
+        [$jobOrder, $previousStatus] = DB::transaction(function () use ($request, $jobOrder, $technician, $validated) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $this->currentShopId($request))
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+            $this->ensureAssignedToTechnician($lockedJobOrder, $technician);
+
+            if ($lockedJobOrder->current_status === $validated['status']) {
+                return [$lockedJobOrder, null];
+            }
+
+            if (in_array($lockedJobOrder->current_status, ['PICKED_UP', 'RTO_RELEASED', 'RTO', 'UNREPAIRABLE'], true)) {
+                throw ValidationException::withMessages([
+                    'status' => 'This job order cannot return to a repair workflow from its current status.',
+                ]);
+            }
+
+            if (in_array($validated['status'], ['IN_PROGRESS', 'READY_FOR_PICKUP'], true) && !$lockedJobOrder->repair_approved_at) {
+                throw ValidationException::withMessages([
+                    'status' => 'Customer repair approval must be recorded before repair work or pickup preparation can proceed.',
+                ]);
+            }
+
+            $previousStatus = $lockedJobOrder->current_status;
+            $lockedJobOrder->update(['current_status' => $validated['status']]);
+
+            StatusHistory::create([
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
+                'status' => $validated['status'],
+                'note' => $validated['note'],
+            ]);
+
+            return [$lockedJobOrder->fresh(), $previousStatus];
+        });
+
+        if ($previousStatus === null) {
             return response()->json([
                 'message' => 'Status is already set. No changes made.',
                 'job' => $this->mapJob($jobOrder, true),
             ]);
         }
-
-        if (in_array($validated['status'], ['IN_PROGRESS', 'READY_FOR_PICKUP'], true) && !$jobOrder->repair_approved_at) {
-            throw ValidationException::withMessages([
-                'status' => 'Customer repair approval must be recorded before repair work or pickup preparation can proceed.',
-            ]);
-        }
-
-        $previousStatus = $jobOrder->current_status;
-        $jobOrder->update(['current_status' => $validated['status']]);
-
-        StatusHistory::create([
-            'shop_id' => $jobOrder->shop_id,
-            'job_order_id' => $jobOrder->id,
-            'status' => $validated['status'],
-            'note' => $validated['note'],
-        ]);
 
         AuditLogger::log(
             request: $request,
@@ -182,7 +211,11 @@ class TechnicianPortalController extends Controller
 
         return response()->json([
             'message' => 'Customer repair approval recorded.',
-            'jobOrder' => $jobOrder->fresh(),
+            'jobOrder' => $jobOrder->fresh()->only([
+                'repair_approved_at',
+                'repair_approved_by_customer',
+                'repair_approval_recorded_by',
+            ]),
         ]);
     }
 
@@ -208,7 +241,7 @@ class TechnicianPortalController extends Controller
             'photo_type' => $validated['photo_type'],
             'photo_path' => $path,
             'original_name' => $file->getClientOriginalName(),
-            'mime_type' => $file->getClientMimeType(),
+            'mime_type' => $file->getMimeType(),
             'file_size' => $file->getSize(),
             'description' => $validated['description'] ?? null,
             'uploaded_by' => $technician->name,
@@ -314,7 +347,10 @@ class TechnicianPortalController extends Controller
         }
 
         $validated = $request->validate([
-            'spare_part_id' => 'required|exists:spare_parts,id',
+            'spare_part_id' => [
+                'required',
+                Rule::exists('spare_parts', 'id')->where(fn ($query) => $query->where('shop_id', $shopId)),
+            ],
             'quantity' => 'required|integer|min:1',
             'notes' => 'nullable|string|max:255',
         ]);
@@ -325,6 +361,7 @@ class TechnicianPortalController extends Controller
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
             $this->ensureAssignedToTechnician($lockedJobOrder, $technician);
+            $this->ensureCanRecordParts($lockedJobOrder);
 
             $sparePart = SparePart::query()
                 ->where('shop_id', $shopId)
@@ -425,11 +462,17 @@ class TechnicianPortalController extends Controller
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
             $this->ensureAssignedToTechnician($lockedJobOrder, $technician);
+            $this->ensureCanRecordParts($lockedJobOrder);
             $existingPart = JobOrderPart::query()
                 ->where('job_order_id', $lockedJobOrder->id)
                 ->where('shop_id', $lockedJobOrder->shop_id)
                 ->lockForUpdate()
                 ->findOrFail($part->id);
+            if ($existingPart->job_order_part_order_id) {
+                throw ValidationException::withMessages([
+                    'part' => 'A part issued from a customer parts order cannot be removed here. Ask Shop Admin or Staff to reconcile the linked order and inventory history.',
+                ]);
+            }
             $before = $existingPart->only(['part_name', 'quantity', 'unit_cost', 'total_cost', 'spare_part_id', 'notes']);
             $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') - (float) $existingPart->total_cost;
             $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
@@ -485,67 +528,6 @@ class TechnicianPortalController extends Controller
         ]);
     }
 
-    public function requestPart(Request $request, JobOrder $jobOrder)
-    {
-        $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
-        $technician = $this->resolveTechnician($user);
-        $this->ensureSameShop($request, $jobOrder);
-        $this->ensureAssignedToTechnician($jobOrder, $technician);
-
-        if (!$this->canRecordParts($jobOrder)) {
-            return response()->json([
-                'message' => 'Parts can no longer be requested for this job in its current status.',
-            ], 422);
-        }
-
-        $validated = $request->validate([
-            'part_name' => 'required|string|max:150',
-            'quantity' => 'nullable|integer|min:1',
-            'note' => 'nullable|string|max:255',
-        ]);
-
-        $quantity = (int) ($validated['quantity'] ?? 1);
-        $note = trim((string) ($validated['note'] ?? ''));
-        $statusNote = "Parts requested: {$validated['part_name']} (Qty {$quantity})";
-        if ($note !== '') {
-            $statusNote .= ". Note: {$note}";
-        }
-
-        $previousStatus = $jobOrder->current_status;
-
-        if ($jobOrder->current_status !== 'WAITING_PARTS') {
-            $jobOrder->update(['current_status' => 'WAITING_PARTS']);
-        }
-
-        StatusHistory::create([
-            'shop_id' => $jobOrder->shop_id,
-            'job_order_id' => $jobOrder->id,
-            'status' => 'WAITING_PARTS',
-            'note' => $statusNote,
-        ]);
-
-        AuditLogger::log(
-            request: $request,
-            user: $user,
-            action: 'technician.part_requested',
-            module: 'technician_portal',
-            record: $jobOrder,
-            description: "{$technician->name} requested part {$validated['part_name']} for {$jobOrder->job_order_number}.",
-            oldValues: ['current_status' => $previousStatus],
-            newValues: [
-                'current_status' => 'WAITING_PARTS',
-                'requested_part' => $validated['part_name'],
-                'quantity' => $quantity,
-                'note' => $note !== '' ? $note : null,
-            ]
-        );
-
-        return response()->json([
-            'message' => 'Parts request recorded and job marked as waiting for parts.',
-            'job' => $this->mapJob($jobOrder->fresh(), true),
-        ]);
-    }
-
     /**
      * @return array<int, string>
      */
@@ -556,13 +538,23 @@ class TechnicianPortalController extends Controller
             'WAITING_PARTS',
             'IN_PROGRESS',
             'READY_FOR_PICKUP',
+            'RTO',
             'UNREPAIRABLE',
         ];
     }
 
     private function canRecordParts(JobOrder $jobOrder): bool
     {
-        return !in_array($jobOrder->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'UNREPAIRABLE'], true);
+        return !in_array($jobOrder->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true);
+    }
+
+    private function ensureCanRecordParts(JobOrder $jobOrder): void
+    {
+        if (!$this->canRecordParts($jobOrder)) {
+            throw ValidationException::withMessages([
+                'job_order' => 'Parts can no longer be changed for this job in its current status.',
+            ]);
+        }
     }
 
     private function ensureTotalCoversCollectedAmount(float|int|string $totalCost, float|int|string $amountPaid): void
@@ -592,17 +584,40 @@ class TechnicianPortalController extends Controller
             'model' => $job->model,
             'problem_description' => $job->problem_description,
             'current_status' => $job->current_status,
+            'device_location' => $job->device_location ?? 'UNKNOWN',
+            'device_location_updated_at' => $job->device_location_updated_at,
+            'device_location_updated_by' => $job->relationLoaded('deviceLocationUpdatedBy')
+                ? $job->deviceLocationUpdatedBy?->name
+                : null,
             'priority' => $job->priority,
             'estimated_completion' => $job->estimated_completion,
             'estimated_completion_formatted' => $job->estimated_completion?->format('M d, Y h:i A'),
             'created_at' => $job->created_at,
             'created_at_formatted' => $job->created_at?->format('M d, Y'),
             'is_overdue' => $job->estimated_completion
-                && !in_array($job->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'UNREPAIRABLE'], true)
+                && !in_array($job->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)
                 && $job->estimated_completion->isPast(),
             'can_record_parts' => $this->canRecordParts($job),
             'parts' => $includeDetails
-                ? $job->parts()->latest()->get(['id', 'part_name', 'quantity', 'unit_cost', 'total_cost', 'notes', 'spare_part_id'])
+                ? $job->parts()->latest()->get(['id', 'part_name', 'quantity', 'unit_cost', 'total_cost', 'notes', 'spare_part_id', 'job_order_part_order_id'])
+                : null,
+            'part_orders' => $includeDetails
+                ? $job->partOrders->sortByDesc('created_at')->map(fn ($order) => [
+                    'id' => $order->id,
+                    'part_name' => $order->part_name,
+                    'quantity' => (int) $order->quantity,
+                    'reason' => $order->reason,
+                    'estimated_unit_price' => $order->estimated_unit_price,
+                    'estimated_total' => number_format((float) $order->estimated_unit_price * (int) $order->quantity, 2, '.', ''),
+                    'customer_decision' => $order->customer_decision,
+                    'required_downpayment_amount' => $order->required_downpayment_amount,
+                    'status' => $order->status,
+                    'supplier_name' => $order->supplier_name,
+                    'expected_arrival_date' => $order->expected_arrival_date?->toDateString(),
+                    'received_at' => $order->received_at,
+                    'issued_at' => $order->issued_at,
+                    'requested_by' => $order->requestedBy?->name,
+                ])
                 : null,
             'photos' => $includeDetails
                 ? $job->repairPhotos()->latest()->get()->map(fn (RepairPhoto $photo) => $this->mapPhoto($photo))

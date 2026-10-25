@@ -6,7 +6,7 @@ import { navigate } from '../navigation';
 import { appConfig } from '../config';
 
 const form = reactive({
-    email: '',
+    identifier: '',
     password: '',
 });
 
@@ -26,7 +26,10 @@ const submit = async () => {
     errorMessage.value = '';
 
     try {
-        await login(form);
+        await login({
+            email: form.identifier,
+            password: form.password,
+        });
         if (platformRoles.includes(authState.user?.role)) {
             navigate('/platform', { replace: true });
         } else if (authState.user?.role === 'technician') {
@@ -46,111 +49,273 @@ const submit = async () => {
 </script>
 
 <template>
-  <div class="auth-shell flex min-h-screen items-center justify-center px-5 py-8">
-    <div class="grid w-full max-w-6xl overflow-hidden rounded-[1.75rem] border border-white/10 bg-white shadow-2xl shadow-slate-950/30 lg:grid-cols-[0.95fr_1.05fr]">
-      <section class="relative hidden min-h-[660px] overflow-hidden bg-slate-950 p-10 text-white lg:flex lg:flex-col lg:justify-between">
-        <div class="absolute inset-x-0 top-0 h-2 bg-[linear-gradient(90deg,#0ea5a4,#f59e0b)]"></div>
+  <div class="login-page">
+    <div class="login-container">
+      <AppLink to="/" class="login-brand" aria-label="RepairSync home">
+        <img src="/images/repairsync-cloud-logo.png" alt="RepairSync Cloud" class="login-brand-logo" />
+      </AppLink>
 
-        <div>
-          <AppLink to="/" class="inline-flex items-center gap-3">
-            <span class="flex h-12 w-12 items-center justify-center rounded-xl bg-white text-sm font-bold text-slate-950">RS</span>
-            <span>
-              <span class="block text-sm font-bold">RepairSync</span>
-              <span class="block text-xs font-medium text-slate-300">Operations Portal</span>
-            </span>
-          </AppLink>
-
-          <div class="mt-16">
-            <p class="text-xs font-bold uppercase text-teal-300">Secure shop access</p>
-            <h1 class="mt-4 max-w-md font-display text-5xl leading-tight">
-              Manage repair work from intake to pickup.
-            </h1>
-            <p class="mt-5 max-w-md text-base leading-7 text-slate-300">
-              Sign in to organize job orders, technician work, spare parts, invoices, payments, and customer repair updates.
-            </p>
-          </div>
+      <main class="login-card">
+        <div class="login-heading">
+          <p class="login-eyebrow">RepairSync Cloud</p>
+          <h1>Welcome back</h1>
+          <p>Sign in to manage your repair shop.</p>
         </div>
 
-        <div class="grid gap-3">
-          <div class="rounded-xl border border-white/10 bg-white/5 p-4">
-            <p class="text-sm font-bold text-white">Repair queue visibility</p>
-            <p class="mt-1 text-sm leading-6 text-slate-300">Track active jobs, overdue work, and ready-for-pickup repairs.</p>
-          </div>
-          <div class="grid grid-cols-2 gap-3">
-            <div class="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p class="text-sm font-bold text-white">Inventory</p>
-              <p class="mt-1 text-xs leading-5 text-slate-300">Parts usage and requests</p>
-            </div>
-            <div class="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p class="text-sm font-bold text-white">Reports</p>
-              <p class="mt-1 text-xs leading-5 text-slate-300">Revenue and operations summaries</p>
-            </div>
-          </div>
+        <div v-if="errorMessage" class="login-error" role="alert">
+          <p>{{ errorMessage }}</p>
         </div>
-      </section>
 
-      <section class="flex min-h-[660px] flex-col justify-center bg-[linear-gradient(135deg,#ffffff_0%,#f8fafc_58%,#e9f7f5_100%)] p-6 sm:p-10">
-        <div class="mx-auto w-full max-w-md">
-          <div class="mb-8 lg:hidden">
-            <AppLink to="/" class="inline-flex items-center gap-3">
-              <span class="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-950 text-sm font-bold text-white">RS</span>
-              <span>
-                <span class="block text-sm font-bold text-slate-950">RepairSync</span>
-                <span class="block text-xs font-medium text-slate-500">Operations Portal</span>
-              </span>
-            </AppLink>
+        <form class="login-form" @submit.prevent="submit">
+          <div class="login-field">
+            <label for="login-identifier">Email or Username</label>
+            <input
+              id="login-identifier"
+              v-model="form.identifier"
+              type="text"
+              autocomplete="username"
+              :placeholder="`Email (${appConfig.adminLoginHint}) or username`"
+              required
+            />
           </div>
 
-          <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-900/8 sm:p-8">
-            <div class="text-center">
-              <p class="text-xs font-bold uppercase text-teal-700">Repair service management</p>
-              <h2 class="mt-3 text-3xl font-bold text-slate-950">Operations Login</h2>
-              <p class="mt-3 text-sm leading-6 text-slate-500">
-                Access the admin, staff, or technician workspace for your repair shop.
-              </p>
-            </div>
-
-            <div v-if="errorMessage" class="mt-6 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-              <p>{{ errorMessage }}</p>
-            </div>
-
-            <form class="mt-7 space-y-5" @submit.prevent="submit">
-              <div>
-                <label for="email" class="block text-sm font-bold text-slate-700">Email Address</label>
-                <input
-                  id="email"
-                  v-model="form.email"
-                  type="email"
-                  :placeholder="appConfig.adminLoginHint"
-                  class="mt-2 w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
-                  required
-                />
-              </div>
-
-              <div>
-                <label for="password" class="block text-sm font-bold text-slate-700">Password</label>
-                <input
-                  id="password"
-                  v-model="form.password"
-                  type="password"
-                  placeholder="Enter your password"
-                  class="mt-2 w-full rounded-lg border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100"
-                  required
-                />
-              </div>
-
-              <button type="submit" class="auth-button flex min-h-12 w-full items-center justify-center rounded-lg px-5 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-70" :disabled="loading">
-                {{ loading ? 'Signing in...' : 'Sign In' }}
-              </button>
-            </form>
+          <div class="login-field">
+            <label for="password">Password</label>
+            <input
+              id="password"
+              v-model="form.password"
+              type="password"
+              placeholder="Enter your password"
+              required
+            />
           </div>
 
-          <div class="mt-6 flex flex-col gap-3 text-center text-sm font-bold text-slate-600 sm:flex-row sm:items-center sm:justify-center">
-            <AppLink to="/track" class="rounded-lg border border-slate-200 bg-white px-4 py-2 hover:border-teal-200 hover:text-teal-700">Customer Tracking</AppLink>
-            <AppLink to="/get-started" class="rounded-lg border border-slate-200 bg-white px-4 py-2 hover:border-teal-200 hover:text-teal-700">Create Shop Workspace</AppLink>
-          </div>
-        </div>
-      </section>
+          <button type="submit" class="login-submit" :disabled="loading">
+            {{ loading ? 'Signing in...' : 'Sign In' }}
+          </button>
+        </form>
+      </main>
+
+      <nav class="login-links" aria-label="Helpful links">
+        <AppLink to="/track">Track a Repair</AppLink>
+        <AppLink to="/get-started">Register Your Shop</AppLink>
+      </nav>
     </div>
   </div>
 </template>
+
+<style scoped>
+.login-page {
+  min-height: 100vh;
+  padding: 2.5rem 1.25rem;
+  color: var(--ui-text);
+  background: var(--ui-page);
+}
+
+.login-container {
+  display: flex;
+  width: min(100%, 28rem);
+  min-height: calc(100vh - 5rem);
+  margin: 0 auto;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.login-brand {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  gap: 0.75rem;
+  margin-bottom: 1.75rem;
+  color: var(--ui-text-strong);
+  text-decoration: none;
+}
+
+.login-brand-logo {
+  display: block;
+  width: 30rem;
+  max-width: none;
+  height: 9rem;
+  object-fit: cover;
+  object-position: center;
+}
+
+.login-card {
+  padding: clamp(1.5rem, 5vw, 2.5rem);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-xl);
+  background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-elevated);
+}
+
+.login-heading {
+  text-align: center;
+}
+
+.login-eyebrow {
+  margin: 0;
+  color: var(--ui-accent-700);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.login-heading h1 {
+  margin: 0.75rem 0 0;
+  color: var(--ui-text-strong);
+  font-family: var(--font-sans);
+  font-size: clamp(1.875rem, 7vw, 2.25rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+}
+
+.login-heading > p:last-child {
+  margin: 0.75rem 0 0;
+  color: var(--ui-text-muted);
+  font-size: 0.9375rem;
+  line-height: 1.5;
+}
+
+.login-error {
+  margin-top: 1.5rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--ui-danger);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-danger);
+  background: var(--ui-surface-subtle);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.login-form {
+  display: grid;
+  gap: 1.25rem;
+  margin-top: 2rem;
+}
+
+.login-field {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.login-field label {
+  color: var(--ui-text);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.login-field input {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--ui-border-strong);
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-text);
+  background: var(--ui-surface);
+  box-shadow: none;
+}
+
+.login-field input:focus {
+  border-color: var(--ui-focus);
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.14);
+}
+
+.login-field input::placeholder {
+  color: var(--ui-text-subtle);
+  opacity: 1;
+}
+
+.login-submit {
+  min-height: 3rem;
+  margin-top: 0.25rem;
+  border: 0;
+  border-radius: var(--ui-radius-md);
+  color: #ffffff;
+  background: var(--ui-brand-900);
+  box-shadow: 0 8px 16px rgba(15, 27, 45, 0.14);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.login-submit:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 3px;
+}
+
+.login-submit:hover:not(:disabled) {
+  background: var(--ui-brand-800);
+  transform: translateY(-1px);
+}
+
+.login-submit:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.login-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.login-links {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  text-align: center;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.login-links a {
+  padding: 0.625rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: var(--ui-radius-md);
+  color: var(--ui-link);
+  text-decoration: none;
+}
+
+.login-links a:hover {
+  border-color: var(--ui-border);
+  background: var(--ui-surface);
+  color: var(--ui-accent-700);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.login-links a:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+@media (max-width: 30rem) {
+  .login-page {
+    padding: 1.5rem 1rem;
+  }
+
+  .login-container {
+    min-height: calc(100vh - 3rem);
+  }
+
+  .login-brand {
+    margin-bottom: 1.25rem;
+  }
+
+  .login-brand-logo {
+    width: min(28rem, calc(100vw - 2rem));
+    max-width: 100%;
+    height: 7rem;
+  }
+
+  .login-links {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .login-links a {
+    width: 100%;
+  }
+}
+</style>

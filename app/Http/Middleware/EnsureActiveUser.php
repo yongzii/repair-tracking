@@ -15,7 +15,14 @@ class EnsureActiveUser
         $user = $request->user();
         $currentUser = $user ? User::query()->find($user->getKey()) : null;
 
-        if (!$currentUser?->isActive()) {
+        $shopIsInactive = false;
+
+        if ($currentUser && !$currentUser->hasRole(User::ROLE_PLATFORM_ADMIN) && $currentUser->shop_id) {
+            $currentUser->loadMissing('shop');
+            $shopIsInactive = !$currentUser->shop?->is_active;
+        }
+
+        if (!$currentUser?->isActive() || $shopIsInactive) {
             Auth::logout();
             $request->session()->invalidate();
             $request->session()->regenerateToken();

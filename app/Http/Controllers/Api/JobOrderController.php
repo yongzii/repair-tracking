@@ -8,6 +8,7 @@ use App\Models\CustomerNotification;
 use App\Models\JobOrder;
 use App\Models\JobOrderPayment;
 use App\Models\JobOrderPart;
+use App\Models\JobOrderRefund;
 use App\Models\RepairPhoto;
 use App\Models\ServiceCategory;
 use App\Models\ServiceItem;
@@ -93,7 +94,7 @@ class JobOrderController extends Controller
 
         if ($request->boolean('overdue_only')) {
             $jobOrders
-                ->whereNotIn('current_status', ['READY_FOR_PICKUP', 'PICKED_UP', 'UNREPAIRABLE'])
+                ->whereNotIn('current_status', ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'])
                 ->whereNotNull('estimated_completion')
                 ->where('estimated_completion', '<', now());
         }
@@ -142,6 +143,8 @@ class JobOrderController extends Controller
                 'IN_PROGRESS',
                 'READY_FOR_PICKUP',
                 'PICKED_UP',
+                'RTO',
+                'RTO_RELEASED',
                 'UNREPAIRABLE',
             ],
             'priorities' => ['STANDARD', 'EXPRESS', 'EMERGENCY'],
@@ -213,20 +216,23 @@ class JobOrderController extends Controller
             ], 422);
         }
 
+        $paymentStatus = $partialPayment <= 0
+            ? 'PENDING'
+            : ($partialPayment >= $estimatedCost ? 'PAID' : 'PARTIAL');
+        $paymentType = $paymentStatus === 'PAID' ? 'FINAL_PAYMENT' : 'PARTIAL_PAYMENT';
         $jobOrderNumber = $this->generateJobOrderNumber();
 
-        $jobOrder = DB::transaction(function () use ($validated, $jobOrderNumber, $partialPayment, $estimatedCost, $request, $shopId) {
+        $jobOrder = DB::transaction(function () use ($validated, $jobOrderNumber, $partialPayment, $estimatedCost, $paymentStatus, $paymentType, $request, $shopId) {
             $jobOrder = JobOrder::create([
                 ...$validated,
                 'shop_id' => $shopId,
                 'job_order_number' => $jobOrderNumber,
                 'received_by' => $request->user()?->name,
                 'current_status' => 'RECEIVED',
+                'device_location' => 'AT_SHOP',
                 'priority' => $validated['priority'] ?? 'STANDARD',
                 'warranty_days' => 0,
-                'payment_status' => $partialPayment > 0
-                    ? ($partialPayment >= $estimatedCost ? 'PAID' : 'PARTIAL')
-                    : 'PENDING',
+                'payment_status' => $paymentStatus,
                 'parts_cost' => 0,
                 'labor_cost' => 0,
                 'total_cost' => $estimatedCost,
@@ -240,7 +246,7 @@ class JobOrderController extends Controller
                     'shop_id' => $shopId,
                     'job_order_id' => $jobOrder->id,
                     'amount' => $partialPayment,
-                    'payment_type' => 'PARTIAL_PAYMENT',
+                    'payment_type' => $paymentType,
                     'payment_method' => 'CASH',
                     'notes' => 'Initial partial payment upon intake.',
                     'received_at' => now(),
@@ -295,7 +301,16 @@ class JobOrderController extends Controller
         $this->authorizeStaffOrAdmin($request);
         $this->ensureSameShop($request, $jobOrder);
 
-        $jobOrder->load(['technician', 'statusHistories', 'parts', 'payments', 'repairPhotos', 'warrantyAssessments.warrantyJobOrder']);
+        $jobOrder->load([
+            'technician',
+            'deviceLocationUpdatedBy:id,name',
+            'statusHistories',
+            'parts',
+            'payments',
+            'refunds',
+            'repairPhotos',
+            'warrantyAssessments.warrantyJobOrder',
+        ]);
 
         return response()->json([
             'jobOrder' => $jobOrder,
@@ -309,6 +324,8 @@ class JobOrderController extends Controller
                 ->latest('id')
                 ->get()
                 ->map(fn (JobOrderPayment $payment) => $this->mapPayment($payment)),
+            'refunds' => $jobOrder->refunds()->latest('initiated_at')->get(),
+            'legacy_refund_reconciliation_amount' => $this->legacyRefundReconciliationAmount($jobOrder),
             'photos' => $jobOrder->repairPhotos()
                 ->latest()
                 ->get()
@@ -454,7 +471,7 @@ class JobOrderController extends Controller
             'problem_description' => 'required|string',
             'included_accessories' => 'nullable|string|max:1000',
             'priority' => 'nullable|in:STANDARD,EXPRESS,EMERGENCY',
-            'warranty_days' => 'nullable|integer|min:0',
+            'warranty_days' => 'nullable|integer|min:0|max:3650',
             'estimated_completion' => 'nullable|date',
             'technician_id' => [
                 'nullable',
@@ -526,32 +543,37 @@ class JobOrderController extends Controller
             'assessment_notes' => ['nullable', 'string', 'max:3000'],
         ]);
 
-        $assessment = DB::transaction(function () use ($validated, $jobOrder, $request, $user) {
+        [$jobOrder, $assessment] = DB::transaction(function () use ($validated, $jobOrder, $request, $user) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $jobOrder->shop_id)
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
             $warrantyJobOrder = null;
 
             if ($validated['result'] === WarrantyAssessment::RESULT_COVERED) {
-                $this->assertCanIssueWarrantyService($jobOrder);
-                $this->assertNoActiveWarrantyService($jobOrder);
+                $this->assertCanIssueWarrantyService($lockedJobOrder);
+                $this->assertNoActiveWarrantyService($lockedJobOrder);
 
                 $warrantyJobOrder = JobOrder::create([
-                    'shop_id' => $jobOrder->shop_id,
+                    'shop_id' => $lockedJobOrder->shop_id,
                     'job_order_number' => $this->generateJobOrderNumber('WTY'),
                     'service_type' => 'WARRANTY_SERVICE',
-                    'warranty_parent_job_order_id' => $jobOrder->id,
-                    'customer_name' => $jobOrder->customer_name,
-                    'customer_contact' => $jobOrder->customer_contact,
-                    'customer_email' => $jobOrder->customer_email,
-                    'customer_phone' => $jobOrder->customer_phone,
-                    'device_type' => $jobOrder->device_type,
-                    'service_category_id' => $jobOrder->service_category_id,
-                    'service_item_id' => $jobOrder->service_item_id,
-                    'brand' => $jobOrder->brand,
-                    'model' => $jobOrder->model,
-                    'serial_number' => $jobOrder->serial_number,
+                    'warranty_parent_job_order_id' => $lockedJobOrder->id,
+                    'customer_name' => $lockedJobOrder->customer_name,
+                    'customer_contact' => $lockedJobOrder->customer_contact,
+                    'customer_email' => $lockedJobOrder->customer_email,
+                    'customer_phone' => $lockedJobOrder->customer_phone,
+                    'device_type' => $lockedJobOrder->device_type,
+                    'service_category_id' => $lockedJobOrder->service_category_id,
+                    'service_item_id' => $lockedJobOrder->service_item_id,
+                    'brand' => $lockedJobOrder->brand,
+                    'model' => $lockedJobOrder->model,
+                    'serial_number' => $lockedJobOrder->serial_number,
                     'problem_description' => $validated['reported_issue'],
                     'received_by' => $request->user()?->name,
-                    'included_accessories' => $jobOrder->included_accessories,
+                    'included_accessories' => $lockedJobOrder->included_accessories,
                     'current_status' => 'RECEIVED',
+                    'device_location' => 'AT_SHOP',
                     'priority' => 'STANDARD',
                     'estimated_cost' => 0,
                     'parts_cost' => 0,
@@ -564,16 +586,16 @@ class JobOrderController extends Controller
                 ]);
 
                 StatusHistory::create([
-                    'shop_id' => $jobOrder->shop_id,
+                    'shop_id' => $lockedJobOrder->shop_id,
                     'job_order_id' => $warrantyJobOrder->id,
                     'status' => 'RECEIVED',
-                    'note' => "Warranty service created from {$jobOrder->job_order_number}.",
+                    'note' => "Warranty service created from {$lockedJobOrder->job_order_number}.",
                 ]);
             }
 
             $assessment = WarrantyAssessment::create([
-                'shop_id' => $jobOrder->shop_id,
-                'job_order_id' => $jobOrder->id,
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
                 'warranty_job_order_id' => $warrantyJobOrder?->id,
                 'reported_issue' => $validated['reported_issue'],
                 'brought_at' => $validated['brought_at'] ?? now(),
@@ -584,13 +606,13 @@ class JobOrderController extends Controller
             ]);
 
             StatusHistory::create([
-                'shop_id' => $jobOrder->shop_id,
-                'job_order_id' => $jobOrder->id,
-                'status' => $jobOrder->current_status,
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
+                'status' => $lockedJobOrder->current_status,
                 'note' => 'Warranty assessment recorded: ' . str_replace('_', ' ', $assessment->result) . '.',
             ]);
 
-            return $assessment;
+            return [$lockedJobOrder, $assessment];
         });
 
         AuditLogger::log(
@@ -621,25 +643,31 @@ class JobOrderController extends Controller
         $user = $this->authorizeStaffOrAdmin($request);
         $this->ensureSameShop($request, $jobOrder);
 
-        if (($jobOrder->service_type ?? 'STANDARD') === 'WARRANTY_SERVICE') {
-            throw ValidationException::withMessages([
-                'warranty_service' => 'This job order is already a warranty service job.',
-            ]);
-        }
+        [$jobOrder, $assessment] = DB::transaction(function () use ($jobOrder, $request, $user) {
+            $shopId = $this->currentShopId($request);
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $shopId)
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
 
-        $this->assertCanIssueWarrantyService($jobOrder);
-        $this->assertNoActiveWarrantyService($jobOrder);
+            if (($lockedJobOrder->service_type ?? 'STANDARD') === 'WARRANTY_SERVICE') {
+                throw ValidationException::withMessages([
+                    'warranty_service' => 'This job order is already a warranty service job.',
+                ]);
+            }
 
-        $reportedIssue = "Warranty service for {$jobOrder->job_order_number}: {$jobOrder->problem_description}";
+            $this->assertCanIssueWarrantyService($lockedJobOrder);
+            $this->assertNoActiveWarrantyService($lockedJobOrder);
 
-        $assessment = DB::transaction(function () use ($jobOrder, $request, $user, $reportedIssue) {
-            return $this->createCoveredWarrantyService(
-                jobOrder: $jobOrder,
+            $assessment = $this->createCoveredWarrantyService(
+                jobOrder: $lockedJobOrder,
                 request: $request,
                 user: $user,
-                reportedIssue: $reportedIssue,
+                reportedIssue: "Warranty service for {$lockedJobOrder->job_order_number}: {$lockedJobOrder->problem_description}",
                 checkedBy: $request->user()?->name
             );
+
+            return [$lockedJobOrder, $assessment];
         });
 
         AuditLogger::log(
@@ -778,7 +806,7 @@ class JobOrderController extends Controller
             'photo_type' => $validated['photo_type'],
             'photo_path' => $path,
             'original_name' => $file->getClientOriginalName(),
-            'mime_type' => $file->getClientMimeType(),
+            'mime_type' => $file->getMimeType(),
             'file_size' => $file->getSize(),
             'description' => $validated['description'] ?? null,
             'visible_to_customer' => $request->boolean('visible_to_customer'),
@@ -875,19 +903,26 @@ class JobOrderController extends Controller
             abort(Response::HTTP_NOT_FOUND);
         }
 
-        if ($notification->status !== CustomerNotification::STATUS_FAILED) {
+        $updated = CustomerNotification::query()
+            ->whereKey($notification->id)
+            ->where('job_order_id', $jobOrder->id)
+            ->where('shop_id', $jobOrder->shop_id)
+            ->where('status', CustomerNotification::STATUS_FAILED)
+            ->update([
+                'status' => CustomerNotification::STATUS_QUEUED,
+                'queued_at' => now(),
+                'sent_at' => null,
+                'failed_at' => null,
+                'error_message' => null,
+            ]);
+
+        if (!$updated) {
             throw ValidationException::withMessages([
                 'notification' => 'Only failed notifications can be retried.',
             ]);
         }
 
-        $notification->update([
-            'status' => CustomerNotification::STATUS_QUEUED,
-            'queued_at' => now(),
-            'sent_at' => null,
-            'failed_at' => null,
-            'error_message' => null,
-        ]);
+        $notification->refresh();
 
         SendCustomerNotification::dispatch(
             null,
@@ -983,6 +1018,16 @@ class JobOrderController extends Controller
         $jobOrder = JobOrder::onlyTrashed()
             ->where('shop_id', $shopId)
             ->findOrFail($jobOrderId);
+        if ((float) $jobOrder->amount_paid > 0 || $jobOrder->payments()->exists() || $jobOrder->refunds()->exists()) {
+            throw ValidationException::withMessages([
+                'job_order' => 'Job orders with payment or refund history cannot be permanently deleted.',
+            ]);
+        }
+        if ($jobOrder->partOrders()->exists()) {
+            throw ValidationException::withMessages([
+                'job_order' => 'Job orders with customer parts-order history cannot be permanently deleted.',
+            ]);
+        }
         $jobOrderNumber = $jobOrder->job_order_number;
         $before = $jobOrder->only(['job_order_number', 'customer_name', 'current_status', 'payment_status', 'amount_paid', 'total_cost']);
         $jobOrder->forceDelete();
@@ -1005,38 +1050,72 @@ class JobOrderController extends Controller
     {
         $this->authorizeStaffOrAdmin($request);
         $this->ensureSameShop($request, $jobOrder);
-        $previousStatus = $jobOrder->current_status;
 
         $validated = $request->validate([
-            'status' => 'required|in:RECEIVED,DIAGNOSING,WAITING_PARTS,IN_PROGRESS,READY_FOR_PICKUP,UNREPAIRABLE',
+            'status' => 'required|in:RECEIVED,DIAGNOSING,WAITING_PARTS,IN_PROGRESS,READY_FOR_PICKUP,RTO,UNREPAIRABLE',
             'note' => 'nullable|string',
         ]);
 
-        if ($jobOrder->current_status === $validated['status']) {
+        [$jobOrder, $previousStatus] = DB::transaction(function () use ($request, $jobOrder, $validated) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $this->currentShopId($request))
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+
+            if ($lockedJobOrder->current_status === $validated['status']) {
+                return [$lockedJobOrder, null];
+            }
+
+            if (in_array($lockedJobOrder->current_status, ['PICKED_UP', 'RTO_RELEASED', 'RTO', 'UNREPAIRABLE'], true)) {
+                throw ValidationException::withMessages([
+                    'status' => 'This job order cannot return to a repair workflow from its current status.',
+                ]);
+            }
+
+            if (in_array($validated['status'], ['IN_PROGRESS', 'READY_FOR_PICKUP'], true) && !$lockedJobOrder->repair_approved_at) {
+                throw ValidationException::withMessages([
+                    'status' => 'Customer repair approval must be recorded before repair work or pickup preparation can proceed.',
+                ]);
+            }
+
+            $previousStatus = $lockedJobOrder->current_status;
+            $lockedJobOrder->update(['current_status' => $validated['status']]);
+
+            StatusHistory::create([
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
+                'status' => $validated['status'],
+                'note' => $validated['note'] ?? null,
+            ]);
+
+            if (in_array($validated['status'], ['RTO', 'UNREPAIRABLE'], true)) {
+                $this->createRtoRefundObligations($lockedJobOrder, $request);
+                AuditLogger::log(
+                    request: $request,
+                    user: $request->user(),
+                    action: 'job_order.status_updated',
+                    module: 'job_orders',
+                    record: $lockedJobOrder,
+                    description: "Updated {$lockedJobOrder->job_order_number} status from {$previousStatus} to {$validated['status']}.",
+                    oldValues: ['current_status' => $previousStatus],
+                    newValues: ['current_status' => $validated['status'], 'note' => $validated['note'] ?? null]
+                );
+            }
+
+            return [$lockedJobOrder->fresh(), $previousStatus];
+        });
+
+        if ($previousStatus === null) {
             return response()->json([
                 'message' => 'Status is already set. No changes made.',
                 'jobOrder' => $jobOrder,
             ]);
         }
 
-        if (in_array($validated['status'], ['IN_PROGRESS', 'READY_FOR_PICKUP'], true) && !$jobOrder->repair_approved_at) {
-            throw ValidationException::withMessages([
-                'status' => 'Customer repair approval must be recorded before repair work or pickup preparation can proceed.',
-            ]);
-        }
-
-        $jobOrder->update(['current_status' => $validated['status']]);
-
-        StatusHistory::create([
-            'shop_id' => $jobOrder->shop_id,
-            'job_order_id' => $jobOrder->id,
-            'status' => $validated['status'],
-            'note' => $validated['note'],
-        ]);
-
         $this->notifyCustomer($jobOrder, $validated['status'], $validated['note'] ?? null);
 
-        AuditLogger::log(
+        if (!in_array($validated['status'], ['RTO', 'UNREPAIRABLE'], true)) {
+            AuditLogger::log(
             request: $request,
             user: $request->user(),
             action: 'job_order.status_updated',
@@ -1045,7 +1124,8 @@ class JobOrderController extends Controller
             description: "Updated {$jobOrder->job_order_number} status from {$previousStatus} to {$validated['status']}.",
             oldValues: ['current_status' => $previousStatus],
             newValues: ['current_status' => $validated['status'], 'note' => $validated['note'] ?? null]
-        );
+            );
+        }
 
         return response()->json([
             'message' => 'Status updated successfully.',
@@ -1064,42 +1144,51 @@ class JobOrderController extends Controller
             'override_reason' => 'nullable|string|max:1000',
         ]);
 
-        if ($jobOrder->current_status !== 'READY_FOR_PICKUP') {
-            throw ValidationException::withMessages([
-                'picked_up_by' => 'Only job orders marked ready for pickup can be released.',
+        [$jobOrder, $hasUnpaidBalance] = DB::transaction(function () use ($request, $jobOrder, $validated, $user) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $this->currentShopId($request))
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+
+            if ($lockedJobOrder->current_status !== 'READY_FOR_PICKUP' || $lockedJobOrder->picked_up_at) {
+                throw ValidationException::withMessages([
+                    'picked_up_by' => 'Only job orders marked ready for pickup can be released.',
+                ]);
+            }
+
+            $hasUnpaidBalance = $lockedJobOrder->balance > 0;
+            $isAdmin = $user->hasAnyRole(User::adminRoles());
+            $isOverride = $request->boolean('override_unpaid_balance');
+
+            if ($hasUnpaidBalance && (!$isAdmin || !$isOverride)) {
+                throw ValidationException::withMessages([
+                    'picked_up_by' => 'This job order has an unpaid balance. An admin must explicitly approve the release override.',
+                ]);
+            }
+
+            if ($hasUnpaidBalance && empty(trim((string) ($validated['override_reason'] ?? '')))) {
+                throw ValidationException::withMessages([
+                    'override_reason' => 'An override reason is required when releasing a device with an unpaid balance.',
+                ]);
+            }
+
+            $lockedJobOrder->update([
+                'picked_up_at' => now(),
+                'picked_up_by' => $validated['picked_up_by'],
+                'pickup_override_by' => $hasUnpaidBalance ? $user->name : null,
+                'pickup_override_reason' => $hasUnpaidBalance ? $validated['override_reason'] : null,
+                'current_status' => 'PICKED_UP',
             ]);
-        }
 
-        $hasUnpaidBalance = $jobOrder->balance > 0;
-        $isAdmin = $user->hasAnyRole(User::adminRoles());
-        $isOverride = $request->boolean('override_unpaid_balance');
-
-        if ($hasUnpaidBalance && (!$isAdmin || !$isOverride)) {
-            throw ValidationException::withMessages([
-                'picked_up_by' => 'This job order has an unpaid balance. An admin must explicitly approve the release override.',
+            StatusHistory::create([
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
+                'status' => 'PICKED_UP',
+                'note' => "Device released to {$validated['picked_up_by']}",
             ]);
-        }
 
-        if ($hasUnpaidBalance && empty(trim((string) ($validated['override_reason'] ?? '')))) {
-            throw ValidationException::withMessages([
-                'override_reason' => 'An override reason is required when releasing a device with an unpaid balance.',
-            ]);
-        }
-
-        $jobOrder->update([
-            'picked_up_at' => now(),
-            'picked_up_by' => $validated['picked_up_by'],
-            'pickup_override_by' => $hasUnpaidBalance ? $user->name : null,
-            'pickup_override_reason' => $hasUnpaidBalance ? $validated['override_reason'] : null,
-            'current_status' => 'PICKED_UP',
-        ]);
-
-        StatusHistory::create([
-            'shop_id' => $jobOrder->shop_id,
-            'job_order_id' => $jobOrder->id,
-            'status' => 'PICKED_UP',
-            'note' => "Device released to {$validated['picked_up_by']}",
-        ]);
+            return [$lockedJobOrder->fresh(), $hasUnpaidBalance];
+        });
 
         $this->notifyCustomer($jobOrder, 'PICKED_UP', "Device released to {$validated['picked_up_by']}");
 
@@ -1125,6 +1214,235 @@ class JobOrderController extends Controller
         ]);
     }
 
+    public function releaseRto(Request $request, JobOrder $jobOrder)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        $validated = $request->validate([
+            'picked_up_by' => 'required|string|max:100',
+        ]);
+
+        [$jobOrder, $previousStatus] = DB::transaction(function () use ($request, $jobOrder, $validated) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $this->currentShopId($request))
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+
+            if (!in_array($lockedJobOrder->current_status, ['RTO', 'UNREPAIRABLE'], true) || $lockedJobOrder->picked_up_at) {
+                throw ValidationException::withMessages([
+                    'picked_up_by' => 'Only RTO job orders that have not yet been released can be returned to the customer.',
+                ]);
+            }
+
+            $this->createRtoRefundObligations($lockedJobOrder, $request);
+            $previousStatus = $lockedJobOrder->current_status;
+            $lockedJobOrder->update([
+                'current_status' => 'RTO_RELEASED',
+                'picked_up_at' => now(),
+                'picked_up_by' => $validated['picked_up_by'],
+                'pickup_override_by' => null,
+                'pickup_override_reason' => null,
+            ]);
+
+            StatusHistory::create([
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
+                'status' => 'RTO_RELEASED',
+                'note' => "RTO device released to {$validated['picked_up_by']}",
+            ]);
+
+            return [$lockedJobOrder->fresh(), $previousStatus];
+        });
+
+        $this->notifyCustomer($jobOrder, 'RTO_RELEASED', "RTO device released to {$validated['picked_up_by']}");
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'job_order.rto_released',
+            module: 'job_orders',
+            record: $jobOrder,
+            description: "Released RTO device for {$jobOrder->job_order_number}.",
+            oldValues: ['current_status' => $previousStatus, 'picked_up_at' => null, 'picked_up_by' => null],
+            newValues: [
+                'current_status' => 'RTO_RELEASED',
+                'picked_up_by' => $validated['picked_up_by'],
+                'pickup_override_by' => null,
+                'pickup_override_reason' => null,
+            ]
+        );
+
+        return response()->json([
+            'message' => 'RTO device released.',
+            'jobOrder' => $jobOrder->fresh(),
+        ]);
+    }
+
+    public function prepareRtoRefunds(Request $request, JobOrder $jobOrder)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        [$refunds, $createdCount] = DB::transaction(function () use ($request, $jobOrder, $user) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $this->currentShopId($request))
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+
+            if (!in_array($lockedJobOrder->current_status, ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'], true)) {
+                throw ValidationException::withMessages([
+                    'job_order' => 'Refund obligations can only be prepared for an RTO job order.',
+                ]);
+            }
+
+            $createdCount = $this->createRtoRefundObligations($lockedJobOrder, $request);
+
+            AuditLogger::log(
+                request: $request,
+                user: $user,
+                action: 'job_order.rto_refunds_prepared',
+                module: 'payments',
+                record: $lockedJobOrder,
+                description: "Prepared RTO refund obligations for {$lockedJobOrder->job_order_number}.",
+                newValues: ['refunds_created' => $createdCount]
+            );
+
+            return [$lockedJobOrder->refunds()->latest('initiated_at')->get(), $createdCount];
+        });
+
+        return response()->json([
+            'message' => $createdCount ? 'Refund obligations prepared.' : 'No additional refund obligations were needed.',
+            'refunds' => $refunds,
+        ]);
+    }
+
+    public function reconcileLegacyRtoRefund(Request $request, JobOrder $jobOrder)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        $validated = $request->validate([
+            'amount' => ['required', 'numeric', 'gt:0', 'decimal:0,2'],
+            'reconciliation_reason' => ['required', 'string', 'min:10', 'max:2000'],
+        ]);
+
+        $refund = DB::transaction(function () use ($request, $jobOrder, $validated, $user) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $this->currentShopId($request))
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+
+            if (!in_array($lockedJobOrder->current_status, ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'], true)) {
+                throw ValidationException::withMessages([
+                    'job_order' => 'Legacy refund reconciliation is only available for an RTO job order.',
+                ]);
+            }
+
+            $amount = round((float) $validated['amount'], 2);
+            $available = $this->legacyRefundReconciliationAmount($lockedJobOrder);
+            if ($amount > $available) {
+                throw ValidationException::withMessages([
+                    'amount' => 'The refund exceeds the unmatched legacy payment amount.',
+                ]);
+            }
+
+            $refund = JobOrderRefund::create([
+                'shop_id' => $lockedJobOrder->shop_id,
+                'job_order_id' => $lockedJobOrder->id,
+                'job_order_payment_id' => null,
+                'amount' => $amount,
+                'status' => JobOrderRefund::STATUS_PENDING,
+                'reason' => 'RTO / Repair unsuccessful',
+                'reconciliation_reason' => $validated['reconciliation_reason'],
+                'initiated_by' => $user->id,
+                'initiated_at' => now(),
+            ]);
+
+            AuditLogger::log(
+                request: $request,
+                user: $user,
+                action: 'job_order.legacy_rto_refund_reconciled',
+                module: 'payments',
+                record: $lockedJobOrder,
+                description: "Reconciled a legacy RTO refund for {$lockedJobOrder->job_order_number}.",
+                newValues: $refund->only(['id', 'amount', 'reason', 'reconciliation_reason', 'status'])
+            );
+
+            return $refund;
+        });
+
+        return response()->json([
+            'message' => 'Legacy refund obligation recorded.',
+            'refund' => $refund,
+        ], 201);
+    }
+
+    public function issueRtoRefund(Request $request, JobOrder $jobOrder, JobOrderRefund $refund)
+    {
+        $user = $this->authorizeStaffOrAdmin($request);
+        $this->ensureSameShop($request, $jobOrder);
+
+        $validated = $request->validate([
+            'refund_method' => ['required', Rule::in(['CASH', 'GCASH', 'BANK_TRANSFER', 'CARD'])],
+            'reference_number' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        if ($validated['refund_method'] !== 'CASH' && empty($validated['reference_number'])) {
+            throw ValidationException::withMessages([
+                'reference_number' => 'A reference number is required for non-cash refunds.',
+            ]);
+        }
+
+        $issuedRefund = DB::transaction(function () use ($request, $jobOrder, $refund, $validated, $user) {
+            $lockedJobOrder = JobOrder::query()
+                ->where('shop_id', $this->currentShopId($request))
+                ->lockForUpdate()
+                ->findOrFail($jobOrder->id);
+            $lockedRefund = JobOrderRefund::query()
+                ->where('shop_id', $lockedJobOrder->shop_id)
+                ->where('job_order_id', $lockedJobOrder->id)
+                ->lockForUpdate()
+                ->findOrFail($refund->id);
+
+            if (!in_array($lockedJobOrder->current_status, ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'], true)) {
+                throw ValidationException::withMessages([
+                    'refund' => 'Only RTO refunds can be issued.',
+                ]);
+            }
+            if ($lockedRefund->status !== JobOrderRefund::STATUS_PENDING) {
+                throw ValidationException::withMessages([
+                    'refund' => 'This refund has already been issued.',
+                ]);
+            }
+
+            $lockedRefund->update([
+                'status' => JobOrderRefund::STATUS_ISSUED,
+                'refund_method' => $validated['refund_method'],
+                'reference_number' => $validated['reference_number'] ?? null,
+                'issued_by' => $user->id,
+                'issued_at' => now(),
+            ]);
+
+            AuditLogger::log(
+                request: $request,
+                user: $user,
+                action: 'job_order.rto_refund_issued',
+                module: 'payments',
+                record: $lockedJobOrder,
+                description: "Issued an RTO refund for {$lockedJobOrder->job_order_number}.",
+                newValues: $lockedRefund->fresh()->only(['id', 'amount', 'status', 'refund_method', 'reference_number', 'issued_by', 'issued_at'])
+            );
+
+            return $lockedRefund->fresh();
+        });
+
+        return response()->json([
+            'message' => 'Refund issued and recorded.',
+            'refund' => $issuedRefund,
+        ]);
+    }
+
     public function recordPayment(Request $request, JobOrder $jobOrder)
     {
         $this->authorizeStaffOrAdmin($request);
@@ -1146,6 +1464,7 @@ class JobOrderController extends Controller
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
+            $this->ensureJobOrderIsNotRto($lockedJobOrder);
             $before = $lockedJobOrder->only(['amount_paid', 'payment_status', 'payment_date', 'payment_notes']);
 
             $existingPayment = JobOrderPayment::query()
@@ -1192,8 +1511,13 @@ class JobOrderController extends Controller
                 $newAmountPaid = $lockedJobOrder->total_cost;
             }
 
-            $paymentType = $validated['payment_type']
-                ?? ($paymentStatus === 'PAID' ? 'FINAL_PAYMENT' : 'PARTIAL_PAYMENT');
+            $paymentType = $paymentStatus === 'PAID' ? 'FINAL_PAYMENT' : 'PARTIAL_PAYMENT';
+
+            if (isset($validated['payment_type']) && $validated['payment_type'] !== $paymentType) {
+                throw ValidationException::withMessages([
+                    'payment_type' => 'Payment type must match the resulting payment status.',
+                ]);
+            }
 
             $payment = JobOrderPayment::create([
                 'shop_id' => $lockedJobOrder->shop_id,
@@ -1260,6 +1584,7 @@ class JobOrderController extends Controller
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
+            $this->ensureJobOrderIsNotRto($lockedJobOrder);
             $before = $lockedJobOrder->only(['parts_cost', 'labor_cost', 'total_cost', 'payment_status']);
             $partsTotal = $lockedJobOrder->parts()->exists()
                 ? $lockedJobOrder->parts()->sum('total_cost')
@@ -1323,7 +1648,10 @@ class JobOrderController extends Controller
         $shopId = $this->currentShopId($request);
 
         $validated = $request->validate([
-            'spare_part_id' => 'nullable|exists:spare_parts,id',
+            'spare_part_id' => [
+                'nullable',
+                Rule::exists('spare_parts', 'id')->where(fn ($query) => $query->where('shop_id', $shopId)),
+            ],
             'part_name' => 'nullable|string|max:150|required_without:spare_part_id',
             'quantity' => 'required|integer|min:1',
             'unit_cost' => 'nullable|numeric|min:0',
@@ -1335,6 +1663,7 @@ class JobOrderController extends Controller
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
+            $this->ensureJobOrderIsNotRto($lockedJobOrder);
 
             $sparePart = null;
             if (!empty($validated['spare_part_id'])) {
@@ -1424,6 +1753,11 @@ class JobOrderController extends Controller
         if ($part->job_order_id !== $jobOrder->id || (int) $part->shop_id !== (int) $jobOrder->shop_id) {
             abort(Response::HTTP_NOT_FOUND);
         }
+        if ($part->job_order_part_order_id) {
+            throw ValidationException::withMessages([
+                'part' => 'A part issued from a customer parts order cannot be edited separately from its order and inventory history.',
+            ]);
+        }
 
         $validated = $request->validate([
             'spare_part_id' => 'nullable|exists:spare_parts,id',
@@ -1440,11 +1774,17 @@ class JobOrderController extends Controller
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
+            $this->ensureJobOrderIsNotRto($lockedJobOrder);
             $existingPart = JobOrderPart::query()
                 ->where('job_order_id', $lockedJobOrder->id)
                 ->where('shop_id', $lockedJobOrder->shop_id)
                 ->lockForUpdate()
                 ->findOrFail($part->id);
+            if ($existingPart->job_order_part_order_id) {
+                throw ValidationException::withMessages([
+                    'part' => 'A part issued from a customer parts order cannot be edited separately from its order and inventory history.',
+                ]);
+            }
 
             $oldSparePart = null;
             if ($existingPart->spare_part_id) {
@@ -1557,6 +1897,11 @@ class JobOrderController extends Controller
         if ($part->job_order_id !== $jobOrder->id || (int) $part->shop_id !== (int) $jobOrder->shop_id) {
             abort(Response::HTTP_NOT_FOUND);
         }
+        if ($part->job_order_part_order_id) {
+            throw ValidationException::withMessages([
+                'part' => 'A part issued from a customer parts order cannot be removed separately from its order and inventory history.',
+            ]);
+        }
 
         $before = $part->only(['part_name', 'quantity', 'unit_cost', 'total_cost', 'spare_part_id', 'notes']);
 
@@ -1565,11 +1910,17 @@ class JobOrderController extends Controller
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
+            $this->ensureJobOrderIsNotRto($lockedJobOrder);
             $existingPart = JobOrderPart::query()
                 ->where('job_order_id', $lockedJobOrder->id)
                 ->where('shop_id', $lockedJobOrder->shop_id)
                 ->lockForUpdate()
                 ->findOrFail($part->id);
+            if ($existingPart->job_order_part_order_id) {
+                throw ValidationException::withMessages([
+                    'part' => 'A part issued from a customer parts order cannot be removed separately from its order and inventory history.',
+                ]);
+            }
             $before = $existingPart->only(['part_name', 'quantity', 'unit_cost', 'total_cost', 'spare_part_id', 'notes']);
             $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') - (float) $existingPart->total_cost;
             $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
@@ -1637,6 +1988,64 @@ class JobOrderController extends Controller
         }
     }
 
+    private function ensureJobOrderIsNotRto(JobOrder $jobOrder): void
+    {
+        if (in_array($jobOrder->current_status, ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'], true)) {
+            throw ValidationException::withMessages([
+                'job_order' => 'Payments and repair costs cannot be changed after a job order becomes RTO.',
+            ]);
+        }
+    }
+
+    private function createRtoRefundObligations(JobOrder $jobOrder, Request $request): int
+    {
+        $created = 0;
+        $payments = $jobOrder->payments()->lockForUpdate()->orderBy('id')->get();
+
+        foreach ($payments as $payment) {
+            $alreadyRefunded = JobOrderRefund::query()
+                ->where('job_order_payment_id', $payment->id)
+                ->exists();
+            if ($alreadyRefunded || (float) $payment->amount <= 0) {
+                continue;
+            }
+
+            $refund = JobOrderRefund::create([
+                'shop_id' => $jobOrder->shop_id,
+                'job_order_id' => $jobOrder->id,
+                'job_order_payment_id' => $payment->id,
+                'amount' => $payment->amount,
+                'status' => JobOrderRefund::STATUS_PENDING,
+                'reason' => 'RTO / Repair unsuccessful',
+                'initiated_by' => $request->user()?->id,
+                'initiated_at' => now(),
+            ]);
+
+            AuditLogger::log(
+                request: $request,
+                user: $request->user(),
+                action: 'job_order.rto_refund_obligation_created',
+                module: 'payments',
+                record: $jobOrder,
+                description: "Created an RTO refund obligation for {$jobOrder->job_order_number}.",
+                newValues: $refund->only(['id', 'job_order_payment_id', 'amount', 'reason', 'status'])
+            );
+            $created++;
+        }
+
+        return $created;
+    }
+
+    private function legacyRefundReconciliationAmount(JobOrder $jobOrder): float
+    {
+        $receiptTotal = (float) $jobOrder->payments()->sum('amount');
+        $reconciledTotal = (float) $jobOrder->refunds()
+            ->whereNull('job_order_payment_id')
+            ->sum('amount');
+
+        return round(max((float) $jobOrder->amount_paid - $receiptTotal - $reconciledTotal, 0), 2);
+    }
+
     private function createCoveredWarrantyService(
         JobOrder $jobOrder,
         Request $request,
@@ -1664,6 +2073,7 @@ class JobOrderController extends Controller
             'received_by' => $request->user()?->name,
             'included_accessories' => $jobOrder->included_accessories,
             'current_status' => 'RECEIVED',
+            'device_location' => 'AT_SHOP',
             'priority' => 'STANDARD',
             'estimated_cost' => 0,
             'parts_cost' => 0,
@@ -1740,7 +2150,7 @@ class JobOrderController extends Controller
             ->where('warranty_parent_job_order_id', $jobOrder->id)
             ->where('service_type', 'WARRANTY_SERVICE')
             ->whereNull('picked_up_at')
-            ->whereNot('current_status', 'UNREPAIRABLE')
+            ->whereNot('current_status', 'RTO_RELEASED')
             ->first();
 
         if ($existingWarrantyJob) {
@@ -1780,7 +2190,7 @@ class JobOrderController extends Controller
             'estimated_completion' => $job->estimated_completion,
             'estimated_completion_formatted' => $job->estimated_completion?->format('M d, Y h:i A'),
             'is_overdue' => $isOverdue,
-            'repair_started' => in_array($job->current_status, ['IN_PROGRESS', 'READY_FOR_PICKUP', 'PICKED_UP'], true)
+            'repair_started' => in_array($job->current_status, ['IN_PROGRESS', 'READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)
                 || (bool) ($job->has_started_repair ?? false),
             'deleted_at' => $job->deleted_at,
             'created_at_formatted' => $job->created_at?->format('M d, Y'),
@@ -1869,7 +2279,7 @@ class JobOrderController extends Controller
             return false;
         }
 
-        if (in_array($job->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'UNREPAIRABLE'], true)) {
+        if (in_array($job->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)) {
             return false;
         }
 
@@ -2239,6 +2649,8 @@ class JobOrderController extends Controller
             'IN_PROGRESS',
             'READY_FOR_PICKUP',
             'PICKED_UP',
+            'RTO',
+            'RTO_RELEASED',
             'UNREPAIRABLE',
         ];
 
@@ -2257,6 +2669,8 @@ class JobOrderController extends Controller
     {
         return match ($status) {
             'PICKED_UP' => 'RELEASED',
+            'RTO_RELEASED' => 'RTO RELEASED',
+            'RTO' => 'RTO',
             'UNREPAIRABLE' => 'RTO',
             default => str_replace('_', ' ', $status),
         };

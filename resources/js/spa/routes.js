@@ -24,6 +24,9 @@ import UsersPage from './pages/admin/UsersPage.vue';
 import UserEditPage from './pages/admin/UserEditPage.vue';
 import ShopSettingsPage from './pages/admin/ShopSettingsPage.vue';
 import PlatformDashboardPage from './pages/platform/PlatformDashboardPage.vue';
+import PlatformSubscriptionRequestsPage from './pages/platform/PlatformSubscriptionRequestsPage.vue';
+import PlatformSettingsPage from './pages/platform/PlatformSettingsPage.vue';
+import PlatformAuditLogsPage from './pages/platform/PlatformAuditLogsPage.vue';
 import TechnicianDashboardPage from './pages/technician/TechnicianDashboardPage.vue';
 import TechnicianJobOrderPage from './pages/technician/TechnicianJobOrderPage.vue';
 import NotFoundPage from './pages/NotFoundPage.vue';
@@ -89,15 +92,27 @@ export const resolveRoute = (path) => {
     }
 
     if (path === '/platform') {
-        return { component: PlatformDashboardPage, params: {}, title: 'Platform Overview' };
+        return { component: PlatformDashboardPage, params: {}, title: 'Dashboard' };
     }
 
     if (path === '/platform/shops') {
-        return { component: PlatformDashboardPage, params: { view: 'shops' }, title: 'Shop Workspaces' };
+        return { component: PlatformDashboardPage, params: { view: 'shops' }, title: 'Shops' };
+    }
+
+    if (path === '/platform/subscription-requests') {
+        return { component: PlatformSubscriptionRequestsPage, params: {}, title: 'Subscription Requests' };
     }
 
     if (path === '/platform/failed-jobs') {
         return { component: FailedJobsPage, params: {}, title: 'Failed Jobs' };
+    }
+
+    if (path === '/platform/audit-logs') {
+        return { component: PlatformAuditLogsPage, params: {}, title: 'Audit Logs' };
+    }
+
+    if (path === '/platform/settings') {
+        return { component: PlatformSettingsPage, params: {}, title: 'Platform Settings' };
     }
 
     if (path.startsWith('/technician/job-orders/')) {
@@ -121,7 +136,7 @@ export const resolveRoute = (path) => {
     }
 
     if (path === '/admin/part-requests') {
-        return { component: PartRequestsPage, params: {}, title: 'Part Requests' };
+        return { component: PartRequestsPage, params: {}, title: 'Parts & Orders' };
     }
 
     if (path === '/admin/appointments') {

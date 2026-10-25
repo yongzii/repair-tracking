@@ -188,13 +188,14 @@ const statusClass = (status, overdue = false) => {
     if (overdue) return 'bg-rose-50 text-rose-700 ring-rose-200';
     if (status === 'READY_FOR_PICKUP' || status === 'PICKED_UP') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
     if (status === 'WAITING_PARTS') return 'bg-amber-50 text-amber-700 ring-amber-200';
-    if (status === 'UNREPAIRABLE') return 'bg-slate-100 text-slate-700 ring-slate-200';
+    if (['UNREPAIRABLE', 'RTO', 'RTO_RELEASED'].includes(status)) return 'bg-slate-100 text-slate-700 ring-slate-200';
     return 'bg-teal-50 text-teal-700 ring-teal-200';
 };
 
 const formatStatus = (status) => {
     if (status === 'PICKED_UP') return 'RELEASED';
-    if (status === 'UNREPAIRABLE') return 'RTO';
+    if (status === 'RTO_RELEASED') return 'RTO RELEASED';
+    if (status === 'RTO' || status === 'UNREPAIRABLE') return 'RTO';
     return status ? status.replaceAll('_', ' ') : '';
 };
 
@@ -413,23 +414,23 @@ watch(
       <div v-if="intakePacketError" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-700">{{ intakePacketError }}</div>
       <div v-if="errorMessage" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{{ errorMessage }}</div>
 
-      <section class="rounded-2xl border border-slate-200 bg-slate-950 p-6 text-white shadow-xl shadow-slate-900/10">
-        <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+      <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+        <div class="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p class="text-xs font-bold uppercase text-teal-300">Repair queue</p>
-            <h3 class="mt-2 font-display text-3xl leading-tight">Job order workspace</h3>
-            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+            <p class="text-xs font-bold uppercase tracking-[0.16em] text-teal-700">Repair queue</p>
+            <h3 class="mt-2 font-display text-3xl leading-tight text-slate-950">Job order workspace</h3>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
               Search, filter, review, and update repair transactions from the shop queue.
             </p>
           </div>
           <div class="flex flex-wrap gap-3">
-            <AppLink v-if="canManageTrash" to="/admin/job-orders/trash" class="rounded-lg border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-white hover:bg-white/10">Trash</AppLink>
-            <button type="button" class="rounded-lg bg-amber-400 px-5 py-2 text-sm font-bold text-slate-950 shadow-lg shadow-amber-400/15 hover:bg-amber-300" @click="openCreateModal">New Job Order</button>
+            <AppLink v-if="canManageTrash" to="/admin/job-orders/trash" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Trash</AppLink>
+            <button type="button" class="rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm shadow-teal-900/10 hover:bg-teal-700" @click="openCreateModal">New Job Order</button>
           </div>
         </div>
       </section>
 
-      <div class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <form class="space-y-4" @submit.prevent="applyFilters">
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,2fr)_repeat(4,minmax(160px,1fr))]">
             <div>
@@ -517,7 +518,56 @@ watch(
           </div>
         </div>
 
-        <div class="overflow-x-auto">
+        <div class="divide-y divide-slate-100 md:hidden">
+          <article v-for="job in jobOrders.data" :key="`mobile-${job.id}`" class="space-y-3 p-4">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <AppLink :to="`/admin/job-orders/${job.id}`" class="font-bold text-slate-950 hover:text-teal-700">{{ job.job_order_number }}</AppLink>
+                <p class="mt-1 truncate text-sm text-slate-600">{{ job.customer_name }}</p>
+                <p v-if="job.customer_phone" class="text-xs text-slate-500">{{ job.customer_phone }}</p>
+              </div>
+              <span class="inline-flex shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1" :class="statusClass(job.current_status, job.is_overdue)">
+                {{ formatStatus(job.current_status) }}
+              </span>
+            </div>
+            <div class="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-3 text-sm">
+              <div class="min-w-0">
+                <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">Device</p>
+                <p class="mt-1 truncate font-semibold text-slate-800">{{ [job.brand, job.model].filter(Boolean).join(' ') || job.device_type }}</p>
+                <p class="truncate text-xs text-slate-500">{{ job.service_item_name ? `${job.device_type} - ${job.service_item_name}` : job.device_type }}</p>
+              </div>
+              <div>
+                <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">Payment</p>
+                <p class="mt-1 font-semibold text-slate-800">{{ job.payment_status }}</p>
+                <p class="text-xs text-slate-500">Balance: {{ formatCurrency(job.balance) }}</p>
+              </div>
+              <div>
+                <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">Due</p>
+                <p class="mt-1 font-semibold text-slate-700">{{ job.estimated_completion_formatted || 'Not set' }}</p>
+              </div>
+              <div>
+                <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">Technician</p>
+                <p class="mt-1 truncate font-semibold text-slate-700">{{ job.technician_name || 'Unassigned' }}</p>
+              </div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <AppLink :to="`/admin/job-orders/${job.id}`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">View Job</AppLink>
+              <button
+                v-if="!['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'].includes(job.current_status)"
+                type="button"
+                class="inline-flex items-center rounded-lg border border-emerald-200 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
+                :disabled="quickUpdatingId === job.id"
+                @click="markReadyForPickup(job)"
+              >
+                {{ quickUpdatingId === job.id ? 'Saving...' : 'Set Ready' }}
+              </button>
+              <button v-if="canManageTrash && !job.repair_started" type="button" class="inline-flex items-center rounded-lg border border-rose-200 px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50" @click="deleteJobOrder(job.id)">Delete</button>
+            </div>
+          </article>
+          <p v-if="!jobOrders.data.length" class="p-8 text-center text-sm text-slate-500">No job orders found.</p>
+        </div>
+
+        <div class="hidden overflow-x-auto md:block">
           <table class="w-full min-w-[1060px] text-sm">
             <thead>
               <tr class="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500">
@@ -578,7 +628,7 @@ watch(
                 <div class="flex flex-wrap items-center gap-2">
                   <AppLink :to="`/admin/job-orders/${job.id}`" class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">View</AppLink>
                   <button
-                    v-if="!['READY_FOR_PICKUP', 'PICKED_UP', 'UNREPAIRABLE'].includes(job.current_status)"
+                    v-if="!['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'].includes(job.current_status)"
                     type="button"
                     class="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
                     :disabled="quickUpdatingId === job.id"

@@ -34,6 +34,9 @@ class JobOrder extends Model
         'repair_approval_notes',
         'current_status',
         'priority',
+        'device_location',
+        'device_location_updated_at',
+        'device_location_updated_by_user_id',
         'estimated_cost',
         'parts_cost',
         'labor_cost',
@@ -59,6 +62,7 @@ class JobOrder extends Model
     protected $casts = [
         'picked_up_at' => 'datetime',
         'repair_approved_at' => 'datetime',
+        'device_location_updated_at' => 'datetime',
         'payment_date' => 'date',
         'estimated_completion' => 'datetime',
         'parts_cost' => 'decimal:2',
@@ -71,6 +75,16 @@ class JobOrder extends Model
     public function statusHistories()
     {
         return $this->hasMany(StatusHistory::class);
+    }
+
+    public function partRequests()
+    {
+        return $this->hasMany(PartRequest::class);
+    }
+
+    public function partOrders()
+    {
+        return $this->hasMany(JobOrderPartOrder::class);
     }
 
     public function shop()
@@ -86,6 +100,11 @@ class JobOrder extends Model
     public function payments()
     {
         return $this->hasMany(JobOrderPayment::class);
+    }
+
+    public function refunds()
+    {
+        return $this->hasMany(JobOrderRefund::class);
     }
 
     public function repairPhotos()
@@ -118,6 +137,11 @@ class JobOrder extends Model
         return $this->belongsTo(Technician::class);
     }
 
+    public function deviceLocationUpdatedBy()
+    {
+        return $this->belongsTo(User::class, 'device_location_updated_by_user_id');
+    }
+
     public function serviceCategory()
     {
         return $this->belongsTo(ServiceCategory::class);
@@ -136,6 +160,10 @@ class JobOrder extends Model
     // Calculate balance amount
     public function getBalanceAttribute()
     {
+        if (in_array($this->current_status, ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'], true)) {
+            return 0;
+        }
+
         $balance = (float) $this->total_cost - (float) $this->amount_paid;
         return $balance > 0 ? $balance : 0;
     }
@@ -143,10 +171,10 @@ class JobOrder extends Model
     // Check if warranty is active
     public function isUnderWarranty()
     {
-        if (!$this->picked_up_at) {
+        if ($this->current_status !== 'PICKED_UP' || !$this->picked_up_at) {
             return false;
         }
-        $expiryDate = $this->picked_up_at->addDays($this->warranty_days ?? 30);
+        $expiryDate = $this->picked_up_at->copy()->addDays($this->warranty_days ?? 30);
         return now()->lessThanOrEqualTo($expiryDate);
     }
 
@@ -157,11 +185,10 @@ class JobOrder extends Model
 
     public function repairHasStarted(): bool
     {
-        if (in_array($this->current_status, ['IN_PROGRESS', 'READY_FOR_PICKUP', 'PICKED_UP'], true)) {
+        if (in_array($this->current_status, ['IN_PROGRESS', 'READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)) {
             return true;
         }
 
         return $this->statusHistories()->where('status', 'IN_PROGRESS')->exists();
     }
 }
-

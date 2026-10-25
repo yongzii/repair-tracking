@@ -163,7 +163,10 @@ class InventoryController extends Controller
         ]);
 
         DB::transaction(function () use ($request, $sparePart, $validated) {
-            $part = SparePart::query()->lockForUpdate()->findOrFail($sparePart->id);
+            $part = SparePart::query()
+                ->where('shop_id', $sparePart->shop_id)
+                ->lockForUpdate()
+                ->findOrFail($sparePart->id);
             $oldStock = (int) $part->stock_quantity;
 
             $part->update([
@@ -226,7 +229,10 @@ class InventoryController extends Controller
         }
 
         DB::transaction(function () use ($request, $sparePart, $validated) {
-            $part = SparePart::query()->lockForUpdate()->findOrFail($sparePart->id);
+            $part = SparePart::query()
+                ->where('shop_id', $sparePart->shop_id)
+                ->lockForUpdate()
+                ->findOrFail($sparePart->id);
             $current = (int) $part->stock_quantity;
             $quantity = (int) $validated['quantity'];
 

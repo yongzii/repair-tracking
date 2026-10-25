@@ -6,6 +6,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Str;
 
 class User extends Authenticatable
 {
@@ -25,8 +26,10 @@ class User extends Authenticatable
      */
     protected $fillable = [
         'shop_id',
+        'technician_id',
         'name',
         'email',
+        'username',
         'password',
         'role',
         'is_active',
@@ -148,5 +151,17 @@ class User extends Authenticatable
     public function shop()
     {
         return $this->belongsTo(Shop::class);
+    }
+
+    public function technician()
+    {
+        return $this->belongsTo(Technician::class);
+    }
+
+    public function setUsernameAttribute(?string $username): void
+    {
+        $this->attributes['username'] = $username === null
+            ? null
+            : Str::lower(trim($username));
     }
 }

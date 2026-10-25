@@ -60,14 +60,15 @@ const todayHours = computed(() => {
 
 const formatStatus = (value) => {
     if (value === 'PICKED_UP') return 'RELEASED';
-    if (value === 'UNREPAIRABLE') return 'RTO';
+    if (value === 'RTO_RELEASED') return 'RTO RELEASED';
+    if (value === 'RTO' || value === 'UNREPAIRABLE') return 'RTO';
     return value ? value.replaceAll('_', ' ') : '';
 };
 
 const statusTone = (status) => {
     if (status === 'PICKED_UP' || status === 'READY_FOR_PICKUP') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
     if (status === 'WAITING_PARTS') return 'bg-amber-50 text-amber-700 ring-amber-200';
-    if (status === 'UNREPAIRABLE') return 'bg-slate-100 text-slate-700 ring-slate-200';
+    if (['UNREPAIRABLE', 'RTO', 'RTO_RELEASED'].includes(status)) return 'bg-slate-100 text-slate-700 ring-slate-200';
     return 'bg-teal-50 text-teal-700 ring-teal-200';
 };
 
@@ -81,6 +82,8 @@ const statusMessage = computed(() => {
         IN_PROGRESS: 'Repair work is currently in progress.',
         READY_FOR_PICKUP: 'Your unit is ready. Please coordinate with the shop before pickup.',
         PICKED_UP: 'Your unit has already been released.',
+        RTO: 'The repair attempt has ended and your unit is waiting to be returned.',
+        RTO_RELEASED: 'Your RTO unit has been released.',
         UNREPAIRABLE: 'The unit is marked return to owner after shop assessment.',
     }[jobOrder.value.current_status] || 'The shop has updated your repair status.';
 });
@@ -146,13 +149,21 @@ const onSearch = () => {
 </script>
 
 <template>
-  <div class="public-shell px-4 py-8">
+  <div class="tracking-page public-shell px-4 py-8">
     <div class="mx-auto max-w-5xl space-y-6">
+      <div class="tracking-brand">
+        <AppLink to="/" aria-label="RepairSync Cloud home">
+          <span class="tracking-brand-frame">
+            <img src="/images/repairsync-cloud-logo.png" alt="RepairSync Cloud" class="tracking-brand-logo" />
+          </span>
+        </AppLink>
+      </div>
+
       <div class="public-card overflow-hidden">
-        <div class="border-b border-slate-200 bg-slate-950 p-6 text-white sm:p-8">
+        <div class="tracking-hero border-b border-[var(--ui-border)] bg-[var(--ui-brand-950)] p-6 text-white sm:p-8">
           <div class="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
             <div>
-              <p class="text-xs font-bold uppercase text-teal-300">Customer repair tracking</p>
+              <p class="text-xs font-bold uppercase tracking-[0.14em] text-teal-300">Customer repair tracking</p>
               <h1 class="mt-3 font-display text-4xl leading-tight">Track Your Repair</h1>
               <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
                 View the latest repair status, warranty details, and customer-visible proof photos.
@@ -161,24 +172,24 @@ const onSearch = () => {
             <div class="flex flex-wrap gap-2">
               <AppLink :to="consultationPath" class="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/15">Consultation</AppLink>
               <AppLink :to="bookingPath" class="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/15">Book Drop-off</AppLink>
-              <AppLink to="/" class="rounded-lg bg-white px-3 py-2 text-sm font-bold text-slate-950 hover:bg-slate-100">Home</AppLink>
+              <AppLink to="/" class="rounded-lg bg-white px-3 py-2 text-sm font-bold text-[var(--ui-text)] hover:bg-[var(--ui-surface-subtle)]">Home</AppLink>
             </div>
           </div>
         </div>
 
-        <form class="grid gap-3 p-6 sm:grid-cols-[0.8fr_1.2fr_auto]" @submit.prevent="onSearch">
+        <form class="tracking-form grid gap-3 p-6 sm:grid-cols-[0.8fr_1.2fr_auto]" @submit.prevent="onSearch">
           <input
             v-model="shopSlug"
             type="text"
             placeholder="Shop code (recommended)"
-            class="w-full border border-slate-300 px-4 py-3"
+            class="w-full border border-[var(--ui-border-strong)] px-4 py-3"
             required
           />
           <input
             v-model="jobOrderNumber"
             type="text"
             placeholder="Enter Job Order Number"
-            class="w-full border border-slate-300 px-4 py-3"
+            class="w-full border border-[var(--ui-border-strong)] px-4 py-3"
             required
           />
           <button type="submit" class="btn-primary px-6 py-3">
@@ -187,19 +198,19 @@ const onSearch = () => {
         </form>
       </div>
 
-      <div v-if="loading" class="public-card p-6 text-slate-600">Loading tracking details...</div>
+      <div v-if="loading" class="public-card p-6 text-[var(--ui-text-muted)]">Loading tracking details...</div>
       <div v-if="errorMessage" class="rounded-xl border border-rose-200 bg-rose-50 p-6 text-rose-700">{{ errorMessage }}</div>
       <div v-if="shopOptions.length" class="public-card p-6">
-        <h3 class="text-lg font-bold text-slate-950 mb-3">Choose Your Shop</h3>
+        <h3 class="mb-3 text-lg font-bold text-[var(--ui-text-strong)]">Choose Your Shop</h3>
         <div class="space-y-3">
           <AppLink
             v-for="option in shopOptions"
             :key="option.slug"
             :to="`/shops/${option.slug}/track/${encodeURIComponent(jobOrderNumber.trim().toUpperCase())}`"
-            class="block rounded-xl border border-slate-200 px-4 py-3 hover:border-teal-200 hover:bg-teal-50"
+            class="block rounded-xl border border-[var(--ui-border)] px-4 py-3 hover:border-[var(--ui-focus)] hover:bg-[var(--ui-surface-subtle)]"
           >
-            <p class="font-bold text-slate-950">{{ option.name }}</p>
-            <p class="text-sm text-slate-500">Shop code: {{ option.slug }}</p>
+            <p class="font-bold text-[var(--ui-text-strong)]">{{ option.name }}</p>
+            <p class="text-sm text-[var(--ui-text-muted)]">Shop code: {{ option.slug }}</p>
           </AppLink>
         </div>
       </div>
@@ -207,13 +218,13 @@ const onSearch = () => {
       <div v-if="jobOrder" class="space-y-6">
         <div v-if="shop" class="public-card p-6">
           <div class="flex items-center gap-4">
-            <div v-if="shop.logo_url" class="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+            <div v-if="shop.logo_url" class="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface-muted)]">
               <img :src="shop.logo_url" alt="Shop logo" class="h-full w-full object-contain p-2" />
             </div>
             <div>
-              <h2 class="text-xl font-bold text-slate-950 mb-2">{{ shop.name }}</h2>
-              <p v-if="shop.phone" class="text-sm text-slate-600">{{ shop.phone }}</p>
-              <p v-if="shop.address" class="text-sm text-slate-500">{{ shop.address }}</p>
+              <h2 class="mb-2 text-xl font-bold text-[var(--ui-text-strong)]">{{ shop.name }}</h2>
+              <p v-if="shop.phone" class="text-sm text-[var(--ui-text-muted)]">{{ shop.phone }}</p>
+              <p v-if="shop.address" class="text-sm text-[var(--ui-text-muted)]">{{ shop.address }}</p>
               <p v-if="todayHours" class="mt-2 text-sm font-semibold text-teal-700">Today: {{ todayHours }}</p>
             </div>
           </div>
@@ -222,9 +233,9 @@ const onSearch = () => {
         <div class="public-card p-6">
           <div class="mb-5 flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p class="text-xs font-bold uppercase text-slate-400">Job Order</p>
+              <p class="text-xs font-bold uppercase text-[var(--ui-text-subtle)]">Job Order</p>
               <div class="mt-1 flex flex-wrap items-center gap-2">
-                <h2 class="text-2xl font-bold text-slate-950">{{ jobOrder.job_order_number }}</h2>
+                <h2 class="text-2xl font-bold text-[var(--ui-text-strong)]">{{ jobOrder.job_order_number }}</h2>
                 <span v-if="jobOrder.is_warranty_service" class="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold uppercase text-emerald-700 ring-1 ring-emerald-200">
                   Under Warranty
                 </span>
@@ -232,9 +243,9 @@ const onSearch = () => {
             </div>
             <span class="rounded-full px-3 py-1 text-xs font-bold ring-1" :class="statusTone(jobOrder.current_status)">{{ formatStatus(jobOrder.current_status) }}</span>
           </div>
-          <div class="mb-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <p class="text-xs font-bold uppercase text-slate-400">Latest Update</p>
-            <p class="mt-1 font-semibold text-slate-950">{{ statusMessage }}</p>
+          <div class="mb-5 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] p-4">
+            <p class="text-xs font-bold uppercase text-[var(--ui-text-subtle)]">Latest Update</p>
+            <p class="mt-1 font-semibold text-[var(--ui-text-strong)]">{{ statusMessage }}</p>
           </div>
           <div v-if="jobOrder.is_warranty_service" class="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
             <p class="font-bold">UNDER WARRANTY SERVICE</p>
@@ -253,46 +264,46 @@ const onSearch = () => {
           </div>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <div>
-              <p class="text-slate-500">Customer</p>
-              <p class="font-semibold text-slate-900">{{ jobOrder.customer_name }}</p>
+              <p class="text-[var(--ui-text-muted)]">Customer</p>
+              <p class="font-semibold text-[var(--ui-text)]">{{ jobOrder.customer_name }}</p>
             </div>
             <div>
-              <p class="text-slate-500">Device</p>
-              <p class="font-semibold text-slate-900">{{ deviceLabel }}</p>
-              <p v-if="jobOrder.device_type && deviceLabel !== jobOrder.device_type" class="text-xs text-slate-500">{{ jobOrder.device_type }}</p>
+              <p class="text-[var(--ui-text-muted)]">Device</p>
+              <p class="font-semibold text-[var(--ui-text)]">{{ deviceLabel }}</p>
+              <p v-if="jobOrder.device_type && deviceLabel !== jobOrder.device_type" class="text-xs text-[var(--ui-text-muted)]">{{ jobOrder.device_type }}</p>
             </div>
             <div>
-              <p class="text-slate-500">Current Status</p>
-              <p class="font-semibold text-slate-900">{{ formatStatus(jobOrder.current_status) }}</p>
+              <p class="text-[var(--ui-text-muted)]">Current Status</p>
+              <p class="font-semibold text-[var(--ui-text)]">{{ formatStatus(jobOrder.current_status) }}</p>
             </div>
             <div>
-              <p class="text-slate-500">Received</p>
-              <p class="font-semibold text-slate-900">{{ jobOrder.created_at_formatted }}</p>
+              <p class="text-[var(--ui-text-muted)]">Received</p>
+              <p class="font-semibold text-[var(--ui-text)]">{{ jobOrder.created_at_formatted }}</p>
             </div>
           </div>
         </div>
 
         <div v-if="jobOrder.warranty_days > 0 || warrantyAssessments.length" class="public-card p-6">
-          <h3 class="mb-4 text-lg font-bold text-slate-950">Warranty</h3>
-          <div v-if="jobOrder.warranty_days > 0" class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+          <h3 class="mb-4 text-lg font-bold text-[var(--ui-text-strong)]">Warranty</h3>
+          <div v-if="jobOrder.warranty_days > 0" class="rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] p-4">
             <p class="font-bold" :class="jobOrder.is_under_warranty ? 'text-emerald-700' : 'text-slate-700'">
               {{ jobOrder.is_under_warranty ? 'WARRANTY ACTIVE' : 'WARRANTY PERIOD ENDED' }}
             </p>
-            <p class="mt-1 text-sm text-slate-600">
+            <p class="mt-1 text-sm text-[var(--ui-text-muted)]">
               Coverage: {{ jobOrder.warranty_days }} days
               <span v-if="jobOrder.warranty_expires_at_formatted"> - Until {{ jobOrder.warranty_expires_at_formatted }}</span>
             </p>
-            <p v-if="jobOrder.warranty_details" class="mt-2 text-sm text-slate-700">{{ jobOrder.warranty_details }}</p>
-            <p class="mt-3 text-sm text-slate-600">
+            <p v-if="jobOrder.warranty_details" class="mt-2 text-sm text-[var(--ui-text)]">{{ jobOrder.warranty_details }}</p>
+            <p class="mt-3 text-sm text-[var(--ui-text-muted)]">
               For warranty concerns, bring the unit and warranty slip to the shop for physical assessment.
             </p>
           </div>
 
           <div v-if="warrantyAssessments.length" class="mt-4 space-y-3">
-            <div v-for="assessment in warrantyAssessments" :key="assessment.id" class="rounded-xl border border-slate-200 p-4">
-              <p class="font-bold text-slate-950">{{ assessment.warranty_job_order ? 'WARRANTY SERVICE ISSUED' : assessment.result_label }}</p>
-              <p class="text-xs text-slate-500">{{ assessment.brought_at_formatted || assessment.created_at_formatted }}</p>
-              <p class="mt-2 text-sm text-slate-700">{{ assessment.reported_issue }}</p>
+            <div v-for="assessment in warrantyAssessments" :key="assessment.id" class="rounded-xl border border-[var(--ui-border)] p-4">
+              <p class="font-bold text-[var(--ui-text-strong)]">{{ assessment.warranty_job_order ? 'WARRANTY SERVICE ISSUED' : assessment.result_label }}</p>
+              <p class="text-xs text-[var(--ui-text-muted)]">{{ assessment.brought_at_formatted || assessment.created_at_formatted }}</p>
+              <p class="mt-2 text-sm text-[var(--ui-text)]">{{ assessment.reported_issue }}</p>
               <p v-if="assessment.warranty_job_order" class="mt-2 text-sm font-semibold text-teal-700">
                 Warranty service job: {{ assessment.warranty_job_order.job_order_number }}
               </p>
@@ -301,34 +312,34 @@ const onSearch = () => {
         </div>
 
         <div class="public-card p-6">
-          <h3 class="text-lg font-bold text-slate-950 mb-4">Timeline</h3>
+          <h3 class="mb-4 text-lg font-bold text-[var(--ui-text-strong)]">Timeline</h3>
           <div class="space-y-4">
             <div v-for="entry in timeline" :key="entry.id || entry.created_at" class="relative border-l-2 border-teal-200 pb-5 pl-5 last:pb-0">
               <span class="absolute -left-[7px] top-1 h-3 w-3 rounded-full bg-teal-500 ring-4 ring-teal-50"></span>
               <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="statusTone(entry.status)">
                 {{ formatStatus(entry.status) }}
               </span>
-              <p class="text-sm text-slate-500">{{ entry.created_at_formatted }}</p>
-              <p v-if="entry.note" class="text-sm text-slate-700 mt-1">{{ entry.note }}</p>
+              <p class="text-sm text-[var(--ui-text-muted)]">{{ entry.created_at_formatted }}</p>
+              <p v-if="entry.note" class="mt-1 text-sm text-[var(--ui-text)]">{{ entry.note }}</p>
             </div>
-            <p v-if="!timeline.length" class="text-sm text-slate-500">No status history available.</p>
+            <p v-if="!timeline.length" class="text-sm text-[var(--ui-text-muted)]">No status history available.</p>
           </div>
         </div>
 
         <div v-if="photos.length" class="public-card p-6">
           <div class="mb-4">
-            <h3 class="text-lg font-bold text-slate-950">Repair Photos</h3>
-            <p class="mt-1 text-sm text-slate-500">Only photos approved by the shop for customer viewing are shown here.</p>
+            <h3 class="text-lg font-bold text-[var(--ui-text-strong)]">Repair Photos</h3>
+            <p class="mt-1 text-sm text-[var(--ui-text-muted)]">Only photos approved by the shop for customer viewing are shown here.</p>
           </div>
           <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div v-for="photo in photos" :key="photo.id" class="overflow-hidden rounded-xl border border-slate-200 bg-white">
-              <a :href="photo.url" target="_blank" rel="noopener" class="block aspect-[4/3] bg-slate-100">
+            <div v-for="photo in photos" :key="photo.id" class="overflow-hidden rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface)]">
+              <a :href="photo.url" target="_blank" rel="noopener" class="block aspect-[4/3] bg-[var(--ui-surface-muted)]">
                 <img :src="photo.url" :alt="photo.photo_type_label" class="h-full w-full object-cover" />
               </a>
               <div class="space-y-1 p-3">
-                <p class="text-sm font-bold text-slate-950">{{ photo.photo_type_label }}</p>
-                <p class="text-xs text-slate-500">{{ photo.created_at_formatted }}</p>
-                <p v-if="photo.description" class="text-sm text-slate-700">{{ photo.description }}</p>
+                <p class="text-sm font-bold text-[var(--ui-text-strong)]">{{ photo.photo_type_label }}</p>
+                <p class="text-xs text-[var(--ui-text-muted)]">{{ photo.created_at_formatted }}</p>
+                <p v-if="photo.description" class="text-sm text-[var(--ui-text)]">{{ photo.description }}</p>
               </div>
             </div>
           </div>
@@ -337,3 +348,75 @@ const onSearch = () => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.tracking-page {
+  background: var(--ui-page);
+}
+
+.tracking-brand {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 0.25rem;
+}
+
+.tracking-brand-frame {
+  display: block;
+  width: min(100%, 12rem);
+  height: 2.8rem;
+  overflow: hidden;
+}
+
+.tracking-brand-logo {
+  display: block;
+  width: 100%;
+  height: auto;
+  transform: translateY(-35%);
+}
+
+.tracking-hero h1 {
+  letter-spacing: -0.025em;
+}
+
+.tracking-form input {
+  min-height: var(--ui-control-height);
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-surface);
+  color: var(--ui-text);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.tracking-form input:focus {
+  border-color: var(--ui-focus);
+  box-shadow: 0 0 0 4px rgba(13, 148, 136, 0.14);
+  outline: none;
+}
+
+.tracking-form button {
+  min-height: var(--ui-control-height);
+  border-radius: var(--ui-radius-md);
+  font-weight: 700;
+}
+
+@media (max-width: 36rem) {
+  .tracking-page {
+    padding: 1.25rem 0.75rem;
+  }
+
+  .tracking-brand {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .tracking-brand-frame {
+    width: 10.5rem;
+    height: 2.5rem;
+  }
+
+  .tracking-hero h1 {
+    font-size: 2.25rem;
+  }
+}
+</style>

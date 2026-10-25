@@ -2,11 +2,13 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\AppointmentController;
+use App\Http\Controllers\Api\BlockedJobPartController;
 use App\Http\Controllers\Api\AuditLogController;
 use App\Http\Controllers\Api\DashboardController;
 use App\Http\Controllers\Api\FailedJobController;
 use App\Http\Controllers\Api\InventoryController;
 use App\Http\Controllers\Api\JobOrderController;
+use App\Http\Controllers\Api\JobOrderPartOrderController;
 use App\Http\Controllers\Api\PartRequestController;
 use App\Http\Controllers\Api\PlatformController;
 use App\Http\Controllers\Api\ReportsController;
@@ -32,6 +34,7 @@ Route::middleware('web')->group(function () {
         Route::get('/user', [AuthController::class, 'user'])->middleware(['auth', EnsureActiveUser::class]);
         Route::post('/login', [AuthController::class, 'login']);
         Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth');
+        Route::post('/password', [AuthController::class, 'changePassword'])->middleware(['auth', EnsureActiveUser::class]);
     });
 
     Route::prefix('onboarding')->group(function () {
@@ -46,7 +49,10 @@ Route::middleware('web')->group(function () {
     Route::get('/shops/{shop:slug}/track/{jobOrderNumber}', [TrackingController::class, 'showForShop'])->middleware('throttle:30,1');
     Route::get('/shops/{shop:slug}/track/{jobOrderNumber}/photos/{photo}', [RepairPhotoController::class, 'showForCustomer'])->name('tracking.photos.file')->middleware('throttle:30,1');
     Route::post('/shops/{shop:slug}/appointments', [AppointmentController::class, 'storeForShop']);
-    Route::get('/shops/{shop:slug}/appointments/{confirmationCode}', [AppointmentController::class, 'showForShop']);
+    Route::get('/shops/{shop:slug}/appointments/{confirmationCode}', [AppointmentController::class, 'showForShop'])->middleware('throttle:30,1');
+    Route::get('/shops/{shop:slug}/appointments/{confirmationCode}/photo', [AppointmentController::class, 'showPublicPhoto'])
+        ->name('public.appointment.photo')
+        ->middleware('throttle:30,1');
 
     Route::middleware(['auth', EnsureActiveUser::class])->prefix('admin')->group(function () {
         Route::get('/subscription/options', [SubscriptionRequestController::class, 'options']);
@@ -65,9 +71,21 @@ Route::middleware('web')->group(function () {
         Route::delete('/shop/services/{service}', [ShopController::class, 'deactivateServiceItem']);
         Route::get('/audit-logs', [AuditLogController::class, 'index']);
         Route::get('/part-requests', [PartRequestController::class, 'index']);
-        Route::post('/part-requests/{jobOrder}/fulfill', [PartRequestController::class, 'fulfill']);
+        Route::post('/part-requests', [PartRequestController::class, 'storeForShop']);
+        Route::patch('/part-requests/{partRequest}/status', [PartRequestController::class, 'updateStatus']);
+        Route::patch('/part-requests/{partRequest}/receive', [PartRequestController::class, 'receive']);
+        Route::get('/job-order-part-orders', [JobOrderPartOrderController::class, 'index']);
+        Route::post('/job-orders/{jobOrder}/part-orders', [JobOrderPartOrderController::class, 'store']);
+        Route::patch('/job-order-part-orders/{partOrder}/customer-decision', [JobOrderPartOrderController::class, 'decide']);
+        Route::patch('/job-order-part-orders/{partOrder}/place-order', [JobOrderPartOrderController::class, 'placeOrder']);
+        Route::patch('/job-order-part-orders/{partOrder}/receive', [JobOrderPartOrderController::class, 'receive']);
+        Route::patch('/job-order-part-orders/{partOrder}/cancel', [JobOrderPartOrderController::class, 'cancel']);
+        Route::patch('/job-orders/{jobOrder}/device-location', [JobOrderPartOrderController::class, 'updateDeviceLocation']);
+        Route::get('/blocked-job-requests', [BlockedJobPartController::class, 'index']);
+        Route::post('/blocked-job-orders/{jobOrder}/fulfill-parts-request', [BlockedJobPartController::class, 'fulfill']);
         Route::get('/appointments', [AppointmentController::class, 'index']);
         Route::get('/appointments/{appointment}', [AppointmentController::class, 'show']);
+        Route::get('/appointments/{appointment}/photo', [AppointmentController::class, 'showStaffPhoto'])->name('admin.appointment.photo');
         Route::post('/appointments/{appointment}/status', [AppointmentController::class, 'updateStatus']);
         Route::post('/appointments/{appointment}/convert-to-job-order', [AppointmentController::class, 'convertToJobOrder']);
 
@@ -84,6 +102,10 @@ Route::middleware('web')->group(function () {
         Route::delete('/job-orders/{jobOrderId}/force-delete', [JobOrderController::class, 'forceDelete']);
         Route::post('/job-orders/{jobOrder}/update-status', [JobOrderController::class, 'updateStatus']);
         Route::post('/job-orders/{jobOrder}/mark-picked-up', [JobOrderController::class, 'markPickedUp']);
+        Route::post('/job-orders/{jobOrder}/release-rto', [JobOrderController::class, 'releaseRto']);
+        Route::post('/job-orders/{jobOrder}/prepare-rto-refunds', [JobOrderController::class, 'prepareRtoRefunds']);
+        Route::post('/job-orders/{jobOrder}/legacy-rto-refunds', [JobOrderController::class, 'reconcileLegacyRtoRefund']);
+        Route::post('/job-orders/{jobOrder}/refunds/{refund}/issue', [JobOrderController::class, 'issueRtoRefund']);
         Route::post('/job-orders/{jobOrder}/record-payment', [JobOrderController::class, 'recordPayment']);
         Route::post('/job-orders/{jobOrder}/update-costs', [JobOrderController::class, 'updateCosts']);
         Route::post('/job-orders/{jobOrder}/update-warranty', [JobOrderController::class, 'updateWarranty']);
@@ -118,6 +140,7 @@ Route::middleware('web')->group(function () {
         Route::post('/users/{user}/activate', [UserController::class, 'activate']);
         Route::post('/users/{user}/deactivate', [UserController::class, 'deactivate']);
         Route::post('/users/{user}/reset-password', [UserController::class, 'resetPassword']);
+        Route::delete('/users/{user}', [UserController::class, 'destroy']);
 
         Route::get('/inventory', [InventoryController::class, 'index']);
         Route::post('/inventory', [InventoryController::class, 'store']);
@@ -146,6 +169,11 @@ Route::middleware('web')->group(function () {
 
     Route::middleware(['auth', EnsureActiveUser::class])->prefix('technician')->group(function () {
         Route::get('/dashboard', [TechnicianPortalController::class, 'dashboard']);
+        Route::post('/part-requests', [PartRequestController::class, 'store']);
+        Route::post('/job-orders/{jobOrder}/blocked-part-requests', [BlockedJobPartController::class, 'store']);
+        Route::post('/job-orders/{jobOrder}/part-orders', [JobOrderPartOrderController::class, 'store']);
+        Route::patch('/job-orders/{jobOrder}/part-orders/{partOrder}/issue', [JobOrderPartOrderController::class, 'issueToJob']);
+        Route::patch('/job-orders/{jobOrder}/device-location', [JobOrderPartOrderController::class, 'updateDeviceLocation']);
         Route::get('/job-orders/{jobOrder}', [TechnicianPortalController::class, 'showJob']);
         Route::post('/job-orders/{jobOrder}/record-repair-approval', [TechnicianPortalController::class, 'recordRepairApproval']);
         Route::post('/job-orders/{jobOrder}/update-status', [TechnicianPortalController::class, 'updateStatus']);
@@ -155,6 +183,5 @@ Route::middleware('web')->group(function () {
         Route::get('/job-orders/{jobOrder}/photos/{photo}/file', [RepairPhotoController::class, 'showForTechnician'])->name('technician.job-order.photos.file');
         Route::post('/job-orders/{jobOrder}/parts', [TechnicianPortalController::class, 'addPart']);
         Route::delete('/job-orders/{jobOrder}/parts/{part}', [TechnicianPortalController::class, 'removePart']);
-        Route::post('/job-orders/{jobOrder}/request-part', [TechnicianPortalController::class, 'requestPart']);
     });
 });

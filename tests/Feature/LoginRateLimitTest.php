@@ -146,7 +146,7 @@ class LoginRateLimitTest extends TestCase
             'shop_id' => $shop->id,
             'name' => 'Login Rate Limit User',
             'email' => $email,
-            'role' => User::ROLE_STAFF,
+            'role' => User::ROLE_SHOP_ADMIN,
             'is_active' => true,
         ]);
     }

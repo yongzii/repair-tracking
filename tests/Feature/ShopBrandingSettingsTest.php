@@ -172,6 +172,7 @@ class ShopBrandingSettingsTest extends TestCase
         $shop = Shop::create([
             'name' => 'Branding Test Shop',
             'slug' => 'branding-test-shop',
+            'trial_ends_at' => now()->addDays(30),
             'is_active' => true,
         ]);
 

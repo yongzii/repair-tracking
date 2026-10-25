@@ -87,6 +87,8 @@ class ShopController extends Controller
             'notification_settings.events.IN_PROGRESS' => ['nullable', 'boolean'],
             'notification_settings.events.READY_FOR_PICKUP' => ['nullable', 'boolean'],
             'notification_settings.events.PICKED_UP' => ['nullable', 'boolean'],
+            'notification_settings.events.RTO' => ['nullable', 'boolean'],
+            'notification_settings.events.RTO_RELEASED' => ['nullable', 'boolean'],
             'notification_settings.events.UNREPAIRABLE' => ['nullable', 'boolean'],
         ]);
 
@@ -444,6 +446,8 @@ class ShopController extends Controller
             'IN_PROGRESS',
             'READY_FOR_PICKUP',
             'PICKED_UP',
+            'RTO',
+            'RTO_RELEASED',
             'UNREPAIRABLE',
         ];
 

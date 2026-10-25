@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import AdminLayout from '../../layouts/AdminLayout.vue';
 import AppLink from '../../components/AppLink.vue';
 import { adminRoles, authState, ensureRoles } from '../../composables/auth';
@@ -21,6 +21,8 @@ const statusHistories = ref([]);
 const parts = ref([]);
 const inventoryParts = ref([]);
 const payments = ref([]);
+const refunds = ref([]);
+const legacyRefundReconciliationAmount = ref(0);
 const photos = ref([]);
 const notifications = ref([]);
 const warrantyAssessments = ref([]);
@@ -57,6 +59,8 @@ const paymentForm = ref({
     reference_number: '',
     payment_notes: '',
 });
+const legacyRefundForm = ref({ amount: '', reconciliation_reason: '' });
+const refundForms = reactive({});
 
 const warrantyForm = ref({
     warranty_days: 0,
@@ -76,14 +80,28 @@ const photoForm = ref({
 });
 
 const canOverridePickup = computed(() => adminRoles.includes(authState.user?.role));
+const isRtoStatus = computed(() => ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'].includes(jobOrder.value?.current_status));
+const pendingRefundTotal = computed(() => refunds.value
+    .filter((refund) => refund.status === 'PENDING')
+    .reduce((total, refund) => total + Number(refund.amount), 0));
+const issuedRefundTotal = computed(() => refunds.value
+    .filter((refund) => refund.status === 'ISSUED')
+    .reduce((total, refund) => total + Number(refund.amount), 0));
 
 const actionTabs = computed(() => {
-    const tabs = [
-        { key: 'status', label: 'Status' },
-    ];
+    const isRto = ['RTO', 'UNREPAIRABLE'].includes(jobOrder.value?.current_status);
+    const isFinal = ['PICKED_UP', 'RTO_RELEASED'].includes(jobOrder.value?.current_status);
+    const tabs = isRto || isFinal ? [] : [{ key: 'status', label: 'Status' }];
 
     if (jobOrder.value?.current_status === 'READY_FOR_PICKUP' && !jobOrder.value?.picked_up_at) {
         tabs.push({ key: 'release', label: 'Release' });
+    }
+    if (isRto && !jobOrder.value?.picked_up_at) {
+        tabs.push({ key: 'release-rto', label: 'Release RTO' });
+    }
+
+    if (isRtoStatus.value) {
+        return [...tabs, { key: 'refunds', label: 'RTO Refunds' }, { key: 'history', label: 'History' }];
     }
 
     return [
@@ -107,6 +125,7 @@ const partForm = ref({
 
 const balance = computed(() => {
     if (!jobOrder.value) return 0;
+    if (isRtoStatus.value) return 0;
     return Number(jobOrder.value.total_cost || 0) - Number(jobOrder.value.amount_paid || 0);
 });
 
@@ -123,7 +142,7 @@ const activeWarrantyService = computed(() => warrantyAssessments.value.find((ass
 
     return warrantyJob
         && warrantyJob.current_status !== 'PICKED_UP'
-        && warrantyJob.current_status !== 'UNREPAIRABLE';
+        && !['UNREPAIRABLE', 'RTO', 'RTO_RELEASED'].includes(warrantyJob.current_status);
 }) || null);
 
 const warrantyExpiresAt = computed(() => {
@@ -169,6 +188,78 @@ const formatCurrency = (value) => {
     return `PHP ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+const refundFormFor = (refundId) => {
+    if (!refundForms[refundId]) {
+        refundForms[refundId] = { refund_method: 'CASH', reference_number: '' };
+    }
+    return refundForms[refundId];
+};
+
+const prepareRtoRefunds = async () => {
+    errorMessage.value = '';
+    successMessage.value = '';
+    try {
+        const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/prepare-rto-refunds`);
+        successMessage.value = data.message || 'Refund obligations prepared.';
+        await loadJobOrder();
+    } catch (error) {
+        errorMessage.value = error?.response?.data?.message || 'Failed to prepare refund obligations.';
+    }
+};
+
+const reconcileLegacyRtoRefund = async () => {
+    errorMessage.value = '';
+    successMessage.value = '';
+    try {
+        const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/legacy-rto-refunds`, legacyRefundForm.value);
+        successMessage.value = data.message || 'Legacy refund obligation recorded.';
+        legacyRefundForm.value = { amount: '', reconciliation_reason: '' };
+        await loadJobOrder();
+    } catch (error) {
+        errorMessage.value = error?.response?.data?.errors?.amount?.[0]
+            || error?.response?.data?.errors?.reconciliation_reason?.[0]
+            || error?.response?.data?.message
+            || 'Failed to record legacy refund obligation.';
+    }
+};
+
+const issueRtoRefund = async (refund) => {
+    errorMessage.value = '';
+    successMessage.value = '';
+    try {
+        const { data } = await window.axios.post(
+            `/api/admin/job-orders/${props.params.id}/refunds/${refund.id}/issue`,
+            refundFormFor(refund.id)
+        );
+        successMessage.value = data.message || 'Refund issued and recorded.';
+        await loadJobOrder();
+    } catch (error) {
+        errorMessage.value = error?.response?.data?.errors?.reference_number?.[0]
+            || error?.response?.data?.message
+            || 'Failed to issue refund.';
+    }
+};
+
+const releaseRto = async () => {
+    if (!pickupForm.value.picked_up_by.trim()) return;
+    successMessage.value = '';
+    errorMessage.value = '';
+
+    try {
+        const { data } = await window.axios.post(
+            `/api/admin/job-orders/${props.params.id}/release-rto`,
+            { picked_up_by: pickupForm.value.picked_up_by }
+        );
+        successMessage.value = data.message || 'RTO device released.';
+        await loadJobOrder();
+        pickupForm.value.picked_up_by = '';
+        pickupForm.value.override_unpaid_balance = false;
+        pickupForm.value.override_reason = '';
+    } catch (error) {
+        errorMessage.value = error?.response?.data?.message || 'Failed to release RTO device.';
+    }
+};
+
 const formatDate = (value, withTime = false) => {
     if (!value) return 'N/A';
     const date = new Date(value);
@@ -196,6 +287,8 @@ const notificationStatusHelp = (notification) => {
 
 const formatStatus = (status) => {
     if (status === 'PICKED_UP') return 'RELEASED';
+    if (status === 'RTO_RELEASED') return 'RTO RELEASED';
+    if (status === 'RTO') return 'RTO';
     if (status === 'UNREPAIRABLE') return 'RTO';
     return status ? status.replaceAll('_', ' ') : '';
 };
@@ -235,9 +328,14 @@ const loadJobOrder = async () => {
 
         const data = jobOrderResponse.data;
         jobOrder.value = data.jobOrder;
+        if (['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'].includes(jobOrder.value.current_status)) {
+            activeAction.value = 'refunds';
+        }
         statusHistories.value = data.statusHistories || [];
         parts.value = data.parts || [];
         payments.value = data.payments || [];
+        refunds.value = data.refunds || [];
+        legacyRefundReconciliationAmount.value = Number(data.legacy_refund_reconciliation_amount || 0);
         photos.value = data.photos || [];
         notifications.value = data.notifications || [];
         warrantyAssessments.value = data.warrantyAssessments || [];
@@ -547,23 +645,38 @@ onMounted(loadJobOrder);
       <div v-if="successMessage" class="card p-4 border border-emerald-200 bg-emerald-50 text-emerald-900">{{ successMessage }}</div>
       <div v-if="errorMessage" class="card p-4 border border-rose-200 bg-rose-50 text-rose-900">{{ errorMessage }}</div>
 
-      <div class="flex items-center justify-between gap-3">
-        <div>
+      <div class="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div class="min-w-0">
+          <p class="text-xs font-bold uppercase tracking-[0.16em] text-teal-700">Repair job</p>
           <div class="flex flex-wrap items-center gap-2">
-            <h3 class="text-2xl font-bold text-slate-900">{{ jobOrder.job_order_number }}</h3>
+            <h3 class="break-words text-2xl font-bold text-slate-950">{{ jobOrder.job_order_number }}</h3>
             <span v-if="jobOrder.service_type === 'WARRANTY_SERVICE'" class="inline-flex rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold uppercase text-emerald-700 ring-1 ring-emerald-200">
               Under Warranty
             </span>
           </div>
-          <p class="text-slate-600">{{ jobOrder.customer_name }} - {{ jobOrder.device_type }}</p>
+          <p class="mt-1 text-sm text-slate-600">{{ jobOrder.customer_name }} · {{ [jobOrder.brand, jobOrder.model].filter(Boolean).join(' ') || jobOrder.device_type }}</p>
         </div>
-        <div class="flex items-center gap-3">
-          <AppLink :to="`/admin/job-orders/${jobOrder.id}/print/intake`" class="text-teal-700 hover:text-teal-800 font-semibold">Claim Stab / Job Slip</AppLink>
-          <AppLink :to="`/admin/job-orders/${jobOrder.id}/print/warranty`" class="text-emerald-700 hover:text-emerald-800 font-semibold">Warranty</AppLink>
-          <AppLink :to="`/admin/job-orders/${jobOrder.id}/invoice`" class="text-indigo-700 hover:text-indigo-800 font-semibold">{{ jobOrder.service_type === 'WARRANTY_SERVICE' ? 'Service Summary' : 'Invoice' }}</AppLink>
-          <AppLink :to="`/admin/job-orders/${jobOrder.id}/edit`" class="text-slate-900 hover:text-slate-700 font-semibold">Edit</AppLink>
-          <AppLink to="/admin/job-orders" class="text-slate-700 hover:text-slate-900 font-semibold">Back to Job Orders</AppLink>
+        <div class="flex flex-wrap gap-2">
+          <AppLink :to="`/admin/job-orders/${jobOrder.id}/print/intake`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Claim Slip</AppLink>
+          <AppLink :to="`/admin/job-orders/${jobOrder.id}/print/warranty`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Warranty</AppLink>
+          <AppLink :to="`/admin/job-orders/${jobOrder.id}/invoice`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">{{ jobOrder.service_type === 'WARRANTY_SERVICE' ? 'Service Summary' : 'Invoice' }}</AppLink>
+          <AppLink to="/admin/part-requests" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Parts &amp; Orders</AppLink>
+          <AppLink :to="`/admin/job-orders/${jobOrder.id}/edit`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Edit</AppLink>
+          <AppLink to="/admin/job-orders" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Back</AppLink>
         </div>
+      </div>
+
+      <div class="card p-6" v-if="activeAction === 'release-rto' && ['RTO', 'UNREPAIRABLE'].includes(jobOrder.current_status) && !jobOrder.picked_up_at">
+        <h4 class="text-lg font-semibold text-slate-900 mb-4">Release RTO Unit</h4>
+        <div class="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+          <p class="font-bold">No repair balance is due for an unsuccessful repair</p>
+          <p class="mt-1">Total: {{ formatCurrency(jobOrder.total_cost) }} · Paid: {{ formatCurrency(jobOrder.amount_paid) }} · Balance: {{ formatCurrency(balance) }}</p>
+          <p class="mt-1">Pending refunds: {{ formatCurrency(pendingRefundTotal) }} · Issued refunds: {{ formatCurrency(issuedRefundTotal) }}</p>
+        </div>
+        <form class="space-y-3" @submit.prevent="releaseRto">
+          <input v-model="pickupForm.picked_up_by" type="text" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Released to / claimed by" required />
+          <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg">Confirm RTO Release</button>
+        </form>
       </div>
 
       <div v-if="jobOrder.service_type === 'WARRANTY_SERVICE'" class="card border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
@@ -601,6 +714,13 @@ onMounted(loadJobOrder);
               <div>
                 <p class="text-slate-500">Balance</p>
                 <p class="font-semibold text-slate-900">{{ formatCurrency(balance) }}</p>
+              </div>
+              <div>
+                <p class="text-slate-500">Device Location</p>
+                <p class="font-semibold text-slate-900">{{ jobOrder.device_location === 'AT_SHOP' ? 'At Shop' : jobOrder.device_location === 'WITH_CUSTOMER' ? 'With Customer' : 'Not recorded' }}</p>
+                <p v-if="jobOrder.device_location_updated_at" class="mt-1 text-xs text-slate-500">
+                  Updated {{ formatDate(jobOrder.device_location_updated_at, true) }} by {{ jobOrder.device_location_updated_by?.name || 'a shop user' }}
+                </p>
               </div>
               <div class="md:col-span-2">
                 <p class="text-slate-500">Problem</p>
@@ -730,13 +850,13 @@ onMounted(loadJobOrder);
                 </div>
                 <div class="flex items-center gap-3">
                   <span class="text-sm font-semibold text-slate-800">{{ formatCurrency(part.total_cost) }}</span>
-                  <button type="button" class="text-rose-600 font-semibold" @click="deletePart(part.id)">Delete</button>
+                  <button v-if="!isRtoStatus" type="button" class="text-rose-600 font-semibold" @click="deletePart(part.id)">Delete</button>
                 </div>
               </div>
             </div>
             <p v-else class="text-sm text-slate-500 mb-4">No parts recorded yet.</p>
 
-            <form class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="addPart">
+            <form v-if="!isRtoStatus" class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="addPart">
               <select v-model="partForm.spare_part_id" class="md:col-span-2 px-4 py-2 border border-slate-300 rounded-lg" @change="onSparePartChange">
                 <option value="">Custom part (no inventory deduction)</option>
                 <option
@@ -754,11 +874,12 @@ onMounted(loadJobOrder);
               <input v-model="partForm.notes" class="md:col-span-3 px-4 py-2 border border-slate-300 rounded-lg" placeholder="Notes (optional)" />
               <button type="submit" class="md:col-span-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Add Part</button>
             </form>
+            <p v-else class="text-sm text-slate-500">Parts and repair costs are locked after an RTO decision.</p>
           </div>
 
         </div>
 
-        <div class="space-y-6">
+        <div class="space-y-6 lg:sticky lg:top-24 lg:self-start">
           <div class="card p-5">
             <div class="mb-4 flex items-center justify-between gap-3">
               <div>
@@ -812,7 +933,7 @@ onMounted(loadJobOrder);
                 <option value="WAITING_PARTS">Waiting for Parts</option>
                 <option value="IN_PROGRESS">Repair in Progress</option>
                 <option value="READY_FOR_PICKUP">Ready for Pickup</option>
-                <option value="UNREPAIRABLE">RTO (Return to Owner)</option>
+                <option value="RTO">RTO (Return to Owner)</option>
               </select>
               <textarea v-model="statusForm.note" rows="3" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Note (optional)"></textarea>
               <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Save Status</button>
@@ -972,6 +1093,50 @@ onMounted(loadJobOrder);
                 {{ recordingPayment ? 'Recording...' : 'Record' }}
               </button>
             </form>
+          </div>
+
+          <div v-if="activeAction === 'refunds' && isRtoStatus" class="card space-y-5 p-6">
+            <div>
+              <h4 class="text-lg font-semibold text-slate-900">RTO Refunds</h4>
+              <p class="mt-1 text-sm text-slate-600">Original repair costs and receipts remain unchanged. Record each actual refund separately.</p>
+            </div>
+            <button type="button" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white" @click="prepareRtoRefunds">
+              Prepare missing receipt-based refunds
+            </button>
+            <div v-if="refunds.length" class="space-y-3">
+              <div v-for="refund in refunds" :key="refund.id" class="rounded-lg border border-slate-200 p-4">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p class="font-semibold text-slate-900">{{ formatCurrency(refund.amount) }} · {{ refund.status }}</p>
+                    <p class="text-sm text-slate-600">{{ refund.reason }}</p>
+                    <p v-if="refund.job_order_payment_id" class="text-xs text-slate-500">Original payment record #{{ refund.job_order_payment_id }}</p>
+                    <p v-if="refund.reconciliation_reason" class="mt-1 text-xs text-slate-500">Reconciliation: {{ refund.reconciliation_reason }}</p>
+                    <p v-if="refund.issued_at" class="mt-1 text-xs text-slate-500">Issued {{ formatDate(refund.issued_at, true) }} by user #{{ refund.issued_by }} · {{ refund.refund_method }} <span v-if="refund.reference_number">· Ref: {{ refund.reference_number }}</span></p>
+                  </div>
+                </div>
+                <form v-if="refund.status === 'PENDING'" class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3" @submit.prevent="issueRtoRefund(refund)">
+                  <select v-model="refundFormFor(refund.id).refund_method" class="rounded-lg border border-slate-300 px-3 py-2">
+                    <option value="CASH">Cash</option>
+                    <option value="GCASH">GCash</option>
+                    <option value="BANK_TRANSFER">Bank Transfer</option>
+                    <option value="CARD">Card</option>
+                  </select>
+                  <input v-model="refundFormFor(refund.id).reference_number" class="rounded-lg border border-slate-300 px-3 py-2" placeholder="Reference number (required except cash)" />
+                  <button type="submit" class="rounded-lg bg-emerald-600 px-3 py-2 font-semibold text-white">Record Issued Refund</button>
+                </form>
+              </div>
+            </div>
+            <p v-else class="text-sm text-slate-500">No refund obligations have been recorded yet.</p>
+
+            <div v-if="legacyRefundReconciliationAmount > 0" class="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <h5 class="font-semibold text-amber-950">Legacy payment reconciliation</h5>
+              <p class="mt-1 text-sm text-amber-900">Up to {{ formatCurrency(legacyRefundReconciliationAmount) }} in historical paid totals has no matching payment receipt. Enter only a verified refund amount and document the evidence.</p>
+              <form class="mt-3 space-y-3" @submit.prevent="reconcileLegacyRtoRefund">
+                <input v-model="legacyRefundForm.amount" type="number" min="0.01" :max="legacyRefundReconciliationAmount" step="0.01" class="w-full rounded-lg border border-amber-300 px-3 py-2" placeholder="Verified refund amount" required />
+                <textarea v-model="legacyRefundForm.reconciliation_reason" rows="3" minlength="10" class="w-full rounded-lg border border-amber-300 px-3 py-2" placeholder="Describe the original payment evidence and refund authorization" required></textarea>
+                <button type="submit" class="rounded-lg bg-amber-700 px-4 py-2 font-semibold text-white">Record Reconciled Refund Due</button>
+              </form>
+            </div>
           </div>
 
           <div v-if="activeAction === 'history'" class="card p-6">
