@@ -60,7 +60,11 @@ Route::middleware('web')->group(function () {
     Route::middleware(['auth', EnsureActiveUser::class])->prefix('admin')->group(function () {
         Route::get('/alerts', [DashboardController::class, 'alerts']);
         Route::get('/subscription/options', [SubscriptionRequestController::class, 'options']);
+        Route::get('/subscription/request', [SubscriptionRequestController::class, 'latestRequest'])
+            ->name('admin.subscription.request.latest');
         Route::post('/subscription/requests', [SubscriptionRequestController::class, 'store']);
+        Route::get('/subscription/requests/{subscriptionRequest}/proof', [SubscriptionRequestController::class, 'showProof'])
+            ->name('admin.subscription.requests.proof');
 
         Route::get('/dashboard', [DashboardController::class, 'index']);
         Route::get('/shop', [ShopController::class, 'show']);

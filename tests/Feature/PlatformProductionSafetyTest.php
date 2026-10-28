@@ -361,6 +361,7 @@ class PlatformProductionSafetyTest extends TestCase
 
     public function test_subscription_request_payment_proof_can_be_approved_to_activate_access(): void
     {
+        Storage::fake('local');
         Storage::fake('public');
 
         $shop = $this->createShop('Proof Payment Shop');
@@ -399,7 +400,12 @@ class PlatformProductionSafetyTest extends TestCase
 
         $subscriptionRequest = SubscriptionRequest::firstWhere('reference_number', 'GCASH-123');
         $this->assertNotNull($subscriptionRequest);
-        Storage::disk('public')->assertExists($subscriptionRequest->proof_path);
+        $this->assertSame(
+            route('admin.subscription.requests.proof', ['subscriptionRequest' => $subscriptionRequest->id]),
+            $subscriptionRequest->proofUrl()
+        );
+        Storage::disk('local')->assertExists($subscriptionRequest->proof_path);
+        Storage::disk('public')->assertMissing($subscriptionRequest->proof_path);
 
         $this->actingAs($platformAdmin)
             ->postJson("/api/platform/subscription-requests/{$subscriptionRequest->id}/approve", [

@@ -9,6 +9,9 @@ const forbidden = ref(false);
 const errorMessage = ref('');
 const successMessage = ref('');
 const shop = ref(null);
+const subscriptionRequest = ref(null);
+const subscriptionRequestLoading = ref(true);
+const subscriptionRequestError = ref('');
 const logoFile = ref(null);
 const uploadingLogo = ref(false);
 const serviceCatalog = ref([]);
@@ -74,6 +77,15 @@ const businessDays = [
 const trackingUrl = computed(() => shop.value?.public_tracking_url || '');
 const bookingUrl = computed(() => shop.value?.public_booking_url || '');
 const consultationUrl = computed(() => shop.value?.public_consultation_url || '');
+const subscriptionRequestStatusClass = computed(() => ({
+    pending: 'bg-amber-50 text-amber-700 ring-amber-200',
+    approved: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    rejected: 'bg-rose-50 text-rose-700 ring-rose-200',
+}[subscriptionRequest.value?.status] || 'bg-slate-100 text-slate-700 ring-slate-200'));
+const formatCurrency = (amount) => `PHP ${Number(amount || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+})}`;
 const publicLinks = computed(() => [
     {
         key: 'tracking',
@@ -107,6 +119,20 @@ const copyPublicLink = async (link) => {
         successMessage.value = `${link.label} link copied.`;
     } catch {
         errorMessage.value = 'Unable to copy link. Please copy it manually.';
+    }
+};
+
+const loadSubscriptionRequest = async () => {
+    subscriptionRequestLoading.value = true;
+    subscriptionRequestError.value = '';
+
+    try {
+        const { data } = await window.axios.get('/api/admin/subscription/request');
+        subscriptionRequest.value = data.latest_request;
+    } catch (error) {
+        subscriptionRequestError.value = error?.response?.data?.message || 'Unable to load subscription request status.';
+    } finally {
+        subscriptionRequestLoading.value = false;
     }
 };
 
@@ -187,6 +213,7 @@ const loadShop = async () => {
             warranty_terms: data.shop.warranty_terms || '',
             notification_settings: normalizeNotificationSettings(data.shop.notification_settings),
         });
+        loadSubscriptionRequest();
     } catch (error) {
         forbidden.value = true;
         errorMessage.value = error?.response?.data?.message || 'Unable to load shop settings.';
@@ -464,6 +491,70 @@ onMounted(loadShop);
       <div v-if="successMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{{ successMessage }}</div>
       <div v-if="errorMessage" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{{ errorMessage }}</div>
 
+      <section class="admin-panel p-5 sm:p-6" aria-labelledby="subscription-request-heading">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 id="subscription-request-heading" class="text-lg font-bold text-slate-950">Latest Subscription Request</h3>
+            <p class="mt-1 text-sm text-slate-500">Review the status and details of your shop's most recent subscription request.</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              class="text-sm font-semibold text-teal-700 hover:text-teal-800 disabled:opacity-50"
+              :disabled="subscriptionRequestLoading"
+              @click="loadSubscriptionRequest"
+            >Refresh status</button>
+            <span
+              v-if="subscriptionRequest"
+              class="inline-flex w-fit rounded-full px-3 py-1 text-xs font-bold uppercase ring-1"
+              :class="subscriptionRequestStatusClass"
+            >{{ subscriptionRequest.status }}</span>
+          </div>
+        </div>
+
+        <p v-if="subscriptionRequestLoading" class="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-500" role="status">
+          Loading subscription request...
+        </p>
+        <div v-else-if="subscriptionRequestError" class="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700" role="alert">
+          {{ subscriptionRequestError }}
+        </div>
+        <div v-else-if="subscriptionRequest" class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs font-bold uppercase text-slate-500">Plan</p>
+            <p class="mt-1 font-semibold text-slate-900">{{ subscriptionRequest.plan_name }}</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs font-bold uppercase text-slate-500">Amount</p>
+            <p class="mt-1 font-semibold text-slate-900">{{ formatCurrency(subscriptionRequest.amount) }}</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs font-bold uppercase text-slate-500">Payment Method</p>
+            <p class="mt-1 font-semibold text-slate-900">{{ subscriptionRequest.payment_method_name }}</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs font-bold uppercase text-slate-500">Submitted</p>
+            <p class="mt-1 font-semibold text-slate-900">{{ subscriptionRequest.created_at_formatted || 'Date unavailable' }}</p>
+          </div>
+          <div v-if="subscriptionRequest.reviewed_at_formatted" class="rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
+            <p class="text-xs font-bold uppercase text-slate-500">Reviewed</p>
+            <p class="mt-1 font-semibold text-slate-900">{{ subscriptionRequest.reviewed_at_formatted }}</p>
+          </div>
+          <div class="sm:col-span-2 lg:col-span-4">
+            <a
+              v-if="subscriptionRequest.proof_url"
+              :href="subscriptionRequest.proof_url"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex min-h-10 items-center rounded-lg border border-teal-200 bg-white px-4 py-2 text-sm font-bold text-teal-700 hover:bg-teal-50"
+            >View Payment Proof</a>
+            <p v-else class="text-sm text-slate-500">No payment proof available for this request.</p>
+          </div>
+        </div>
+        <p v-else class="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+          No subscription requests have been submitted yet.
+        </p>
+      </section>
+
       <div class="grid grid-cols-1 xl:grid-cols-3 gap-5">
         <div class="admin-panel p-4 xl:col-span-2">
           <div class="flex items-center justify-between mb-3">
@@ -667,13 +758,6 @@ onMounted(loadShop);
               </div>
             </section>
 
-            <div class="space-y-2">
-              <span class="text-sm font-bold text-slate-700">Subscription Plan</span>
-              <div class="h-11 flex items-center px-4 rounded-lg border border-slate-200 bg-slate-50 text-slate-700 uppercase">
-                {{ shop?.subscription_plan || 'starter' }}
-              </div>
-            </div>
-
             <div class="md:col-span-2 flex justify-end">
               <button type="submit" class="btn-primary px-5 py-3">Save Shop Settings</button>
             </div>
@@ -740,6 +824,10 @@ onMounted(loadShop);
               <div class="flex items-center justify-between">
                 <span class="text-slate-500">Workspace</span>
                 <span class="font-semibold" :class="shop?.is_active ? 'text-emerald-700' : 'text-rose-700'">{{ shop?.is_active ? 'Active' : 'Inactive' }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-500">Current Subscription Plan</span>
+                <span class="font-semibold uppercase text-slate-800">{{ shop?.subscription_plan || 'starter' }}</span>
               </div>
               <div class="flex items-center justify-between">
                 <span class="text-slate-500">Trial Ends</span>

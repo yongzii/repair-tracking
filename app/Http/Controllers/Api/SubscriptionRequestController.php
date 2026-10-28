@@ -5,13 +5,15 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PlatformSubscriptionSetting;
 use App\Models\SubscriptionRequest;
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class SubscriptionRequestController extends Controller
 {
     public function options(Request $request)
     {
-        $user = $request->user()?->loadMissing('shop');
+        $user = $this->authorizeRoles($request, User::ROLE_ADMIN)->loadMissing('shop');
 
         if (!$user || !$user->shop) {
             abort(403, 'This account is not linked to a shop yet.');
@@ -28,11 +30,44 @@ class SubscriptionRequestController extends Controller
         ]);
     }
 
+    public function latestRequest(Request $request)
+    {
+        $user = $this->authorizeRoles($request, User::ROLE_ADMIN)->loadMissing('shop');
+
+        if (!$user->shop) {
+            abort(403, 'This account is not linked to a shop yet.');
+        }
+
+        $subscriptionRequest = $user->shop->subscriptionRequests()
+            ->latest()
+            ->first();
+
+        return response()->json([
+            'latest_request' => $subscriptionRequest ? [
+                'id' => $subscriptionRequest->id,
+                'plan_name' => $subscriptionRequest->plan_name,
+                'amount' => (float) $subscriptionRequest->amount,
+                'payment_method_name' => $subscriptionRequest->payment_method_name,
+                'reference_number' => $subscriptionRequest->reference_number,
+                'proof_url' => $subscriptionRequest->proofUrl(),
+                'status' => $subscriptionRequest->status,
+                'created_at_formatted' => $subscriptionRequest->created_at?->format('M d, Y h:i A'),
+                'reviewed_at_formatted' => $subscriptionRequest->reviewed_at?->format('M d, Y h:i A'),
+            ] : null,
+        ]);
+    }
+
     public function store(Request $request)
     {
-        $user = $request->user()?->loadMissing('shop');
+        $user = $request->user();
 
-        if (!$user || !$user->shop) {
+        if (!$user || !$user->hasAnyRole([User::ROLE_ADMIN])) {
+            abort(403, 'You do not have access to this module.');
+        }
+
+        $user->loadMissing('shop');
+
+        if (!$user->shop) {
             abort(403, 'This account is not linked to a shop yet.');
         }
 
@@ -54,7 +89,7 @@ class SubscriptionRequestController extends Controller
             ], 422);
         }
 
-        $proofPath = $request->file('proof')->store("shops/{$user->shop->id}/subscription-proofs", 'public');
+        $proofPath = $request->file('proof')->store("shops/{$user->shop->id}/subscription-proofs", 'local');
 
         $subscriptionRequest = SubscriptionRequest::create([
             'shop_id' => $user->shop->id,
@@ -74,6 +109,48 @@ class SubscriptionRequestController extends Controller
             'message' => 'Subscription request submitted. Please wait for platform admin verification.',
             'subscription_request' => $this->mapRequest($subscriptionRequest->fresh()),
         ], 201);
+    }
+
+    public function showProof(Request $request, SubscriptionRequest $subscriptionRequest)
+    {
+        $user = $this->authorizeRoles($request, [User::ROLE_PLATFORM_ADMIN, User::ROLE_ADMIN]);
+
+        if (
+            !$user->hasRole(User::ROLE_PLATFORM_ADMIN)
+            && (int) $user->shop_id !== (int) $subscriptionRequest->shop_id
+        ) {
+            abort(404, 'Payment proof not found.');
+        }
+
+        $path = str_replace('\\', '/', (string) $subscriptionRequest->proof_path);
+        $expectedPrefix = "shops/{$subscriptionRequest->shop_id}/subscription-proofs/";
+
+        if (
+            !str_starts_with($path, $expectedPrefix)
+            || in_array('..', explode('/', $path), true)
+        ) {
+            abort(404, 'Payment proof not found.');
+        }
+
+        $disk = Storage::disk('local');
+
+        if (!$disk->exists($path)) {
+            abort(404, 'Payment proof not found.');
+        }
+
+        $mimeType = $disk->mimeType($path);
+        if (!in_array($mimeType, ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'], true)) {
+            abort(404, 'Payment proof not found.');
+        }
+
+        $response = response()->file($disk->path($path), [
+            'Content-Type' => $mimeType,
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+        $response->headers->set('Cache-Control', 'private, no-store, max-age=0');
+        $response->headers->set('Pragma', 'no-cache');
+
+        return $response;
     }
 
     private function mapRequest(?SubscriptionRequest $request): ?array

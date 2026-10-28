@@ -50,6 +50,8 @@ class SubscriptionRequest extends Model
 
     public function proofUrl(): ?string
     {
-        return $this->proof_path ? '/storage/' . ltrim(str_replace('\\', '/', $this->proof_path), '/') : null;
+        return $this->proof_path
+            ? route('admin.subscription.requests.proof', ['subscriptionRequest' => $this->getKey()])
+            : null;
     }
 }

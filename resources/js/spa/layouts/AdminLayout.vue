@@ -141,6 +141,8 @@ const loadSubscriptionOptions = async () => {
 };
 
 const openSubscribeModal = async () => {
+    if (!isAdmin.value) return;
+
     showSubscribeModal.value = true;
     subscriptionSuccess.value = '';
     if (!subscriptionSettings.value) {
@@ -153,6 +155,8 @@ const onProofChange = (event) => {
 };
 
 const submitSubscriptionRequest = async () => {
+    if (!isAdmin.value) return;
+
     subscriptionSubmitting.value = true;
     subscriptionError.value = '';
     subscriptionSuccess.value = '';
@@ -335,7 +339,7 @@ const submitSubscriptionRequest = async () => {
             <p class="font-bold">Shop access expired{{ accessUntil ? ` on ${accessUntil}` : '' }}.</p>
             <p class="mt-1">Close-out mode is active: existing job orders can still be completed and released, but new intake is locked until the subscription is renewed.</p>
           </div>
-          <div v-if="isPreviewMode" class="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+          <div v-if="isPreviewMode && isAdmin" class="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 sm:flex-row sm:items-center sm:justify-between">
             <span>Preview mode: subscription required before saving records or processing transactions.</span>
             <button type="button" class="shrink-0 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white hover:bg-slate-800" @click="openSubscribeModal">
               Subscribe Now
@@ -355,7 +359,7 @@ const submitSubscriptionRequest = async () => {
       </div>
     </div>
 
-    <div v-if="showSubscribeModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm" @click.self="showSubscribeModal = false">
+    <div v-if="showSubscribeModal && isAdmin" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm" @click.self="showSubscribeModal = false">
       <div class="w-full max-w-lg rounded-xl bg-white shadow-2xl shadow-slate-950/20">
         <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
           <div>
