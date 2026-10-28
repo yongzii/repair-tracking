@@ -110,7 +110,6 @@ onBeforeUnmount(() => {
     window.removeEventListener('focus', loadAlerts);
 });
 
-watch(() => location.path, loadAlerts);
 watch(() => user.value?.role, (role) => {
     if ([...adminRoles, 'staff'].includes(role)) {
         loadAlerts();
