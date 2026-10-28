@@ -6,6 +6,8 @@ const state = reactive({
     loading: false,
 });
 
+let authHydrationPromise = null;
+
 export const authState = state;
 
 export const platformRoles = ['platform_admin'];
@@ -54,21 +56,26 @@ export const refreshCsrfToken = async () => {
     }
 };
 
-export const hydrateAuth = async () => {
-    if (state.loading) {
-        return;
+export const hydrateAuth = () => {
+    if (authHydrationPromise) {
+        return authHydrationPromise;
     }
 
     state.loading = true;
-    try {
-        const { data } = await window.axios.get('/api/auth/user');
-        state.user = data.user ?? null;
-    } catch {
-        state.user = null;
-    } finally {
-        state.initialized = true;
-        state.loading = false;
-    }
+    authHydrationPromise = (async () => {
+        try {
+            const { data } = await window.axios.get('/api/auth/user');
+            state.user = data.user ?? null;
+        } catch {
+            state.user = null;
+        } finally {
+            state.initialized = true;
+            state.loading = false;
+            authHydrationPromise = null;
+        }
+    })();
+
+    return authHydrationPromise;
 };
 
 export const login = async (payload) => {

@@ -20,6 +20,16 @@ use Symfony\Component\HttpFoundation\Response;
 
 class TechnicianPortalController extends Controller
 {
+    public function alerts(Request $request)
+    {
+        $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
+        $technician = $this->resolveTechnician($user);
+
+        return response()->json([
+            'open_assigned_jobs' => $technician->currentJobsCount(),
+        ]);
+    }
+
     public function dashboard(Request $request)
     {
         $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
@@ -123,15 +133,9 @@ class TechnicianPortalController extends Controller
                 return [$lockedJobOrder, null];
             }
 
-            if (in_array($lockedJobOrder->current_status, ['PICKED_UP', 'RTO_RELEASED', 'RTO', 'UNREPAIRABLE'], true)) {
+            if (in_array($lockedJobOrder->current_status, ['PICKED_UP', 'RTO_RELEASED', 'RTO'], true)) {
                 throw ValidationException::withMessages([
                     'status' => 'This job order cannot return to a repair workflow from its current status.',
-                ]);
-            }
-
-            if (in_array($validated['status'], ['IN_PROGRESS', 'READY_FOR_PICKUP'], true) && !$lockedJobOrder->repair_approved_at) {
-                throw ValidationException::withMessages([
-                    'status' => 'Customer repair approval must be recorded before repair work or pickup preparation can proceed.',
                 ]);
             }
 
@@ -539,13 +543,12 @@ class TechnicianPortalController extends Controller
             'IN_PROGRESS',
             'READY_FOR_PICKUP',
             'RTO',
-            'UNREPAIRABLE',
         ];
     }
 
     private function canRecordParts(JobOrder $jobOrder): bool
     {
-        return !in_array($jobOrder->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true);
+        return !in_array($jobOrder->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'], true);
     }
 
     private function ensureCanRecordParts(JobOrder $jobOrder): void
@@ -595,7 +598,7 @@ class TechnicianPortalController extends Controller
             'created_at' => $job->created_at,
             'created_at_formatted' => $job->created_at?->format('M d, Y'),
             'is_overdue' => $job->estimated_completion
-                && !in_array($job->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)
+                && !in_array($job->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'], true)
                 && $job->estimated_completion->isPast(),
             'can_record_parts' => $this->canRecordParts($job),
             'parts' => $includeDetails

@@ -1,6 +1,6 @@
 <script setup>
-import { computed, ref } from 'vue';
-import { adminRoles, authState, logout } from '../composables/auth';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { adminRoles, authState, ensureRoles, logout } from '../composables/auth';
 import { useNavigation, navigate } from '../navigation';
 import AppLink from '../components/AppLink.vue';
 import ChangePasswordButton from '../components/ChangePasswordButton.vue';
@@ -15,6 +15,11 @@ const props = defineProps({
 
 const { location } = useNavigation();
 const mobileNavOpen = ref(false);
+const pendingCustomerRequests = ref(null);
+const overdueJobs = ref(null);
+const alertsError = ref('');
+const alertsLoading = ref(false);
+let alertsRefreshInterval;
 
 const normalizePath = (path) => {
     if (!path) return '/';
@@ -59,6 +64,31 @@ const subscriptionMethods = computed(() => subscriptionSettings.value?.payment_m
 const selectedPlan = computed(() => subscriptionPlans.value.find((plan) => plan.key === subscriptionForm.value.plan_key));
 const selectedMethod = computed(() => subscriptionMethods.value.find((method) => method.key === subscriptionForm.value.payment_method_key));
 
+const loadAlerts = async () => {
+    if (alertsLoading.value) return;
+
+    alertsLoading.value = true;
+    alertsError.value = '';
+    try {
+        const auth = await ensureRoles(['admin', 'staff']);
+        if (!auth.ok) {
+            pendingCustomerRequests.value = null;
+            overdueJobs.value = null;
+            return;
+        }
+
+        const { data } = await window.axios.get('/api/admin/alerts');
+        pendingCustomerRequests.value = Number(data.pending_customer_requests || 0);
+        overdueJobs.value = Number(data.overdue_jobs || 0);
+    } catch (error) {
+        pendingCustomerRequests.value = null;
+        overdueJobs.value = null;
+        alertsError.value = error?.response?.data?.message || 'Unable to load shop alerts.';
+    } finally {
+        alertsLoading.value = false;
+    }
+};
+
 const formatCurrency = (value) => {
     const amount = Number(value || 0);
     return `PHP ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -68,6 +98,27 @@ const onLogout = async () => {
     await logout();
     navigate('/login', { replace: true });
 };
+
+onMounted(() => {
+    loadAlerts();
+    alertsRefreshInterval = window.setInterval(loadAlerts, 60_000);
+    window.addEventListener('focus', loadAlerts);
+});
+
+onBeforeUnmount(() => {
+    window.clearInterval(alertsRefreshInterval);
+    window.removeEventListener('focus', loadAlerts);
+});
+
+watch(() => location.path, loadAlerts);
+watch(() => user.value?.role, (role) => {
+    if ([...adminRoles, 'staff'].includes(role)) {
+        loadAlerts();
+    } else {
+        pendingCustomerRequests.value = null;
+        overdueJobs.value = null;
+    }
+});
 
 const loadSubscriptionOptions = async () => {
     subscriptionLoading.value = true;
@@ -171,16 +222,40 @@ const submitSubscriptionRequest = async () => {
         <AppLink to="/admin/job-orders" class="nav-link" :class="isSectionActive('/admin/job-orders') ? 'nav-link-active' : ''">
           <i class="fas fa-briefcase w-5"></i>
           <span>Job Orders</span>
+          <span
+            v-if="overdueJobs"
+            class="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-amber-400 px-2 py-0.5 text-xs font-bold text-amber-950"
+            :aria-label="`${overdueJobs} overdue jobs`"
+            title="Overdue jobs"
+          >{{ overdueJobs > 99 ? '99+' : overdueJobs }}</span>
+          <span
+            v-else-if="alertsError"
+            class="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-xs font-bold text-slate-950"
+            :title="alertsError"
+            aria-label="Could not load alerts"
+          >!</span>
         </AppLink>
 
         <AppLink to="/admin/part-requests" class="nav-link" :class="isSectionActive('/admin/part-requests') ? 'nav-link-active' : ''">
           <i class="fas fa-screwdriver-wrench w-5"></i>
-          <span>Parts &amp; Orders</span>
+          <span>For Order</span>
         </AppLink>
 
         <AppLink to="/admin/appointments" class="nav-link" :class="isSectionActive('/admin/appointments') ? 'nav-link-active' : ''">
           <i class="fas fa-calendar-check w-5"></i>
           <span>Customer Requests</span>
+          <span
+            v-if="pendingCustomerRequests"
+            class="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-rose-500 px-2 py-0.5 text-xs font-bold text-white"
+            :aria-label="`${pendingCustomerRequests} pending customer requests`"
+            title="Pending customer requests"
+          >{{ pendingCustomerRequests > 99 ? '99+' : pendingCustomerRequests }}</span>
+          <span
+            v-else-if="alertsError && !overdueJobs"
+            class="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-xs font-bold text-slate-950"
+            :title="alertsError"
+            aria-label="Could not load alerts"
+          >!</span>
         </AppLink>
 
         <AppLink v-if="isAdmin" to="/admin/reports" class="nav-link" :class="isSectionActive('/admin/reports') ? 'nav-link-active' : ''">

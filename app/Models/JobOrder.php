@@ -160,7 +160,7 @@ class JobOrder extends Model
     // Calculate balance amount
     public function getBalanceAttribute()
     {
-        if (in_array($this->current_status, ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'], true)) {
+        if (in_array($this->current_status, ['RTO', 'RTO_RELEASED'], true)) {
             return 0;
         }
 
@@ -185,7 +185,7 @@ class JobOrder extends Model
 
     public function repairHasStarted(): bool
     {
-        if (in_array($this->current_status, ['IN_PROGRESS', 'READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)) {
+        if (in_array($this->current_status, ['IN_PROGRESS', 'READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'], true)) {
             return true;
         }
 

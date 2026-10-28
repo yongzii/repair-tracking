@@ -346,7 +346,7 @@ class BusinessWorkflowSafetyTest extends TestCase
             'is_active' => true,
         ]);
 
-        foreach (['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'] as $status) {
+        foreach (['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'] as $status) {
             $jobOrder = $this->createJobOrder($shop, $status);
             $jobOrder->update(['technician_id' => $technician->id]);
 
@@ -380,7 +380,7 @@ class BusinessWorkflowSafetyTest extends TestCase
         }
 
         $this->assertSame(5, $sparePart->fresh()->stock_quantity);
-        $this->assertSame(5, JobOrderPart::count());
+        $this->assertSame(4, JobOrderPart::count());
     }
 
     public function test_technician_part_mutation_still_requires_same_shop_assignment(): void

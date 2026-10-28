@@ -25,6 +25,24 @@ class PlatformController extends Controller
 
         $shops = Shop::query();
         $jobOrders = JobOrder::query();
+        $monthStart = now()->startOfMonth();
+        $monthEnd = now()->endOfMonth();
+        $monthPayments = PlatformSubscriptionPayment::query()
+            ->whereBetween('received_at', [$monthStart, $monthEnd]);
+        $monthPaymentCount = (clone $monthPayments)->count();
+        $monthCollected = (float) (clone $monthPayments)->sum('amount');
+        $approvedRequests = SubscriptionRequest::query()
+            ->where('status', SubscriptionRequest::STATUS_APPROVED)
+            ->whereBetween('reviewed_at', [$monthStart, $monthEnd]);
+        $approvedRequestCount = (clone $approvedRequests)->count();
+        $approvedRequestAmount = (float) (clone $approvedRequests)->sum('amount');
+        $monthPaymentLedger = (clone $monthPayments)
+            ->with('shop:id,name,slug')
+            ->orderByDesc('received_at')
+            ->orderByDesc('id')
+            ->paginate(10)
+            ->withQueryString();
+        $monthPaymentLedger->getCollection()->transform(fn (PlatformSubscriptionPayment $payment) => $this->mapSubscriptionPayment($payment));
 
         return response()->json([
             'summary' => [
@@ -35,12 +53,12 @@ class PlatformController extends Controller
                 'trial_expiring_soon' => (clone $shops)->where('is_active', true)->whereBetween('trial_ends_at', [now(), now()->addDays(7)])->count(),
                 'expired_trials' => (clone $shops)->where('is_active', true)->whereNotNull('trial_ends_at')->where('trial_ends_at', '<', now())->count(),
                 'no_access_date_shops' => (clone $shops)->where('is_active', true)->whereNull('trial_ends_at')->count(),
-                'platform_collected_this_month' => PlatformSubscriptionPayment::query()
-                    ->whereBetween('received_at', [now()->startOfMonth(), now()->endOfMonth()])
-                    ->sum('amount'),
-                'platform_payments_this_month' => PlatformSubscriptionPayment::query()
-                    ->whereBetween('received_at', [now()->startOfMonth(), now()->endOfMonth()])
-                    ->count(),
+                'platform_collected_this_month' => $monthCollected,
+                'platform_payments_this_month' => $monthPaymentCount,
+                'platform_approved_requests_this_month' => $approvedRequestCount,
+                'platform_approved_request_amount_this_month' => $approvedRequestAmount,
+                'platform_additional_payment_records_this_month' => max(0, $monthPaymentCount - $approvedRequestCount),
+                'platform_payment_difference_from_requests_this_month' => $monthCollected - $approvedRequestAmount,
                 'portal_users' => User::whereIn('role', User::portalRoles())->count(),
                 'technicians' => Technician::count(),
                 'job_orders' => (clone $jobOrders)->count(),
@@ -54,6 +72,7 @@ class PlatformController extends Controller
                 ->take(8)
                 ->get()
                 ->map(fn (Shop $shop) => $this->mapShop($shop)),
+            'platform_month_payments' => $monthPaymentLedger,
             'recent_reminders' => CustomerNotification::query()
                 ->whereNull('job_order_id')
                 ->where('trigger', 'like', 'platform_subscription:%')
@@ -625,6 +644,8 @@ class PlatformController extends Controller
     {
         return [
             'id' => $payment->id,
+            'shop_name' => $payment->relationLoaded('shop') ? $payment->shop?->name : null,
+            'shop_slug' => $payment->relationLoaded('shop') ? $payment->shop?->slug : null,
             'amount' => (float) $payment->amount,
             'payment_method' => $payment->payment_method ?: 'UNSPECIFIED',
             'reference_number' => $payment->reference_number,

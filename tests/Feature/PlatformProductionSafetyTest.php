@@ -213,6 +213,56 @@ class PlatformProductionSafetyTest extends TestCase
         $this->assertNull($shopWithNoAccessDate->trial_ends_at);
     }
 
+    public function test_platform_dashboard_compares_approved_requests_with_payment_records(): void
+    {
+        $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
+        $requestShop = $this->createShop('Approved Request Shop');
+        $additionalPaymentShop = $this->createShop('Additional Payment Shop');
+        $reviewedAt = now()->subMinutes(5);
+
+        SubscriptionRequest::create([
+            'shop_id' => $requestShop->id,
+            'plan_key' => 'starter',
+            'plan_name' => 'Monthly',
+            'amount' => 1500,
+            'duration_months' => 1,
+            'payment_method_key' => 'gcash',
+            'payment_method_name' => 'GCash',
+            'reference_number' => 'REQ-123',
+            'status' => SubscriptionRequest::STATUS_APPROVED,
+            'reviewed_at' => $reviewedAt,
+        ]);
+
+        PlatformSubscriptionPayment::create([
+            'shop_id' => $requestShop->id,
+            'amount' => 1500,
+            'payment_method' => 'GCASH',
+            'reference_number' => 'REQ-123',
+            'notes' => 'Approved subscription request.',
+            'received_at' => $reviewedAt,
+        ]);
+
+        PlatformSubscriptionPayment::create([
+            'shop_id' => $additionalPaymentShop->id,
+            'amount' => 4500,
+            'payment_method' => 'CASH',
+            'received_at' => now(),
+        ]);
+
+        $this->actingAs($platformAdmin)
+            ->getJson('/api/platform/dashboard')
+            ->assertOk()
+            ->assertJsonPath('summary.platform_collected_this_month', 6000)
+            ->assertJsonPath('summary.platform_payments_this_month', 2)
+            ->assertJsonPath('summary.platform_approved_requests_this_month', 1)
+            ->assertJsonPath('summary.platform_approved_request_amount_this_month', 1500)
+            ->assertJsonPath('summary.platform_additional_payment_records_this_month', 1)
+            ->assertJsonPath('summary.platform_payment_difference_from_requests_this_month', 4500)
+            ->assertJsonPath('platform_month_payments.total', 2)
+            ->assertJsonPath('platform_month_payments.data.0.shop_name', $additionalPaymentShop->name)
+            ->assertJsonPath('platform_month_payments.data.0.amount', 4500);
+    }
+
     public function test_platform_shop_list_exposes_and_filters_access_status(): void
     {
         $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);

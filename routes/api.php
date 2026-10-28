@@ -44,17 +44,21 @@ Route::middleware('web')->group(function () {
 
     Route::get('/track', [TrackingController::class, 'search'])->middleware('throttle:30,1');
     Route::get('/track/{jobOrderNumber}', [TrackingController::class, 'show'])->middleware('throttle:30,1');
+    Route::get('/public/shops', [ShopController::class, 'publicIndex'])->middleware('throttle:30,1');
     Route::get('/shops/{shop:slug}/profile', [ShopController::class, 'publicProfile']);
     Route::get('/shops/{shop:slug}/track', [TrackingController::class, 'searchForShop'])->middleware('throttle:30,1');
     Route::get('/shops/{shop:slug}/track/{jobOrderNumber}', [TrackingController::class, 'showForShop'])->middleware('throttle:30,1');
     Route::get('/shops/{shop:slug}/track/{jobOrderNumber}/photos/{photo}', [RepairPhotoController::class, 'showForCustomer'])->name('tracking.photos.file')->middleware('throttle:30,1');
     Route::post('/shops/{shop:slug}/appointments', [AppointmentController::class, 'storeForShop']);
-    Route::get('/shops/{shop:slug}/appointments/{confirmationCode}', [AppointmentController::class, 'showForShop'])->middleware('throttle:30,1');
+    Route::get('/shops/{shop:slug}/appointments/{confirmationCode}', [AppointmentController::class, 'showForShop'])
+        ->name('public.appointment.lookup')
+        ->middleware('throttle:30,1');
     Route::get('/shops/{shop:slug}/appointments/{confirmationCode}/photo', [AppointmentController::class, 'showPublicPhoto'])
         ->name('public.appointment.photo')
         ->middleware('throttle:30,1');
 
     Route::middleware(['auth', EnsureActiveUser::class])->prefix('admin')->group(function () {
+        Route::get('/alerts', [DashboardController::class, 'alerts']);
         Route::get('/subscription/options', [SubscriptionRequestController::class, 'options']);
         Route::post('/subscription/requests', [SubscriptionRequestController::class, 'store']);
 
@@ -72,6 +76,7 @@ Route::middleware('web')->group(function () {
         Route::get('/audit-logs', [AuditLogController::class, 'index']);
         Route::get('/part-requests', [PartRequestController::class, 'index']);
         Route::post('/part-requests', [PartRequestController::class, 'storeForShop']);
+        Route::put('/part-requests/{partRequest}', [PartRequestController::class, 'update']);
         Route::patch('/part-requests/{partRequest}/status', [PartRequestController::class, 'updateStatus']);
         Route::patch('/part-requests/{partRequest}/receive', [PartRequestController::class, 'receive']);
         Route::get('/job-order-part-orders', [JobOrderPartOrderController::class, 'index']);
@@ -168,6 +173,7 @@ Route::middleware('web')->group(function () {
     });
 
     Route::middleware(['auth', EnsureActiveUser::class])->prefix('technician')->group(function () {
+        Route::get('/alerts', [TechnicianPortalController::class, 'alerts']);
         Route::get('/dashboard', [TechnicianPortalController::class, 'dashboard']);
         Route::post('/part-requests', [PartRequestController::class, 'store']);
         Route::post('/job-orders/{jobOrder}/blocked-part-requests', [BlockedJobPartController::class, 'store']);

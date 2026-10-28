@@ -22,10 +22,13 @@ class JobOrderPartOrderController extends Controller
 {
     public function index(Request $request)
     {
-        $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF, User::ROLE_TECHNICIAN]);
         $shopId = $this->currentShopId($request);
+        $technician = $user->hasRole(User::ROLE_TECHNICIAN)
+            ? $this->resolveTechnician($user)
+            : null;
 
-        $orders = JobOrderPartOrder::query()
+        $query = JobOrderPartOrder::query()
             ->with([
                 'jobOrder.payments' => fn ($query) => $query->where('shop_id', $shopId)->with('refund'),
                 'jobOrder.technician:id,name',
@@ -37,10 +40,20 @@ class JobOrderPartOrderController extends Controller
                 'inventoryPart:id,name,unit',
                 'issuedJobOrderPart:id,job_order_part_order_id',
             ])
-            ->where('shop_id', $shopId)
+            ->where('shop_id', $shopId);
+
+        if ($technician) {
+            $query->whereHas('jobOrder', fn ($jobOrderQuery) => $jobOrderQuery
+                ->where('shop_id', $shopId)
+                ->where('technician_id', $technician->id));
+        }
+
+        $orders = $query
             ->latest()
             ->get()
-            ->map(fn (JobOrderPartOrder $order) => $this->mapOrder($order));
+            ->map(fn (JobOrderPartOrder $order) => $technician
+                ? $this->mapTechnicianOrder($order)
+                : $this->mapOrder($order));
 
         return response()->json(['orders' => $orders]);
     }
@@ -136,7 +149,7 @@ class JobOrderPartOrderController extends Controller
                 }
             }
 
-            if (in_array($lockedJob->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)) {
+            if (in_array($lockedJob->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'], true)) {
                 throw ValidationException::withMessages([
                     'job_order' => 'A parts order cannot be created for a completed or released repair.',
                 ]);
@@ -686,7 +699,7 @@ class JobOrderPartOrderController extends Controller
                     'device_location' => 'Update the device location to At Shop before issuing the ordered part to the repair.',
                 ]);
             }
-            if (in_array($lockedJob->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)) {
+            if (in_array($lockedJob->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'], true)) {
                 throw ValidationException::withMessages([
                     'job_order' => 'Parts can no longer be issued to this repair in its current status.',
                 ]);
@@ -838,6 +851,29 @@ class JobOrderPartOrderController extends Controller
             'cancelled_at' => $order->cancelled_at,
             'cancellation_reason' => $order->cancellation_reason,
         ];
+    }
+
+    private function mapTechnicianOrder(JobOrderPartOrder $order): array
+    {
+        $mapped = $this->mapOrder($order);
+
+        unset(
+            $mapped['customer_contact'],
+            $mapped['customer_phone'],
+            $mapped['estimated_unit_price'],
+            $mapped['estimated_total'],
+            $mapped['customer_decision_note'],
+            $mapped['required_downpayment_amount'],
+            $mapped['eligible_paid_amount'],
+            $mapped['remaining_downpayment_amount'],
+            $mapped['can_order'],
+            $mapped['supplier_name'],
+            $mapped['purchase_reference'],
+            $mapped['expected_arrival_date'],
+            $mapped['inventory_spare_part']
+        );
+
+        return $mapped;
     }
 
     private function eligiblePayments(JobOrder $jobOrder): float

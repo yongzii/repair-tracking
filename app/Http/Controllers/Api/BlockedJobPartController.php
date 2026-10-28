@@ -19,7 +19,7 @@ class BlockedJobPartController extends Controller
 {
     public function index(Request $request)
     {
-        $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF, User::ROLE_TECHNICIAN]);
         $shopId = $this->currentShopId($request);
 
         $requests = JobOrder::query()
@@ -87,7 +87,7 @@ class BlockedJobPartController extends Controller
                 ->findOrFail($jobOrder->id);
             $this->ensureAssignedToTechnician($lockedJobOrder, $technician);
 
-            if (in_array($lockedJobOrder->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)) {
+            if (in_array($lockedJobOrder->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'], true)) {
                 throw ValidationException::withMessages([
                     'job_order' => 'This repair can no longer be blocked for parts in its current status.',
                 ]);

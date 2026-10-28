@@ -172,9 +172,9 @@ onMounted(() => loadUsers());
 
     <div v-else class="space-y-6">
       <section class="admin-hero p-6">
-        <p class="text-xs font-bold uppercase text-teal-300">Access control</p>
+        <p class="text-xs font-bold uppercase text-teal-700">Access control</p>
         <h3 class="mt-2 font-display text-3xl">User Management</h3>
-        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Create accounts, manage access, reset passwords, and remove user accounts.</p>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Create accounts, manage access, reset passwords, and remove user accounts.</p>
       </section>
 
       <div v-if="successMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{{ successMessage }}</div>

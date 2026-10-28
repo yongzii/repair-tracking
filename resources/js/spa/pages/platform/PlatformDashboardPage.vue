@@ -22,6 +22,7 @@ const successMessage = ref('');
 const temporaryPassword = ref(null);
 const pendingSubscriptionCount = ref(null);
 const failedJobsCount = ref(null);
+const billingPageLoading = ref(false);
 
 const filters = reactive({
     search: '',
@@ -241,15 +242,18 @@ const setShopBilling = (shop, open) => {
     billingShopIds.value = next;
 };
 
-const loadDashboard = async () => {
+const loadDashboard = async (page = 1) => {
     if (!(await ensureAccess())) return;
 
+    billingPageLoading.value = page > 1;
     try {
-        const { data } = await window.axios.get('/api/platform/dashboard');
+        const { data } = await window.axios.get('/api/platform/dashboard', { params: { page } });
         dashboard.value = data;
         prepareForms(data.recent_shops || []);
     } catch (error) {
         errorMessage.value = error?.response?.data?.message || 'Unable to load platform dashboard.';
+    } finally {
+        billingPageLoading.value = false;
     }
 };
 
@@ -576,6 +580,18 @@ onMounted(refresh);
           </div>
           <p class="mt-3 break-words text-3xl font-bold leading-tight text-slate-950 sm:text-4xl">{{ formatCurrency(dashboard.summary.platform_collected_this_month) }}</p>
           <p class="mt-1 text-sm text-slate-500">From {{ dashboard.summary.platform_payments_this_month }} platform payment{{ dashboard.summary.platform_payments_this_month === 1 ? '' : 's' }} this month</p>
+          <div class="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-4">
+            <div class="rounded-xl bg-slate-50 p-3">
+              <p class="text-[11px] font-bold uppercase tracking-wide text-slate-500">Approved requests</p>
+              <p class="mt-1 font-bold text-slate-900">{{ formatCurrency(dashboard.summary.platform_approved_request_amount_this_month) }}</p>
+              <p class="mt-0.5 text-xs text-slate-500">{{ dashboard.summary.platform_approved_requests_this_month }} request{{ dashboard.summary.platform_approved_requests_this_month === 1 ? '' : 's' }}</p>
+            </div>
+            <div class="rounded-xl bg-amber-50 p-3">
+              <p class="text-[11px] font-bold uppercase tracking-wide text-amber-800">Difference vs requests</p>
+              <p class="mt-1 font-bold text-amber-900">{{ formatCurrency(dashboard.summary.platform_payment_difference_from_requests_this_month) }}</p>
+              <p class="mt-0.5 text-xs text-amber-800">{{ dashboard.summary.platform_additional_payment_records_this_month }} more payment record{{ dashboard.summary.platform_additional_payment_records_this_month === 1 ? '' : 's' }} than approvals</p>
+            </div>
+          </div>
           <div class="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
             <div>
               <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Repair Receivables</p>
@@ -587,6 +603,63 @@ onMounted(refresh);
             </span>
           </div>
         </div>
+      </section>
+
+      <section v-if="!showShops && dashboard" class="platform-card">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+          <div>
+            <h3 class="text-lg font-bold text-slate-950">Payments Received This Month</h3>
+            <p class="mt-1 text-sm text-slate-500">
+              {{ dashboard.summary.platform_payments_this_month }} records · {{ formatCurrency(dashboard.summary.platform_collected_this_month) }} total.
+              Review shop, reference, and notes for duplicate entries.
+            </p>
+          </div>
+          <AppLink to="/platform/subscription-requests" class="btn-soft px-4 py-2">Review Requests</AppLink>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="data-table min-w-[900px]">
+            <thead>
+              <tr>
+                <th class="px-4 py-3 text-left text-slate-600">Received</th>
+                <th class="px-4 py-3 text-left text-slate-600">Shop</th>
+                <th class="px-4 py-3 text-left text-slate-600">Amount</th>
+                <th class="px-4 py-3 text-left text-slate-600">Method / Reference</th>
+                <th class="px-4 py-3 text-left text-slate-600">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="payment in dashboard.platform_month_payments.data" :key="payment.id">
+                <td class="whitespace-nowrap px-4 py-3 text-slate-600">{{ payment.received_at_formatted || 'Date not recorded' }}</td>
+                <td class="px-4 py-3">
+                  <p class="font-semibold text-slate-900">{{ payment.shop_name || 'Unknown shop' }}</p>
+                  <p v-if="payment.shop_slug" class="text-xs text-slate-500">{{ payment.shop_slug }}</p>
+                </td>
+                <td class="whitespace-nowrap px-4 py-3 font-bold text-slate-900">{{ formatCurrency(payment.amount) }}</td>
+                <td class="px-4 py-3 text-slate-700">
+                  <p>{{ payment.payment_method?.replaceAll('_', ' ') || 'Unspecified' }}</p>
+                  <p class="text-xs text-slate-500">{{ payment.reference_number || 'No reference' }}</p>
+                </td>
+                <td class="max-w-xs px-4 py-3 text-sm text-slate-600">{{ payment.notes || '—' }}</td>
+              </tr>
+              <tr v-if="!dashboard.platform_month_payments.data.length">
+                <td colspan="5" class="px-4 py-8 text-center text-slate-500">No platform payments received this month.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div v-if="dashboard.platform_month_payments.last_page > 1" class="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4">
+          <span class="text-sm text-slate-500">
+            Page {{ dashboard.platform_month_payments.current_page }} of {{ dashboard.platform_month_payments.last_page }}
+            · {{ dashboard.platform_month_payments.total }} payment records
+          </span>
+          <div class="flex gap-2">
+            <button type="button" class="btn-soft px-3 py-2 text-sm" :disabled="dashboard.platform_month_payments.current_page <= 1 || billingPageLoading" @click="loadDashboard(dashboard.platform_month_payments.current_page - 1)">Previous</button>
+            <button type="button" class="btn-soft px-3 py-2 text-sm" :disabled="dashboard.platform_month_payments.current_page >= dashboard.platform_month_payments.last_page || billingPageLoading" @click="loadDashboard(dashboard.platform_month_payments.current_page + 1)">Next</button>
+          </div>
+        </div>
+        <p class="border-t border-slate-100 px-5 py-3 text-xs leading-5 text-slate-500">
+          Approving a subscription request automatically records a payment. Any difference can include separately recorded payments or possible duplicates; verify the references before changing records.
+        </p>
       </section>
 
       <section v-if="!showShops && dashboard" class="platform-dashboard-footprint platform-card">

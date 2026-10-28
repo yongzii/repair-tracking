@@ -30,6 +30,7 @@ class AppointmentController extends Controller
             abort(402, 'This shop is not accepting new appointment requests until its subscription is renewed.');
         }
 
+        $isConsultation = $request->input('booking_type') === 'CONSULTATION';
         $validated = $request->validate([
             'customer_name' => ['required', 'string', 'max:120'],
             'customer_email' => ['nullable', 'email', 'max:150', 'required_without:customer_phone'],
@@ -40,10 +41,31 @@ class AppointmentController extends Controller
             'service_item_id' => ['nullable', 'integer'],
             'brand' => ['nullable', 'string', 'max:80'],
             'model' => ['nullable', 'string', 'max:80'],
-            'concern' => ['required', 'string', 'max:3000'],
+            'concern' => array_merge(
+                ['required', 'string', 'max:3000'],
+                $isConsultation ? ['min:10'] : []
+            ),
+            'problem_started' => ['nullable', 'string', 'max:200'],
+            'previous_incidents' => ['nullable', 'string', 'max:500'],
+            'previous_repairs' => ['nullable', 'string', 'max:500'],
+            'troubleshooting_attempted' => ['nullable', 'string', 'max:1000'],
+            'additional_details' => ['nullable', 'string', 'max:1000'],
             'photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
-            'preferred_at' => ['required', 'date', 'after:now'],
+            'preferred_at' => ['nullable', 'required_if:booking_type,DROP_OFF', 'date', 'after:now'],
         ]);
+        if ($isConsultation) {
+            $validated['concern'] = $this->buildConsultationConcern($validated);
+            unset(
+                $validated['problem_started'],
+                $validated['previous_incidents'],
+                $validated['previous_repairs'],
+                $validated['troubleshooting_attempted'],
+                $validated['additional_details']
+            );
+        }
+        if ($validated['booking_type'] === 'CONSULTATION') {
+            $validated['service_item_id'] = null;
+        }
         $validated = $this->normalizeServiceSelection($shop->id, $validated);
 
         $photoPath = null;
@@ -76,7 +98,7 @@ class AppointmentController extends Controller
 
         $query = Appointment::query()
             ->where('shop_id', $shopId)
-            ->latest('preferred_at');
+            ->orderByRaw('COALESCE(preferred_at, created_at) DESC');
 
         if ($status = $request->query('status')) {
             $query->where('status', $status);
@@ -109,9 +131,6 @@ class AppointmentController extends Controller
 
         return response()->json([
             'appointments' => $appointments,
-            'summary' => $this->summary($shopId),
-            'statuses' => ['PENDING', 'CONFIRMED', 'RESCHEDULED', 'CANCELLED', 'COMPLETED'],
-            'bookingTypes' => ['CONSULTATION', 'DROP_OFF'],
             'recommendedActions' => $this->recommendedActions(),
         ]);
     }
@@ -183,21 +202,52 @@ class AppointmentController extends Controller
         $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
         $this->ensureSameShop($request, $appointment);
 
+        $recommendedActions = $this->recommendedActions();
+        if ($appointment->booking_type !== 'CONSULTATION') {
+            unset($recommendedActions['REQUEST_INFORMATION']);
+        }
+
         $validated = $request->validate([
-            'status' => ['required', Rule::in(['PENDING', 'CONFIRMED', 'RESCHEDULED', 'CANCELLED', 'COMPLETED'])],
-            'scheduled_at' => ['nullable', 'date', 'required_if:status,CONFIRMED,RESCHEDULED'],
+            'status' => ['required', Rule::in(
+                $appointment->booking_type === 'CONSULTATION'
+                    ? ['PENDING', 'CANCELLED', 'COMPLETED']
+                    : ['PENDING', 'CONFIRMED', 'RESCHEDULED', 'CANCELLED', 'COMPLETED']
+            )],
+            'scheduled_at' => [
+                'nullable',
+                'date',
+                Rule::requiredIf(fn () => $appointment->booking_type === 'DROP_OFF' && in_array($request->input('status'), ['CONFIRMED', 'RESCHEDULED'], true)),
+            ],
             'staff_note' => ['nullable', 'string', 'max:2000'],
-            'customer_response' => ['nullable', 'string', 'max:3000'],
-            'recommended_action' => ['nullable', Rule::in(array_keys($this->recommendedActions()))],
+            'customer_response' => [
+                $appointment->booking_type === 'CONSULTATION' && $request->input('status') !== 'CANCELLED' ? 'required' : 'nullable',
+                'string',
+                'max:3000',
+            ],
+            'recommended_action' => ['nullable', Rule::in(array_keys($recommendedActions))],
         ]);
+        if (
+            $appointment->booking_type === 'CONSULTATION'
+            && $request->input('status') !== 'CANCELLED'
+            && !strlen(trim((string) ($validated['customer_response'] ?? '')))
+        ) {
+            return response()->json([
+                'message' => 'A non-empty reply is required for this consultation.',
+                'errors' => ['customer_response' => ['Please enter a reply to the customer.']],
+            ], 422);
+        }
 
         $before = $appointment->only(['status', 'scheduled_at', 'staff_note', 'customer_response', 'recommended_action']);
         $appointment->update([
             'status' => $validated['status'],
             'scheduled_at' => $validated['scheduled_at'] ?? $appointment->scheduled_at,
             'staff_note' => $validated['staff_note'] ?? $appointment->staff_note,
-            'customer_response' => $validated['customer_response'] ?? $appointment->customer_response,
-            'recommended_action' => $validated['recommended_action'] ?? $appointment->recommended_action,
+            'customer_response' => isset($validated['customer_response'])
+                ? (strlen(trim($validated['customer_response'])) ? trim($validated['customer_response']) : null)
+                : $appointment->customer_response,
+            'recommended_action' => $appointment->booking_type === 'CONSULTATION'
+                ? null
+                : ($validated['recommended_action'] ?? $appointment->recommended_action),
             'responded_at' => now(),
             'responded_by' => $user->name,
         ]);
@@ -224,6 +274,12 @@ class AppointmentController extends Controller
         $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
         $this->ensureSameShop($request, $appointment);
         $this->ensureShopCanStartNewWork($request);
+
+        if ($appointment->booking_type === 'CONSULTATION') {
+            return response()->json([
+                'message' => 'Consultations are advice requests and cannot be converted to job orders. Create a separate repair booking if the customer wants to proceed.',
+            ], 422);
+        }
 
         $validated = $request->validate([
             'priority' => ['nullable', Rule::in(['STANDARD', 'EXPRESS', 'EMERGENCY'])],
@@ -325,16 +381,56 @@ class AppointmentController extends Controller
         ], 201);
     }
 
-    private function summary(int $shopId): array
+    /**
+     * Keep consultation history readable while reusing the existing concern column.
+     */
+    private function buildConsultationConcern(array $validated): string
     {
-        return [
-            'pending' => Appointment::where('shop_id', $shopId)->where('status', 'PENDING')->count(),
-            'confirmed' => Appointment::where('shop_id', $shopId)->whereIn('status', ['CONFIRMED', 'RESCHEDULED'])->count(),
-            'today' => Appointment::where('shop_id', $shopId)
-                ->whereIn('status', ['CONFIRMED', 'RESCHEDULED'])
-                ->whereDate('scheduled_at', today())
-                ->count(),
+        $sections = [
+            'Problem description' => $validated['concern'],
+            'When it started' => $validated['problem_started'] ?? null,
+            'Previous damage or incidents' => $validated['previous_incidents'] ?? null,
+            'Previous repairs' => $validated['previous_repairs'] ?? null,
+            'Troubleshooting already attempted' => $validated['troubleshooting_attempted'] ?? null,
+            'Additional information' => $validated['additional_details'] ?? null,
         ];
+
+        $concern = collect($sections)
+            ->filter(fn ($value) => is_string($value) && trim($value) !== '')
+            ->map(fn ($value, $label) => "{$label}:\n" . trim($value))
+            ->implode("\n\n");
+
+        if (mb_strlen($concern) > 3000) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'concern' => ['The problem description and additional history may not exceed 3000 characters combined.'],
+            ]);
+        }
+
+        return $concern;
+    }
+
+    private function publicAppointmentStatusLabel(Appointment $appointment): string
+    {
+        if ($appointment->booking_type === 'CONSULTATION') {
+            if ($appointment->status === 'CANCELLED') {
+                return 'Cancelled';
+            }
+            if (strlen(trim((string) $appointment->customer_response))) {
+                return 'Responded';
+            }
+            if ($appointment->status === 'PENDING') {
+                return 'Pending';
+            }
+        }
+
+        return match ($appointment->status) {
+            'PENDING' => 'Waiting for shop response',
+            'CONFIRMED' => 'Confirmed',
+            'RESCHEDULED' => 'Rescheduled',
+            'CANCELLED' => 'Cancelled',
+            'COMPLETED' => 'Resolved',
+            default => $appointment->status,
+        };
     }
 
     private function mapAppointment(Appointment $appointment, ?string $photoUrl = null): array
@@ -362,7 +458,9 @@ class AppointmentController extends Controller
             'scheduled_at_formatted' => $appointment->scheduled_at?->format('M d, Y h:i A'),
             'status' => $appointment->status,
             'staff_note' => $appointment->staff_note,
-            'customer_response' => $appointment->customer_response,
+            'customer_response' => strlen(trim((string) $appointment->customer_response))
+                ? trim($appointment->customer_response)
+                : null,
             'recommended_action' => $appointment->recommended_action,
             'recommended_action_label' => $appointment->recommended_action
                 ? ($this->recommendedActions()[$appointment->recommended_action] ?? $appointment->recommended_action)
@@ -374,6 +472,9 @@ class AppointmentController extends Controller
             'responded_by' => $appointment->responded_by,
             'created_at' => $appointment->created_at,
             'created_at_formatted' => $appointment->created_at?->format('M d, Y h:i A'),
+            'status_label' => $this->publicAppointmentStatusLabel($appointment),
+            'awaiting_customer_information' => $appointment->recommended_action === 'REQUEST_INFORMATION' && $appointment->status === 'PENDING',
+            'inspection_recommended' => $appointment->recommended_action === 'BRING_TO_SHOP',
         ];
     }
 
@@ -393,10 +494,20 @@ class AppointmentController extends Controller
             'preferred_at_formatted' => $appointment->preferred_at?->format('M d, Y h:i A'),
             'scheduled_at_formatted' => $appointment->scheduled_at?->format('M d, Y h:i A'),
             'status' => $appointment->status,
-            'customer_response' => $appointment->customer_response,
-            'recommended_action_label' => $appointment->recommended_action
-                ? ($this->recommendedActions()[$appointment->recommended_action] ?? $appointment->recommended_action)
+            'customer_response' => strlen(trim((string) $appointment->customer_response))
+                ? trim($appointment->customer_response)
                 : null,
+            'status_label' => $this->publicAppointmentStatusLabel($appointment),
+            'awaiting_customer_information' => $appointment->booking_type === 'CONSULTATION'
+                ? false
+                : ($appointment->recommended_action === 'REQUEST_INFORMATION' && $appointment->status === 'PENDING'),
+            'inspection_recommended' => $appointment->booking_type !== 'CONSULTATION'
+                && $appointment->recommended_action === 'BRING_TO_SHOP',
+            'recommended_action_label' => $appointment->booking_type === 'CONSULTATION'
+                ? null
+                : ($appointment->recommended_action
+                ? ($this->recommendedActions()[$appointment->recommended_action] ?? $appointment->recommended_action)
+                    : null),
         ];
     }
 
@@ -505,6 +616,7 @@ class AppointmentController extends Controller
     {
         return [
             'BRING_TO_SHOP' => 'Bring the device to the shop',
+            'REQUEST_INFORMATION' => 'More information needed',
             'REMOTE_ADVICE' => 'Follow remote advice first',
             'BRING_ACCESSORY' => 'Bring charger/accessories for checking',
             'WAIT_FOR_PARTS' => 'Wait for parts availability',

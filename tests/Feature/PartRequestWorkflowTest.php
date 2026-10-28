@@ -13,6 +13,7 @@ use App\Models\Technician;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class PartRequestWorkflowTest extends TestCase
@@ -221,7 +222,7 @@ class PartRequestWorkflowTest extends TestCase
             ->assertJsonPath('requests.0.id', $requestB->id);
     }
 
-    public function test_staff_can_review_requests_but_technicians_cannot_access_the_queue(): void
+    public function test_only_staff_and_admins_can_access_the_for_order_queue(): void
     {
         [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
         PartRequest::create([
@@ -239,6 +240,123 @@ class PartRequestWorkflowTest extends TestCase
         $this->actingAs($technicianUser)
             ->getJson('/api/admin/part-requests')
             ->assertForbidden();
+
+        $this->actingAs($technicianUser)
+            ->postJson('/api/admin/part-requests', [
+                'part_name' => 'Battery',
+                'quantity' => 1,
+            ])
+            ->assertForbidden();
+    }
+
+    public function test_for_order_returns_a_deduplicated_reusable_checklist_and_allows_repeat_orders(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_SHOP_ADMIN);
+        SparePart::create([
+            'shop_id' => $shop->id,
+            'name' => 'Battery',
+            'stock_quantity' => 2,
+            'reorder_level' => 1,
+            'is_active' => true,
+        ]);
+        PartRequest::create([
+            'shop_id' => $shop->id,
+            'part_name' => 'battery',
+            'quantity' => 1,
+            'status' => PartRequest::STATUS_RECEIVED,
+        ]);
+        PartRequest::create([
+            'shop_id' => $shop->id,
+            'part_name' => 'USB-C Port',
+            'quantity' => 2,
+            'status' => PartRequest::STATUS_PENDING,
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/part-requests')
+            ->assertOk()
+            ->assertJsonPath('checklist.0.part_name', 'Battery')
+            ->assertJsonPath('checklist.1.part_name', 'USB-C Port');
+
+        $this->actingAs($admin)
+            ->postJson('/api/admin/part-requests', [
+                'part_name' => 'Battery',
+                'quantity' => 3,
+                'register_part' => true,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('part_name');
+
+        $repeat = $this->actingAs($admin)
+            ->postJson('/api/admin/part-requests', [
+                'part_name' => 'Battery',
+                'quantity' => 4,
+                'idempotency_key' => (string) Str::uuid(),
+            ])
+            ->assertCreated();
+
+        $this->assertDatabaseHas('part_requests', [
+            'id' => $repeat->json('request.id'),
+            'part_name' => 'Battery',
+            'quantity' => 4,
+            'status' => PartRequest::STATUS_PENDING,
+        ]);
+    }
+
+    public function test_shop_can_create_a_checklist_order_directly_as_ordered(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_SHOP_ADMIN);
+
+        $response = $this->actingAs($admin)
+            ->postJson('/api/admin/part-requests', [
+                'part_name' => 'Back Glass - iPhone 11',
+                'quantity' => 3,
+                'status' => PartRequest::STATUS_ORDERED,
+                'idempotency_key' => (string) Str::uuid(),
+            ])
+            ->assertCreated()
+            ->assertJsonPath('request.status', PartRequest::STATUS_ORDERED);
+
+        $this->assertDatabaseHas('part_requests', [
+            'id' => $response->json('request.id'),
+            'shop_id' => $shop->id,
+            'part_name' => 'Back Glass - iPhone 11',
+            'quantity' => 3,
+            'status' => PartRequest::STATUS_ORDERED,
+        ]);
+    }
+
+    public function test_staff_can_edit_pending_for_order_details_but_ordered_and_received_items_are_locked(): void
+    {
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $request = PartRequest::create([
+            'shop_id' => $shop->id,
+            'part_name' => 'Old battery',
+            'quantity' => 1,
+            'note' => 'Old note',
+            'status' => PartRequest::STATUS_PENDING,
+        ]);
+
+        $this->actingAs($staff)
+            ->putJson("/api/admin/part-requests/{$request->id}", [
+                'part_name' => 'New battery',
+                'quantity' => 3,
+                'note' => 'Updated note',
+            ])
+            ->assertOk()
+            ->assertJsonPath('request.part_name', 'New battery')
+            ->assertJsonPath('request.quantity', 3)
+            ->assertJsonPath('request.status', PartRequest::STATUS_PENDING);
+
+        $request->update(['status' => PartRequest::STATUS_ORDERED]);
+
+        $this->actingAs($staff)
+            ->putJson("/api/admin/part-requests/{$request->id}", [
+                'part_name' => 'Unsafe update',
+                'quantity' => 4,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('part');
     }
 
     public function test_general_request_receiving_updates_inventory_once_and_cannot_be_marked_received_directly(): void
@@ -894,7 +1012,9 @@ class PartRequestWorkflowTest extends TestCase
             ->assertNotFound();
         $this->actingAs($technicianA)
             ->getJson('/api/admin/job-order-part-orders')
-            ->assertForbidden();
+            ->assertOk()
+            ->assertJsonCount(1, 'orders')
+            ->assertJsonPath('orders.0.id', $orderA->id);
 
         $platformAdmin = User::factory()->create([
             'shop_id' => null,
@@ -904,6 +1024,93 @@ class PartRequestWorkflowTest extends TestCase
         $this->actingAs($platformAdmin)
             ->getJson('/api/admin/job-order-part-orders')
             ->assertForbidden();
+    }
+
+    public function test_technician_parts_order_listing_is_assigned_job_scoped_and_keeps_admin_staff_access(): void
+    {
+        [$shop, $technicianUser, $assignedJob] = $this->createTechnicianWithJob();
+        $assignedOrder = $this->createCustomerPartOrder($shop, $assignedJob, $technicianUser, [
+            'customer_decision_note' => 'Private decision note.',
+            'required_downpayment_amount' => 50,
+            'supplier_name' => 'Private supplier',
+            'purchase_reference' => 'SUP-123',
+        ]);
+        $assignedJob->update(['customer_phone' => '09123456789']);
+
+        $otherTechnician = Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'Another Technician',
+            'email' => 'other-parts-tech-' . uniqid() . '@example.test',
+            'is_active' => true,
+        ]);
+        $otherTechnicianJob = JobOrder::create([
+            'shop_id' => $shop->id,
+            'job_order_number' => 'OTHER-TECH-' . strtoupper(uniqid()),
+            'customer_name' => 'Other Technician Customer',
+            'customer_phone' => '09222222222',
+            'device_type' => 'Phone',
+            'problem_description' => 'Other assigned repair.',
+            'technician_id' => $otherTechnician->id,
+            'current_status' => 'IN_PROGRESS',
+        ]);
+        $otherTechnicianOrder = $this->createCustomerPartOrder($shop, $otherTechnicianJob, $technicianUser);
+
+        $unassignedJob = JobOrder::create([
+            'shop_id' => $shop->id,
+            'job_order_number' => 'UNASSIGNED-' . strtoupper(uniqid()),
+            'customer_name' => 'Unassigned Customer',
+            'device_type' => 'Tablet',
+            'problem_description' => 'Unassigned repair.',
+            'current_status' => 'IN_PROGRESS',
+        ]);
+        $unassignedOrder = $this->createCustomerPartOrder($shop, $unassignedJob, $technicianUser);
+
+        [$otherShop, $otherShopTechnician, $otherShopJob] = $this->createTechnicianWithJob();
+        $otherShopOrder = $this->createCustomerPartOrder($otherShop, $otherShopJob, $otherShopTechnician);
+
+        $this->actingAs($technicianUser)
+            ->getJson('/api/admin/job-order-part-orders')
+            ->assertOk()
+            ->assertJsonCount(1, 'orders')
+            ->assertJsonPath('orders.0.id', $assignedOrder->id)
+            ->assertJsonMissingPath('orders.0.customer_contact')
+            ->assertJsonMissingPath('orders.0.customer_phone')
+            ->assertJsonMissingPath('orders.0.estimated_unit_price')
+            ->assertJsonMissingPath('orders.0.customer_decision_note')
+            ->assertJsonMissingPath('orders.0.supplier_name')
+            ->assertJsonMissingPath('orders.0.required_downpayment_amount')
+            ->assertJsonMissingPath('orders.0.eligible_paid_amount')
+            ->assertJsonMissingPath('orders.0.can_order')
+            ->assertJsonMissingPath('orders.0.purchase_reference')
+            ->assertJsonMissing(['id' => $otherTechnicianOrder->id])
+            ->assertJsonMissing(['id' => $unassignedOrder->id])
+            ->assertJsonMissing(['id' => $otherShopOrder->id]);
+
+        [, $staff] = $this->createShopUser(User::ROLE_STAFF, $shop);
+        [, $admin] = $this->createShopUser(User::ROLE_SHOP_ADMIN, $shop);
+        foreach ([$staff, $admin] as $shopUser) {
+            $this->actingAs($shopUser)
+                ->getJson('/api/admin/job-order-part-orders')
+                ->assertOk()
+                ->assertJsonCount(3, 'orders')
+                ->assertJsonFragment(['id' => $assignedOrder->id])
+                ->assertJsonFragment(['id' => $otherTechnicianOrder->id])
+                ->assertJsonFragment(['id' => $unassignedOrder->id])
+                ->assertJsonMissing(['id' => $otherShopOrder->id])
+                ->assertJsonFragment(['customer_phone' => '09123456789'])
+                ->assertJsonFragment(['customer_decision_note' => 'Private decision note.'])
+                ->assertJsonFragment(['supplier_name' => 'Private supplier']);
+        }
+    }
+
+    public function test_technician_without_an_active_profile_cannot_list_parts_orders(): void
+    {
+        [, $technicianUser] = $this->createShopUser(User::ROLE_TECHNICIAN);
+
+        $this->actingAs($technicianUser)
+            ->getJson('/api/admin/job-order-part-orders')
+            ->assertForbidden()
+            ->assertJsonPath('message', 'No active technician profile is linked to this account.');
     }
 
     public function test_device_location_is_audited_and_existing_public_tracking_does_not_include_parts_orders(): void

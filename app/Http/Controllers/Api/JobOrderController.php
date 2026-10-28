@@ -60,6 +60,16 @@ class JobOrderController extends Controller
             $jobOrders->where('current_status', $status);
         }
 
+        if ($jobGroup = $request->query('job_group')) {
+            if ($jobGroup === 'released') {
+                $jobOrders->whereIn('current_status', ['PICKED_UP', 'RTO_RELEASED']);
+            } elseif ($jobGroup === 'active') {
+                $jobOrders->whereNotIn('current_status', ['PICKED_UP', 'RTO_RELEASED']);
+            } else {
+                abort(422, 'Invalid job group.');
+            }
+        }
+
         if ($priority = $request->query('priority')) {
             $jobOrders->where('priority', $priority);
         }
@@ -94,7 +104,7 @@ class JobOrderController extends Controller
 
         if ($request->boolean('overdue_only')) {
             $jobOrders
-                ->whereNotIn('current_status', ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'])
+                ->whereNotIn('current_status', ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'])
                 ->whereNotNull('estimated_completion')
                 ->where('estimated_completion', '<', now());
         }
@@ -145,7 +155,6 @@ class JobOrderController extends Controller
                 'PICKED_UP',
                 'RTO',
                 'RTO_RELEASED',
-                'UNREPAIRABLE',
             ],
             'priorities' => ['STANDARD', 'EXPRESS', 'EMERGENCY'],
             'paymentStatuses' => ['PENDING', 'PARTIAL', 'PAID'],
@@ -1052,7 +1061,7 @@ class JobOrderController extends Controller
         $this->ensureSameShop($request, $jobOrder);
 
         $validated = $request->validate([
-            'status' => 'required|in:RECEIVED,DIAGNOSING,WAITING_PARTS,IN_PROGRESS,READY_FOR_PICKUP,RTO,UNREPAIRABLE',
+            'status' => 'required|in:RECEIVED,DIAGNOSING,WAITING_PARTS,IN_PROGRESS,READY_FOR_PICKUP,RTO',
             'note' => 'nullable|string',
         ]);
 
@@ -1066,15 +1075,9 @@ class JobOrderController extends Controller
                 return [$lockedJobOrder, null];
             }
 
-            if (in_array($lockedJobOrder->current_status, ['PICKED_UP', 'RTO_RELEASED', 'RTO', 'UNREPAIRABLE'], true)) {
+            if (in_array($lockedJobOrder->current_status, ['PICKED_UP', 'RTO_RELEASED', 'RTO'], true)) {
                 throw ValidationException::withMessages([
                     'status' => 'This job order cannot return to a repair workflow from its current status.',
-                ]);
-            }
-
-            if (in_array($validated['status'], ['IN_PROGRESS', 'READY_FOR_PICKUP'], true) && !$lockedJobOrder->repair_approved_at) {
-                throw ValidationException::withMessages([
-                    'status' => 'Customer repair approval must be recorded before repair work or pickup preparation can proceed.',
                 ]);
             }
 
@@ -1088,7 +1091,7 @@ class JobOrderController extends Controller
                 'note' => $validated['note'] ?? null,
             ]);
 
-            if (in_array($validated['status'], ['RTO', 'UNREPAIRABLE'], true)) {
+            if ($validated['status'] === 'RTO') {
                 $this->createRtoRefundObligations($lockedJobOrder, $request);
                 AuditLogger::log(
                     request: $request,
@@ -1114,7 +1117,7 @@ class JobOrderController extends Controller
 
         $this->notifyCustomer($jobOrder, $validated['status'], $validated['note'] ?? null);
 
-        if (!in_array($validated['status'], ['RTO', 'UNREPAIRABLE'], true)) {
+        if ($validated['status'] !== 'RTO') {
             AuditLogger::log(
             request: $request,
             user: $request->user(),
@@ -1229,7 +1232,7 @@ class JobOrderController extends Controller
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
 
-            if (!in_array($lockedJobOrder->current_status, ['RTO', 'UNREPAIRABLE'], true) || $lockedJobOrder->picked_up_at) {
+            if ($lockedJobOrder->current_status !== 'RTO' || $lockedJobOrder->picked_up_at) {
                 throw ValidationException::withMessages([
                     'picked_up_by' => 'Only RTO job orders that have not yet been released can be returned to the customer.',
                 ]);
@@ -1290,7 +1293,7 @@ class JobOrderController extends Controller
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
 
-            if (!in_array($lockedJobOrder->current_status, ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'], true)) {
+            if (!in_array($lockedJobOrder->current_status, ['RTO', 'RTO_RELEASED'], true)) {
                 throw ValidationException::withMessages([
                     'job_order' => 'Refund obligations can only be prepared for an RTO job order.',
                 ]);
@@ -1333,7 +1336,7 @@ class JobOrderController extends Controller
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
 
-            if (!in_array($lockedJobOrder->current_status, ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'], true)) {
+            if (!in_array($lockedJobOrder->current_status, ['RTO', 'RTO_RELEASED'], true)) {
                 throw ValidationException::withMessages([
                     'job_order' => 'Legacy refund reconciliation is only available for an RTO job order.',
                 ]);
@@ -1405,7 +1408,7 @@ class JobOrderController extends Controller
                 ->lockForUpdate()
                 ->findOrFail($refund->id);
 
-            if (!in_array($lockedJobOrder->current_status, ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'], true)) {
+            if (!in_array($lockedJobOrder->current_status, ['RTO', 'RTO_RELEASED'], true)) {
                 throw ValidationException::withMessages([
                     'refund' => 'Only RTO refunds can be issued.',
                 ]);
@@ -1990,7 +1993,7 @@ class JobOrderController extends Controller
 
     private function ensureJobOrderIsNotRto(JobOrder $jobOrder): void
     {
-        if (in_array($jobOrder->current_status, ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'], true)) {
+        if (in_array($jobOrder->current_status, ['RTO', 'RTO_RELEASED'], true)) {
             throw ValidationException::withMessages([
                 'job_order' => 'Payments and repair costs cannot be changed after a job order becomes RTO.',
             ]);
@@ -2190,7 +2193,7 @@ class JobOrderController extends Controller
             'estimated_completion' => $job->estimated_completion,
             'estimated_completion_formatted' => $job->estimated_completion?->format('M d, Y h:i A'),
             'is_overdue' => $isOverdue,
-            'repair_started' => in_array($job->current_status, ['IN_PROGRESS', 'READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)
+            'repair_started' => in_array($job->current_status, ['IN_PROGRESS', 'READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'], true)
                 || (bool) ($job->has_started_repair ?? false),
             'deleted_at' => $job->deleted_at,
             'created_at_formatted' => $job->created_at?->format('M d, Y'),
@@ -2279,7 +2282,7 @@ class JobOrderController extends Controller
             return false;
         }
 
-        if (in_array($job->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true)) {
+        if (in_array($job->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'], true)) {
             return false;
         }
 
@@ -2651,7 +2654,6 @@ class JobOrderController extends Controller
             'PICKED_UP',
             'RTO',
             'RTO_RELEASED',
-            'UNREPAIRABLE',
         ];
 
         return [
@@ -2671,7 +2673,6 @@ class JobOrderController extends Controller
             'PICKED_UP' => 'RELEASED',
             'RTO_RELEASED' => 'RTO RELEASED',
             'RTO' => 'RTO',
-            'UNREPAIRABLE' => 'RTO',
             default => str_replace('_', ' ', $status),
         };
     }

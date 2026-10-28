@@ -30,7 +30,7 @@ const formatCurrency = (value) => {
 const formatStatus = (status) => {
     if (status === 'PICKED_UP') return 'RELEASED';
     if (status === 'RTO_RELEASED') return 'RTO RELEASED';
-    if (status === 'RTO' || status === 'UNREPAIRABLE') return 'RTO';
+    if (status === 'RTO') return 'RTO';
     return status ? status.replaceAll('_', ' ') : '';
 };
 

@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue';
 import AdminLayout from '../../layouts/AdminLayout.vue';
 import AppLink from '../../components/AppLink.vue';
 import { adminRoles, authState, ensureRoles } from '../../composables/auth';
+import { jobOrderStatusClass, paymentStatusClass } from '../../composables/jobOrderStatus';
 import { useNavigation, navigate } from '../../navigation';
 
 const props = defineProps({
@@ -70,6 +71,7 @@ const form = reactive({
 });
 
 const filters = reactive({
+    job_group: 'active',
     search: '',
     status: '',
     priority: '',
@@ -113,6 +115,7 @@ const currentPage = computed(() => {
 
 const syncFiltersFromLocation = () => {
     const params = new URLSearchParams(location.search);
+    filters.job_group = params.get('job_group') || 'active';
     filters.search = params.get('search') || '';
     filters.status = params.get('status') || '';
     filters.priority = params.get('priority') || '';
@@ -143,6 +146,7 @@ const loadJobOrders = async () => {
         const { data } = await window.axios.get('/api/admin/job-orders', {
             params: {
                 page: currentPage.value,
+                job_group: filters.job_group,
                 search: filters.search || undefined,
                 status: filters.status || undefined,
                 priority: filters.priority || undefined,
@@ -184,20 +188,16 @@ const formatCurrency = (value) => {
     return `PHP ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-const statusClass = (status, overdue = false) => {
-    if (overdue) return 'bg-rose-50 text-rose-700 ring-rose-200';
-    if (status === 'READY_FOR_PICKUP' || status === 'PICKED_UP') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
-    if (status === 'WAITING_PARTS') return 'bg-amber-50 text-amber-700 ring-amber-200';
-    if (['UNREPAIRABLE', 'RTO', 'RTO_RELEASED'].includes(status)) return 'bg-slate-100 text-slate-700 ring-slate-200';
-    return 'bg-teal-50 text-teal-700 ring-teal-200';
-};
-
 const formatStatus = (status) => {
     if (status === 'PICKED_UP') return 'RELEASED';
     if (status === 'RTO_RELEASED') return 'RTO RELEASED';
-    if (status === 'RTO' || status === 'UNREPAIRABLE') return 'RTO';
+    if (status === 'RTO') return 'RTO';
     return status ? status.replaceAll('_', ' ') : '';
 };
+
+const uniqueStatusOptions = computed(() => {
+    return filterOptions.value.statuses;
+});
 
 const formatServiceType = (serviceType) => {
     if (serviceType === 'WARRANTY_SERVICE') return 'Under Warranty';
@@ -211,18 +211,17 @@ const selectedCategoryServices = computed(() => {
 
 const filterServiceOptions = computed(() => {
     const category = filterOptions.value.serviceCatalog.find((item) => String(item.id) === String(filters.service_category_id));
-    return category?.services || [];
-});
+    if (category) return category.services || [];
 
-const paymentClass = (status) => {
-    if (status === 'PAID') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
-    if (status === 'PARTIAL') return 'bg-amber-50 text-amber-700 ring-amber-200';
-    return 'bg-rose-50 text-rose-700 ring-rose-200';
-};
+    return filterOptions.value.serviceCatalog
+        .flatMap((item) => item.services || [])
+        .filter((service, index, services) => services.findIndex((candidate) => candidate.id === service.id) === index);
+});
 
 const buildFilterQuery = (includePage = false) => {
     const params = new URLSearchParams();
 
+    if (filters.job_group !== 'active') params.set('job_group', filters.job_group);
     if (filters.search.trim()) params.set('search', filters.search.trim());
     if (filters.status) params.set('status', filters.status);
     if (filters.priority) params.set('priority', filters.priority);
@@ -245,6 +244,7 @@ const applyFilters = () => {
 };
 
 const clearFilters = () => {
+    filters.job_group = 'active';
     filters.search = '';
     filters.status = '';
     filters.priority = '';
@@ -257,6 +257,14 @@ const clearFilters = () => {
     filters.received_to = '';
     filters.overdue_only = false;
     navigate('/admin/job-orders');
+};
+
+const setJobGroup = (jobGroup) => {
+    filters.job_group = jobGroup;
+    filters.status = '';
+    filters.overdue_only = false;
+    const query = buildFilterQuery(false);
+    navigate(`/admin/job-orders${query ? `?${query}` : ''}`);
 };
 
 const loadMeta = async () => {
@@ -430,6 +438,25 @@ watch(
         </div>
       </section>
 
+      <div class="inline-flex rounded-xl border border-slate-200 bg-white p-1 shadow-sm" role="tablist" aria-label="Job order group">
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="filters.job_group === 'active'"
+          class="rounded-lg px-4 py-2 text-sm font-bold transition"
+          :class="filters.job_group === 'active' ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100'"
+          @click="setJobGroup('active')"
+        >Active Jobs</button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="filters.job_group === 'released'"
+          class="rounded-lg px-4 py-2 text-sm font-bold transition"
+          :class="filters.job_group === 'released' ? 'bg-slate-950 text-white' : 'text-slate-600 hover:bg-slate-100'"
+          @click="setJobGroup('released')"
+        >Released Jobs</button>
+      </div>
+
       <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <form class="space-y-4" @submit.prevent="applyFilters">
           <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,2fr)_repeat(4,minmax(160px,1fr))]">
@@ -441,7 +468,7 @@ watch(
               <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Status</label>
               <select v-model="filters.status" class="h-12 w-full rounded-lg border border-slate-300 px-4 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100">
                 <option value="">All statuses</option>
-                <option v-for="status in filterOptions.statuses" :key="status" :value="status">{{ formatStatus(status) }}</option>
+                <option v-for="status in uniqueStatusOptions" :key="status" :value="status">{{ formatStatus(status) }}</option>
               </select>
             </div>
             <div>
@@ -477,7 +504,7 @@ watch(
             </div>
             <div>
               <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Service</label>
-              <select v-model="filters.service_item_id" class="h-12 w-full rounded-lg border border-slate-300 px-4 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100" :disabled="!filters.service_category_id">
+              <select v-model="filters.service_item_id" class="h-12 w-full rounded-lg border border-slate-300 px-4 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100">
                 <option value="">All services</option>
                 <option v-for="service in filterServiceOptions" :key="service.id" :value="String(service.id)">{{ service.name }}</option>
               </select>
@@ -526,9 +553,10 @@ watch(
                 <p class="mt-1 truncate text-sm text-slate-600">{{ job.customer_name }}</p>
                 <p v-if="job.customer_phone" class="text-xs text-slate-500">{{ job.customer_phone }}</p>
               </div>
-              <span class="inline-flex shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1" :class="statusClass(job.current_status, job.is_overdue)">
+              <span class="inline-flex shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold ring-1" :class="jobOrderStatusClass(job.current_status)">
                 {{ formatStatus(job.current_status) }}
               </span>
+              <span v-if="job.is_overdue" class="shrink-0 rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700 ring-1 ring-rose-200">Overdue</span>
             </div>
             <div class="grid grid-cols-2 gap-3 rounded-xl bg-slate-50 p-3 text-sm">
               <div class="min-w-0">
@@ -538,7 +566,7 @@ watch(
               </div>
               <div>
                 <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">Payment</p>
-                <p class="mt-1 font-semibold text-slate-800">{{ job.payment_status }}</p>
+                <span class="mt-1 inline-flex rounded-full px-2 py-1 text-[11px] font-bold ring-1" :class="paymentStatusClass(job.payment_status)">{{ job.payment_status }}</span>
                 <p class="text-xs text-slate-500">Balance: {{ formatCurrency(job.balance) }}</p>
               </div>
               <div>
@@ -553,7 +581,7 @@ watch(
             <div class="flex flex-wrap gap-2">
               <AppLink :to="`/admin/job-orders/${job.id}`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">View Job</AppLink>
               <button
-                v-if="!['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'].includes(job.current_status)"
+                v-if="!['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'].includes(job.current_status)"
                 type="button"
                 class="inline-flex items-center rounded-lg border border-emerald-200 px-3 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
                 :disabled="quickUpdatingId === job.id"
@@ -608,7 +636,7 @@ watch(
                 <p v-if="job.technician_name" class="text-xs text-slate-500">Tech: {{ job.technician_name }}</p>
               </td>
               <td class="px-6 py-4">
-                <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="statusClass(job.current_status, job.is_overdue)">
+                <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(job.current_status)">
                   {{ formatStatus(job.current_status) }}
                 </span>
                 <p class="mt-2 text-xs" :class="job.is_overdue ? 'font-bold text-rose-600' : 'text-slate-500'">
@@ -616,7 +644,7 @@ watch(
                 </p>
               </td>
               <td class="px-6 py-4">
-                <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="paymentClass(job.payment_status)">
+                <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="paymentStatusClass(job.payment_status)">
                   {{ job.payment_status }}
                 </span>
                 <p class="mt-2 text-xs text-slate-500">Balance: {{ formatCurrency(job.balance) }}</p>
@@ -628,7 +656,7 @@ watch(
                 <div class="flex flex-wrap items-center gap-2">
                   <AppLink :to="`/admin/job-orders/${job.id}`" class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">View</AppLink>
                   <button
-                    v-if="!['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'].includes(job.current_status)"
+                    v-if="!['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'].includes(job.current_status)"
                     type="button"
                     class="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50 disabled:opacity-60"
                     :disabled="quickUpdatingId === job.id"

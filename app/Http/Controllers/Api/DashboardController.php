@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\Appointment;
 use App\Models\JobOrder;
 use App\Models\Technician;
 use App\Models\User;
@@ -12,14 +13,33 @@ use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
+    public function alerts(Request $request)
+    {
+        $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $shopId = $this->currentShopId($request);
+
+        return response()->json([
+            'pending_customer_requests' => Appointment::query()
+                ->where('shop_id', $shopId)
+                ->where('status', 'PENDING')
+                ->count(),
+            'overdue_jobs' => JobOrder::query()
+                ->where('shop_id', $shopId)
+                ->whereIn('current_status', ['RECEIVED', 'DIAGNOSING', 'WAITING_PARTS', 'IN_PROGRESS'])
+                ->whereNotNull('estimated_completion')
+                ->where('estimated_completion', '<', now())
+                ->count(),
+        ]);
+    }
+
     public function index(Request $request)
     {
         $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
         $shopId = $this->currentShopId($request);
 
         $activeStatuses = ['RECEIVED', 'DIAGNOSING', 'WAITING_PARTS', 'IN_PROGRESS'];
-        $resolvedStatuses = ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'];
-        $repairCompletedStatuses = ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'];
+        $resolvedStatuses = ['PICKED_UP', 'RTO', 'RTO_RELEASED'];
+        $repairCompletedStatuses = ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'];
         $jobOrders = JobOrder::query()->where('shop_id', $shopId);
 
         $totalJobs = (clone $jobOrders)->count();
@@ -28,7 +48,7 @@ class DashboardController extends Controller
         $waitingParts = (clone $jobOrders)->where('current_status', 'WAITING_PARTS')->count();
         $readyForPickup = (clone $jobOrders)->where('current_status', 'READY_FOR_PICKUP')->count();
         $pickedUp = (clone $jobOrders)->where('current_status', 'PICKED_UP')->count();
-        $unrepairable = (clone $jobOrders)->whereIn('current_status', ['RTO', 'RTO_RELEASED', 'UNREPAIRABLE'])->count();
+        $rtoCount = (clone $jobOrders)->whereIn('current_status', ['RTO', 'RTO_RELEASED'])->count();
         $warrantyServiceJobs = (clone $jobOrders)->where('service_type', 'WARRANTY_SERVICE')->count();
         $overdueJobs = (clone $jobOrders)->whereIn('current_status', $activeStatuses)
             ->whereNotNull('estimated_completion')
@@ -190,7 +210,7 @@ class DashboardController extends Controller
             'waitingParts' => $waitingParts,
             'readyForPickup' => $readyForPickup,
             'pickedUp' => $pickedUp,
-            'unrepairable' => $unrepairable,
+            'rtoCount' => $rtoCount,
             'warrantyServiceJobs' => $warrantyServiceJobs,
             'overdueJobs' => $overdueJobs,
             'completionRate' => $completionRate,

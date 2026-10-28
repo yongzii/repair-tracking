@@ -275,7 +275,7 @@ class ReportsController extends Controller
             $baseQuery->whereDate('job_orders.created_at', '<=', $endDate);
         }
         if ($statusFilter === 'OPEN') {
-            $baseQuery->whereNotIn('job_orders.current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE']);
+            $baseQuery->whereNotIn('job_orders.current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED']);
         } elseif ($statusFilter) {
             $baseQuery->where('job_orders.current_status', $statusFilter);
         }
@@ -310,8 +310,8 @@ class ReportsController extends Controller
 
         $monthGrowth = $lastMonth > 0 ? round((($thisMonth - $lastMonth) / $lastMonth) * 100, 1) : 0;
 
-        $totalCompleted = (clone $baseQuery)->whereIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'])->count();
-        $totalPending = (clone $baseQuery)->whereNotIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'])->count();
+        $totalCompleted = (clone $baseQuery)->whereIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED'])->count();
+        $totalPending = (clone $baseQuery)->whereNotIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED'])->count();
 
         $deviceBreakdown = (clone $baseQuery)->groupBy('device_type')
             ->select('device_type', DB::raw('count(*) as total'))
@@ -386,7 +386,7 @@ class ReportsController extends Controller
             ];
         }
 
-        $turnaroundStats = (clone $baseQuery)->whereIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'])
+        $turnaroundStats = (clone $baseQuery)->whereIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED'])
             ->get()
             ->map(fn ($job) => $job->created_at->diffInDays($job->updated_at, true))
             ->filter(fn ($days) => $days !== null);
@@ -410,7 +410,7 @@ class ReportsController extends Controller
             ->sum('amount'), 2);
         $netRetained = round($totalCollected - $issuedRtoRefunds, 2);
         $pendingReceivables = round((float) (clone $baseQuery)
-            ->whereNotIn('current_status', ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'])
+            ->whereNotIn('current_status', ['RTO', 'RTO_RELEASED'])
             ->sum(DB::raw('CASE WHEN total_cost > amount_paid THEN total_cost - amount_paid ELSE 0 END')), 2);
         $partsCostTotal = round((float) (clone $baseQuery)->sum('parts_cost'), 2);
         $estimatedGrossProfit = round($totalRevenue - $partsCostTotal, 2);
@@ -531,13 +531,13 @@ class ReportsController extends Controller
 
         $partialPaymentTotal = round((float) $partialPayments->sum('amount'), 2);
         $heldPartialPayments = round((float) $partialPayments
-            ->filter(fn (JobOrderPayment $payment) => !in_array($payment->jobOrder?->current_status, ['PICKED_UP', 'RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true))
+            ->filter(fn (JobOrderPayment $payment) => !in_array($payment->jobOrder?->current_status, ['PICKED_UP', 'RTO', 'RTO_RELEASED'], true))
             ->sum('amount'), 2);
         $appliedPartialPayments = round((float) $partialPayments
             ->filter(fn (JobOrderPayment $payment) => $payment->jobOrder?->current_status === 'PICKED_UP')
             ->sum('amount'), 2);
         $reviewPartialPayments = round((float) $partialPayments
-            ->filter(fn (JobOrderPayment $payment) => in_array($payment->jobOrder?->current_status, ['RTO', 'RTO_RELEASED', 'UNREPAIRABLE'], true))
+            ->filter(fn (JobOrderPayment $payment) => in_array($payment->jobOrder?->current_status, ['RTO', 'RTO_RELEASED'], true))
             ->sum('amount'), 2);
 
         $refunds = JobOrderRefund::query()
@@ -610,7 +610,7 @@ class ReportsController extends Controller
         if ($this->normalizedPaymentType($payment) === 'PARTIAL_PAYMENT') {
             $partialPaymentState = match ($status) {
                 'PICKED_UP' => 'APPLIED',
-                'UNREPAIRABLE', 'RTO', 'RTO_RELEASED' => 'NEEDS_REVIEW',
+                'RTO', 'RTO_RELEASED' => 'NEEDS_REVIEW',
                 default => 'HELD',
             };
         }
@@ -679,10 +679,6 @@ class ReportsController extends Controller
     {
         if ($status === null || $status === '') {
             return $status;
-        }
-
-        if ($status === 'UNREPAIRABLE') {
-            return 'RTO';
         }
 
         if ($status === 'RTO_RELEASED') {

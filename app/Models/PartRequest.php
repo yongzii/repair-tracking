@@ -22,6 +22,7 @@ class PartRequest extends Model
         'received_by_user_id',
         'inventory_spare_part_id',
         'part_name',
+        'category',
         'quantity',
         'note',
         'status',

@@ -1,6 +1,6 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { authState, logout } from '../composables/auth';
+import { authState, ensurePlatformAdmin, logout } from '../composables/auth';
 import { useNavigation, navigate } from '../navigation';
 import AppLink from '../components/AppLink.vue';
 import ChangePasswordButton from '../components/ChangePasswordButton.vue';
@@ -19,7 +19,36 @@ const mobileNavOpen = ref(false);
 const isMobile = ref(false);
 const drawer = ref(null);
 const menuButton = ref(null);
+const alertsLoading = ref(false);
+const alertsError = ref('');
+const pendingRequestCount = ref(null);
 let mobileMediaQuery;
+let alertsRefreshInterval;
+
+const loadPendingRequests = async () => {
+    if (alertsLoading.value) return;
+
+    alertsLoading.value = true;
+    alertsError.value = '';
+    try {
+        const auth = await ensurePlatformAdmin();
+        if (!auth.ok) {
+            pendingRequestCount.value = null;
+            return;
+        }
+
+        const { data } = await window.axios.get('/api/platform/subscription-requests', {
+            params: { status: 'pending', per_page: 1 },
+        });
+        const requests = data.subscription_requests;
+        pendingRequestCount.value = Number(requests?.total ?? 0);
+    } catch (error) {
+        pendingRequestCount.value = null;
+        alertsError.value = error?.response?.data?.message || 'Unable to load platform alerts.';
+    } finally {
+        alertsLoading.value = false;
+    }
+};
 
 const syncViewport = () => {
     isMobile.value = mobileMediaQuery.matches;
@@ -55,10 +84,27 @@ onMounted(() => {
     mobileMediaQuery = window.matchMedia('(max-width: 1023px)');
     syncViewport();
     mobileMediaQuery.addEventListener('change', syncViewport);
+    loadPendingRequests();
+    alertsRefreshInterval = window.setInterval(loadPendingRequests, 60_000);
+    window.addEventListener('focus', loadPendingRequests);
 });
 
 onBeforeUnmount(() => {
     mobileMediaQuery?.removeEventListener('change', syncViewport);
+    window.clearInterval(alertsRefreshInterval);
+    window.removeEventListener('focus', loadPendingRequests);
+});
+
+watch(currentPath, () => {
+    loadPendingRequests();
+});
+
+watch(() => user.value?.role, (role) => {
+    if (role === 'platform_admin') {
+        loadPendingRequests();
+    } else {
+        pendingRequestCount.value = null;
+    }
 });
 
 watch(mobileNavOpen, async (open) => {
@@ -129,6 +175,18 @@ const onLogout = async () => {
         <AppLink to="/platform/subscription-requests" class="platform-nav-link" :class="currentPath === '/platform/subscription-requests' ? 'platform-nav-link-active' : ''">
           <i class="fas fa-file-invoice-dollar w-5"></i>
           <span>Subscription Requests</span>
+          <span
+            v-if="pendingRequestCount"
+            class="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-rose-500 px-2 py-0.5 text-xs font-bold text-white"
+            :aria-label="`${pendingRequestCount} pending subscription requests`"
+            title="Pending subscription requests"
+          >{{ pendingRequestCount > 99 ? '99+' : pendingRequestCount }}</span>
+          <span
+            v-else-if="alertsError"
+            class="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-xs font-bold text-slate-950"
+            :title="alertsError"
+            aria-label="Could not load subscription request count"
+          >!</span>
         </AppLink>
 
         <AppLink to="/platform/failed-jobs" class="platform-nav-link" :class="currentPath === '/platform/failed-jobs' ? 'platform-nav-link-active' : ''">
@@ -185,14 +243,16 @@ const onLogout = async () => {
               <h2 class="truncate text-lg font-bold text-slate-950 sm:text-2xl">{{ title }}</h2>
             </div>
           </div>
-          <div v-if="user" class="flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm sm:gap-3 sm:px-3">
-            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-50 text-xs font-bold uppercase text-teal-800 ring-1 ring-teal-100">
-              {{ (user.name || 'A').slice(0, 1) }}
-            </span>
-            <span class="hidden min-w-0 sm:block">
-              <span class="block max-w-40 truncate text-xs font-bold text-slate-900">{{ user.name }}</span>
-              <span class="block text-[11px] font-semibold text-teal-700">Platform Admin</span>
-            </span>
+          <div class="flex min-w-0 items-center gap-2">
+            <div v-if="user" class="flex min-w-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 py-2 shadow-sm sm:gap-3 sm:px-3">
+              <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-50 text-xs font-bold uppercase text-teal-800 ring-1 ring-teal-100">
+                {{ (user.name || 'A').slice(0, 1) }}
+              </span>
+              <span class="hidden min-w-0 sm:block">
+                <span class="block max-w-40 truncate text-xs font-bold text-slate-900">{{ user.name }}</span>
+                <span class="block text-[11px] font-semibold text-teal-700">Platform Admin</span>
+              </span>
+            </div>
           </div>
         </div>
       </header>

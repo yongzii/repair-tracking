@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import AdminLayout from '../../layouts/AdminLayout.vue';
 import { ensureAdmin } from '../../composables/auth';
+import { jobOrderStatusClass } from '../../composables/jobOrderStatus';
 import { navigate } from '../../navigation';
 
 const loading = ref(true);
@@ -94,7 +95,7 @@ const paymentStateClass = (state) => {
 const formatStatus = (status) => {
     if (status === 'PICKED_UP') return 'RELEASED';
     if (status === 'RTO_RELEASED') return 'RTO RELEASED';
-    if (status === 'RTO' || status === 'UNREPAIRABLE') return 'RTO';
+    if (status === 'RTO') return 'RTO';
     return status ? status.replaceAll('_', ' ') : '';
 };
 
@@ -126,13 +127,13 @@ onMounted(loadReport);
       <section class="admin-hero p-6">
         <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div>
-            <p class="text-xs font-bold uppercase text-teal-300">Operational reporting</p>
+            <p class="text-xs font-bold uppercase text-teal-700">Operational reporting</p>
             <h3 class="mt-2 font-display text-3xl">Reports and financial summaries</h3>
-            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Switch between repair operations and payment collections, then export only the report you need.</p>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Switch between repair operations and payment collections, then export only the report you need.</p>
           </div>
           <div class="flex flex-wrap gap-3">
             <button type="button" class="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-400" @click="downloadCsv">Export CSV</button>
-            <button type="button" class="rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-white hover:bg-white/15" @click="downloadPdf">Export PDF</button>
+            <button type="button" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700" @click="downloadPdf">Export PDF</button>
           </div>
         </div>
       </section>
@@ -180,7 +181,6 @@ onMounted(loadReport);
                 <option value="PICKED_UP">RELEASED</option>
                 <option value="RTO">RTO AWAITING RETURN</option>
                 <option value="RTO_RELEASED">RTO RELEASED</option>
-                <option value="UNREPAIRABLE">RTO</option>
               </select>
               <select v-model="filters.service_type" class="border border-slate-300 px-4 py-3">
                 <option value="">All Service Types</option>
@@ -313,7 +313,9 @@ onMounted(loadReport);
                   <p class="font-semibold text-slate-900">{{ job.service_category_name || job.device_type }}</p>
                   <p class="text-xs text-slate-500">{{ job.service_item_name || 'Unspecified service' }}</p>
                 </td>
-                <td class="px-4 py-3 text-slate-700">{{ formatStatus(job.current_status) }}</td>
+                <td class="px-4 py-3 text-slate-700">
+                  <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(job.current_status)">{{ formatStatus(job.current_status) }}</span>
+                </td>
                 <td class="px-4 py-3">
                   <span
                     class="inline-flex rounded-full px-2 py-1 text-xs font-bold ring-1"

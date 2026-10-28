@@ -81,11 +81,11 @@ onMounted(loadTechnicians);
       <section class="admin-hero p-6">
         <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <p class="text-xs font-bold uppercase text-teal-300">Repair workforce</p>
+            <p class="text-xs font-bold uppercase text-teal-700">Repair workforce</p>
             <h3 class="mt-2 font-display text-3xl">Technicians</h3>
-            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Manage technician profiles, specialties, and access to assigned repair jobs.</p>
+            <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Manage technician profiles, specialties, and access to assigned repair jobs.</p>
           </div>
-          <AppLink to="/admin/technicians/create" class="rounded-lg bg-white px-4 py-2 text-sm font-bold text-slate-950 hover:bg-slate-100">Open Full Form</AppLink>
+          <AppLink to="/admin/technicians/create" class="rounded-lg bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800">Open Full Form</AppLink>
         </div>
       </section>
 

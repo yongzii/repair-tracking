@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import AppLink from '../components/AppLink.vue';
 import { navigate } from '../navigation';
+import { jobOrderStatusClass } from '../composables/jobOrderStatus';
 
 const props = defineProps({
     params: {
@@ -20,10 +21,6 @@ const photos = ref([]);
 const warrantyAssessments = ref([]);
 const shop = ref(null);
 const shopOptions = ref([]);
-const bookingPath = computed(() => {
-    const normalizedShop = shopSlug.value.trim().toLowerCase();
-    return normalizedShop ? `/shops/${encodeURIComponent(normalizedShop)}/book` : '/book';
-});
 const consultationPath = computed(() => {
     const normalizedShop = shopSlug.value.trim().toLowerCase();
     return normalizedShop ? `/shops/${encodeURIComponent(normalizedShop)}/consultation` : '/consultation';
@@ -61,15 +58,8 @@ const todayHours = computed(() => {
 const formatStatus = (value) => {
     if (value === 'PICKED_UP') return 'RELEASED';
     if (value === 'RTO_RELEASED') return 'RTO RELEASED';
-    if (value === 'RTO' || value === 'UNREPAIRABLE') return 'RTO';
+    if (value === 'RTO') return 'RTO';
     return value ? value.replaceAll('_', ' ') : '';
-};
-
-const statusTone = (status) => {
-    if (status === 'PICKED_UP' || status === 'READY_FOR_PICKUP') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
-    if (status === 'WAITING_PARTS') return 'bg-amber-50 text-amber-700 ring-amber-200';
-    if (['UNREPAIRABLE', 'RTO', 'RTO_RELEASED'].includes(status)) return 'bg-slate-100 text-slate-700 ring-slate-200';
-    return 'bg-teal-50 text-teal-700 ring-teal-200';
 };
 
 const statusMessage = computed(() => {
@@ -84,7 +74,6 @@ const statusMessage = computed(() => {
         PICKED_UP: 'Your unit has already been released.',
         RTO: 'The repair attempt has ended and your unit is waiting to be returned.',
         RTO_RELEASED: 'Your RTO unit has been released.',
-        UNREPAIRABLE: 'The unit is marked return to owner after shop assessment.',
     }[jobOrder.value.current_status] || 'The shop has updated your repair status.';
 });
 
@@ -171,7 +160,6 @@ const onSearch = () => {
             </div>
             <div class="flex flex-wrap gap-2">
               <AppLink :to="consultationPath" class="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/15">Consultation</AppLink>
-              <AppLink :to="bookingPath" class="rounded-lg bg-white/10 px-3 py-2 text-sm font-bold text-white hover:bg-white/15">Book Drop-off</AppLink>
               <AppLink to="/" class="rounded-lg bg-white px-3 py-2 text-sm font-bold text-[var(--ui-text)] hover:bg-[var(--ui-surface-subtle)]">Home</AppLink>
             </div>
           </div>
@@ -241,7 +229,7 @@ const onSearch = () => {
                 </span>
               </div>
             </div>
-            <span class="rounded-full px-3 py-1 text-xs font-bold ring-1" :class="statusTone(jobOrder.current_status)">{{ formatStatus(jobOrder.current_status) }}</span>
+            <span class="rounded-full px-3 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(jobOrder.current_status)">{{ formatStatus(jobOrder.current_status) }}</span>
           </div>
           <div class="mb-5 rounded-xl border border-[var(--ui-border)] bg-[var(--ui-surface-muted)] p-4">
             <p class="text-xs font-bold uppercase text-[var(--ui-text-subtle)]">Latest Update</p>
@@ -274,7 +262,7 @@ const onSearch = () => {
             </div>
             <div>
               <p class="text-[var(--ui-text-muted)]">Current Status</p>
-              <p class="font-semibold text-[var(--ui-text)]">{{ formatStatus(jobOrder.current_status) }}</p>
+              <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(jobOrder.current_status)">{{ formatStatus(jobOrder.current_status) }}</span>
             </div>
             <div>
               <p class="text-[var(--ui-text-muted)]">Received</p>
@@ -316,7 +304,7 @@ const onSearch = () => {
           <div class="space-y-4">
             <div v-for="entry in timeline" :key="entry.id || entry.created_at" class="relative border-l-2 border-teal-200 pb-5 pl-5 last:pb-0">
               <span class="absolute -left-[7px] top-1 h-3 w-3 rounded-full bg-teal-500 ring-4 ring-teal-50"></span>
-              <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="statusTone(entry.status)">
+              <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(entry.status)">
                 {{ formatStatus(entry.status) }}
               </span>
               <p class="text-sm text-[var(--ui-text-muted)]">{{ entry.created_at_formatted }}</p>

@@ -83,9 +83,9 @@ onMounted(() => loadLogs());
 
     <div v-else class="space-y-6">
       <section class="admin-hero p-6">
-        <p class="text-xs font-bold uppercase text-teal-300">System accountability</p>
+        <p class="text-xs font-bold uppercase text-teal-700">System accountability</p>
         <h3 class="mt-2 font-display text-3xl">Audit Logs</h3>
-        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Review important user and system activities across the repair workspace.</p>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Review important user and system activities across the repair workspace.</p>
       </section>
 
       <div class="admin-panel p-6">

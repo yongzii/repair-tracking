@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue';
 import AdminLayout from '../../layouts/AdminLayout.vue';
 import AppLink from '../../components/AppLink.vue';
 import { ensureAdmin } from '../../composables/auth';
+import { jobOrderStatusClass } from '../../composables/jobOrderStatus';
 import { navigate } from '../../navigation';
 
 const props = defineProps({
@@ -99,7 +100,9 @@ onMounted(loadTechnician);
             <tr v-for="job in jobOrders.data" :key="job.id">
               <td class="px-4 py-3 font-semibold text-slate-900">{{ job.job_order_number }}</td>
               <td class="px-4 py-3 text-slate-700">{{ job.customer_name }}</td>
-              <td class="px-4 py-3 text-slate-700">{{ job.current_status }}</td>
+              <td class="px-4 py-3 text-slate-700">
+                <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(job.current_status)">{{ job.current_status.replaceAll('_', ' ') }}</span>
+              </td>
               <td class="px-4 py-3"><AppLink :to="`/admin/job-orders/${job.id}`" class="text-slate-900 font-semibold">View</AppLink></td>
             </tr>
             <tr v-if="!jobOrders.data.length">

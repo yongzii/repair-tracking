@@ -32,7 +32,7 @@ const workflowCards = [
     {
         number: '04',
         title: 'Keep customers informed',
-        text: 'Offer customers a simple way to check repair progress and request a drop-off.',
+        text: 'Offer customers a simple way to check repair progress and request a consultation.',
         icon: 'people',
     },
 ];
@@ -65,7 +65,7 @@ const closeMobileMenu = () => {
         <nav aria-label="Main navigation" class="hidden items-center gap-8 text-sm font-medium text-slate-300 md:flex">
           <a href="#features" class="transition hover:text-white">Features</a>
           <AppLink to="/track" class="transition hover:text-white">Track Repair</AppLink>
-          <AppLink to="/book" class="transition hover:text-white">Book a Drop-off</AppLink>
+          <AppLink to="/consultation" class="transition hover:text-white">Free Consultation</AppLink>
         </nav>
 
         <div class="hidden items-center gap-3 md:flex">
@@ -98,7 +98,7 @@ const closeMobileMenu = () => {
         >
           <a href="#features" class="rounded-lg px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5" @click="closeMobileMenu">Features</a>
           <AppLink to="/track" class="rounded-lg px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5" @click="closeMobileMenu">Track Repair</AppLink>
-          <AppLink to="/book" class="rounded-lg px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5" @click="closeMobileMenu">Book a Drop-off</AppLink>
+          <AppLink to="/consultation" class="rounded-lg px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5" @click="closeMobileMenu">Free Consultation</AppLink>
           <AppLink to="/consultation" class="rounded-lg px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5" @click="closeMobileMenu">Free Consultation</AppLink>
           <AppLink v-if="canOpenPortal" :to="portalPath" class="mt-1 rounded-lg bg-teal-400 px-4 py-3 text-sm font-bold text-slate-950" @click="closeMobileMenu">Dashboard</AppLink>
           <AppLink v-else-if="technicianPortal" to="/technician" class="mt-1 rounded-lg bg-teal-400 px-4 py-3 text-sm font-bold text-slate-950" @click="closeMobileMenu">My Jobs</AppLink>
@@ -451,7 +451,6 @@ const closeMobileMenu = () => {
         <nav aria-label="Footer navigation" class="flex flex-wrap gap-x-5 gap-y-2 text-xs font-medium">
           <AppLink to="/get-started" class="hover:text-white">Get started</AppLink>
           <AppLink to="/track" class="hover:text-white">Track Repair</AppLink>
-          <AppLink to="/book" class="hover:text-white">Book a Drop-off</AppLink>
           <AppLink to="/consultation" class="hover:text-white">Consultation</AppLink>
           <AppLink to="/login" class="hover:text-white">Login</AppLink>
         </nav>

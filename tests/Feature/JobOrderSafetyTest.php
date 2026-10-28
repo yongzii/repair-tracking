@@ -64,30 +64,39 @@ class JobOrderSafetyTest extends TestCase
         ]);
     }
 
-    public function test_repair_cannot_start_without_recorded_customer_approval(): void
+    public function test_staff_and_admin_can_update_repair_status_without_recorded_customer_approval(): void
     {
-        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
-        $jobOrder = JobOrder::create([
-            'shop_id' => $shop->id,
-            'job_order_number' => 'TEST-APPROVAL-001',
-            'customer_name' => 'Customer Name',
-            'customer_phone' => '09000000000',
-            'device_type' => 'Phone',
-            'problem_description' => 'Does not power on.',
-            'current_status' => 'DIAGNOSING',
-        ]);
+        foreach ([User::ROLE_STAFF, User::ROLE_ADMIN] as $role) {
+            [$shop, $user] = $this->createShopUser($role);
+            $jobOrder = JobOrder::create([
+                'shop_id' => $shop->id,
+                'job_order_number' => 'TEST-APPROVAL-' . strtoupper($role),
+                'customer_name' => 'Customer Name',
+                'customer_phone' => '09000000000',
+                'device_type' => 'Phone',
+                'problem_description' => 'Does not power on.',
+                'current_status' => 'DIAGNOSING',
+            ]);
 
-        $this->actingAs($staff)
-            ->postJson("/api/admin/job-orders/{$jobOrder->id}/update-status", [
-                'status' => 'IN_PROGRESS',
-            ])
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('status');
+            $this->actingAs($user)
+                ->postJson("/api/admin/job-orders/{$jobOrder->id}/update-status", [
+                    'status' => 'IN_PROGRESS',
+                ])
+                ->assertOk();
 
-        $this->assertSame('DIAGNOSING', $jobOrder->fresh()->current_status);
+            $this->assertSame('IN_PROGRESS', $jobOrder->fresh()->current_status);
+
+            $this->actingAs($user)
+                ->postJson("/api/admin/job-orders/{$jobOrder->id}/update-status", [
+                    'status' => 'READY_FOR_PICKUP',
+                ])
+                ->assertOk();
+
+            $this->assertSame('READY_FOR_PICKUP', $jobOrder->fresh()->current_status);
+        }
     }
 
-    public function test_assigned_technician_can_record_approval_and_start_repair(): void
+    public function test_assigned_technician_can_start_repair_without_approval_and_record_it_later(): void
     {
         [$shop, $technicianUser] = $this->createShopUser(User::ROLE_TECHNICIAN);
         $technician = \App\Models\Technician::create([
@@ -112,6 +121,15 @@ class JobOrderSafetyTest extends TestCase
             'payment_status' => 'PARTIAL',
             'payment_notes' => 'Private payment note.',
         ]);
+
+        $this->actingAs($technicianUser)
+            ->postJson("/api/technician/job-orders/{$jobOrder->id}/update-status", [
+                'status' => 'IN_PROGRESS',
+                'note' => 'Repair started without an approval record.',
+            ])
+            ->assertOk();
+
+        $this->assertSame('IN_PROGRESS', $jobOrder->fresh()->current_status);
 
         $response = $this->actingAs($technicianUser)
             ->postJson("/api/technician/job-orders/{$jobOrder->id}/record-repair-approval", [
@@ -153,13 +171,6 @@ class JobOrderSafetyTest extends TestCase
             'action' => 'job_order.repair_approved',
             'record_id' => $jobOrder->id,
         ]);
-
-        $this->actingAs($technicianUser)
-            ->postJson("/api/technician/job-orders/{$jobOrder->id}/update-status", [
-                'status' => 'IN_PROGRESS',
-                'note' => 'Customer approval recorded; repair started.',
-            ])
-            ->assertOk();
     }
 
     public function test_unassigned_technician_cannot_record_approval_for_another_job(): void

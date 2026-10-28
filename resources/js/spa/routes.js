@@ -136,7 +136,7 @@ export const resolveRoute = (path) => {
     }
 
     if (path === '/admin/part-requests') {
-        return { component: PartRequestsPage, params: {}, title: 'Parts & Orders' };
+        return { component: PartRequestsPage, params: {}, title: 'For Order' };
     }
 
     if (path === '/admin/appointments') {

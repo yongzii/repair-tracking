@@ -34,8 +34,33 @@ class PartRequestController extends Controller
             ->get()
             ->map(fn (PartRequest $partRequest) => $this->mapRequest($partRequest));
 
+        $checklist = collect()
+            ->merge(SparePart::query()
+                ->where('shop_id', $shopId)
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get(['name', 'category'])
+                ->map(fn (SparePart $part) => [
+                    'part_name' => trim($part->name),
+                    'category' => $part->category,
+                ]))
+            ->merge(PartRequest::query()
+                ->where('shop_id', $shopId)
+                ->whereNull('job_order_id')
+                ->orderBy('part_name')
+                ->get(['part_name', 'category'])
+                ->map(fn (PartRequest $partRequest) => [
+                    'part_name' => trim($partRequest->part_name),
+                    'category' => $partRequest->category,
+                ]))
+            ->filter(fn (array $part) => $part['part_name'] !== '')
+            ->unique(fn (array $part) => mb_strtolower($part['part_name']))
+            ->values()
+            ->all();
+
         return response()->json([
             'requests' => $requests,
+            'checklist' => $checklist,
             'summary' => [
                 'total' => $requests->count(),
                 'pending' => $requests->where('status', PartRequest::STATUS_PENDING)->count(),
@@ -57,6 +82,7 @@ class PartRequestController extends Controller
             'job_order_id' => ['prohibited'],
             'idempotency_key' => ['nullable', 'uuid'],
             'part_name' => ['required', 'string', 'max:150'],
+            'category' => ['nullable', 'string', 'max:100'],
             'quantity' => ['required', 'integer', 'min:1', 'max:1000000'],
             'note' => ['nullable', 'string', 'max:255'],
         ]);
@@ -89,12 +115,37 @@ class PartRequestController extends Controller
         $validated = $request->validate([
             'job_order_id' => ['prohibited'],
             'idempotency_key' => ['nullable', 'uuid'],
+            'register_part' => ['sometimes', 'boolean'],
             'part_name' => ['required', 'string', 'max:150'],
+            'category' => ['nullable', 'string', 'max:100'],
             'quantity' => ['required', 'integer', 'min:1', 'max:1000000'],
             'note' => ['nullable', 'string', 'max:255'],
+            'status' => ['sometimes', Rule::in([PartRequest::STATUS_PENDING, PartRequest::STATUS_ORDERED])],
         ]);
 
-        [$partRequest, $created] = $this->createPartRequest($request, $user, $validated, $shopId);
+        if (($validated['register_part'] ?? false)
+            && (PartRequest::query()
+                ->where('shop_id', $shopId)
+                ->whereNull('job_order_id')
+                ->whereRaw('LOWER(TRIM(part_name)) = ?', [mb_strtolower(trim($validated['part_name']))])
+                ->exists()
+                || SparePart::query()
+                    ->where('shop_id', $shopId)
+                    ->where('is_active', true)
+                    ->whereRaw('LOWER(TRIM(name)) = ?', [mb_strtolower(trim($validated['part_name']))])
+                    ->exists())) {
+            throw ValidationException::withMessages([
+                'part_name' => 'This part is already in the reusable checklist.',
+            ]);
+        }
+
+        [$partRequest, $created] = $this->createPartRequest(
+            $request,
+            $user,
+            $validated,
+            $shopId,
+            $validated['status'] ?? PartRequest::STATUS_PENDING,
+        );
 
         if ($created) {
             AuditLogger::log(
@@ -195,6 +246,64 @@ class PartRequestController extends Controller
         ]);
     }
 
+    public function update(Request $request, PartRequest $partRequest)
+    {
+        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $this->ensureSameShop($request, $partRequest);
+
+        if (!in_array($partRequest->status, [PartRequest::STATUS_PENDING, PartRequest::STATUS_APPROVED], true)) {
+            throw ValidationException::withMessages([
+                'part' => 'Only pending or approved parts can be edited before ordering.',
+            ]);
+        }
+
+        $validated = $request->validate([
+            'part_name' => ['required', 'string', 'max:150'],
+            'quantity' => ['required', 'integer', 'min:1', 'max:1000000'],
+            'note' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $previous = $partRequest->only(['part_name', 'quantity', 'note', 'status']);
+
+        DB::transaction(function () use ($partRequest, $user, $validated): void {
+            $lockedRequest = PartRequest::query()
+                ->where('shop_id', $partRequest->shop_id)
+                ->lockForUpdate()
+                ->findOrFail($partRequest->id);
+
+            if (!in_array($lockedRequest->status, [PartRequest::STATUS_PENDING, PartRequest::STATUS_APPROVED], true)) {
+                throw ValidationException::withMessages([
+                    'part' => 'This part cannot be edited because its order workflow has already progressed.',
+                ]);
+            }
+
+            $lockedRequest->update([
+                'part_name' => trim($validated['part_name']),
+                'quantity' => $validated['quantity'],
+                'note' => $validated['note'] ?? null,
+                'updated_by_user_id' => $user->id,
+            ]);
+        });
+
+        $partRequest->refresh();
+
+        AuditLogger::log(
+            request: $request,
+            user: $user,
+            action: 'part_request.updated',
+            module: 'part_requests',
+            record: $partRequest,
+            description: "Updated the For Order request for {$partRequest->part_name}.",
+            oldValues: $previous,
+            newValues: $partRequest->only(['part_name', 'quantity', 'note', 'status'])
+        );
+
+        return response()->json([
+            'message' => 'For Order item updated.',
+            'request' => $this->mapRequest($partRequest->load(['jobOrder', 'requestedBy', 'updatedBy', 'inventoryPart', 'receivedBy'])),
+        ]);
+    }
+
     public function receive(Request $request, PartRequest $partRequest)
     {
         $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
@@ -280,20 +389,32 @@ class PartRequestController extends Controller
         ]);
     }
 
-    private function createPartRequest(Request $request, User $user, array $validated, int $shopId): array
+    private function createPartRequest(
+        Request $request,
+        User $user,
+        array $validated,
+        int $shopId,
+        string $status = PartRequest::STATUS_PENDING,
+    ): array
     {
         $idempotencyKey = $validated['idempotency_key'] ?? null;
         $partName = trim($validated['part_name']);
+        $category = isset($validated['category']) ? trim($validated['category']) : null;
         $quantity = (int) $validated['quantity'];
         $note = isset($validated['note']) ? trim($validated['note']) : null;
-        $payloadHash = hash('sha256', json_encode([
+        $payload = [
             'part_name' => $partName,
+            'category' => $category,
             'quantity' => $quantity,
             'note' => $note,
-        ], JSON_THROW_ON_ERROR));
+        ];
+        if ($status !== PartRequest::STATUS_PENDING) {
+            $payload['status'] = $status;
+        }
+        $payloadHash = hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR));
 
         try {
-            return DB::transaction(function () use ($idempotencyKey, $payloadHash, $shopId, $user, $partName, $quantity, $note) {
+            return DB::transaction(function () use ($idempotencyKey, $payloadHash, $shopId, $user, $partName, $category, $quantity, $note, $status) {
                 if ($idempotencyKey !== null) {
                     $existing = PartRequest::query()
                         ->where('shop_id', $shopId)
@@ -315,9 +436,10 @@ class PartRequestController extends Controller
                     'idempotency_key' => $idempotencyKey,
                     'idempotency_payload_hash' => $payloadHash,
                     'part_name' => $partName,
+                    'category' => $category,
                     'quantity' => $quantity,
                     'note' => $note,
-                    'status' => PartRequest::STATUS_PENDING,
+                    'status' => $status,
                 ]), true];
             }, 3);
         } catch (QueryException $exception) {
@@ -348,6 +470,7 @@ class PartRequestController extends Controller
         return [
             'id' => $partRequest->id,
             'part_name' => $partRequest->part_name,
+            'category' => $partRequest->category,
             'quantity' => $partRequest->quantity,
             'note' => $partRequest->note,
             'status' => $partRequest->status,

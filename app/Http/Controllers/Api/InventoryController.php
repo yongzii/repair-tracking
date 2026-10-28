@@ -84,7 +84,7 @@ class InventoryController extends Controller
             'name' => $validated['name'],
             'part_number' => $validated['part_number'] ?? null,
             'category' => $validated['category'] ?? null,
-            'unit' => $validated['unit'] ?? 'pcs',
+            'unit' => 'pcs',
             'stock_quantity' => $validated['stock_quantity'],
             'reorder_level' => $validated['reorder_level'],
             'unit_cost' => $validated['unit_cost'],
@@ -173,7 +173,7 @@ class InventoryController extends Controller
                 'name' => $validated['name'],
                 'part_number' => $validated['part_number'] ?? null,
                 'category' => $validated['category'] ?? null,
-                'unit' => $validated['unit'] ?? 'pcs',
+                'unit' => 'pcs',
                 'stock_quantity' => $validated['stock_quantity'],
                 'reorder_level' => $validated['reorder_level'],
                 'unit_cost' => $validated['unit_cost'],
@@ -357,6 +357,6 @@ class InventoryController extends Controller
 
     private function authorizeAdmin(Request $request): void
     {
-        $this->authorizeRoles($request, User::ROLE_ADMIN);
+        $this->authorizeRoles($request, User::adminRoles());
     }
 }

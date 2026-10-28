@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import AdminLayout from '../../layouts/AdminLayout.vue';
 import AppLink from '../../components/AppLink.vue';
 import { adminRoles, authState, ensureRoles } from '../../composables/auth';
+import { jobOrderStatusClass, paymentStatusClass } from '../../composables/jobOrderStatus';
 import { navigate } from '../../navigation';
 
 const props = defineProps({
@@ -34,7 +35,7 @@ const retryingNotificationId = ref(null);
 const recordingPayment = ref(false);
 const paymentIdempotencyKey = ref(null);
 const paymentIntentSignature = ref(null);
-const activeAction = ref('status');
+const activeAction = ref(null);
 
 const statusForm = ref({
     status: '',
@@ -80,16 +81,15 @@ const photoForm = ref({
 });
 
 const canOverridePickup = computed(() => adminRoles.includes(authState.user?.role));
-const isRtoStatus = computed(() => ['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'].includes(jobOrder.value?.current_status));
+const isRtoStatus = computed(() => ['RTO', 'RTO_RELEASED'].includes(jobOrder.value?.current_status));
 const pendingRefundTotal = computed(() => refunds.value
     .filter((refund) => refund.status === 'PENDING')
     .reduce((total, refund) => total + Number(refund.amount), 0));
 const issuedRefundTotal = computed(() => refunds.value
     .filter((refund) => refund.status === 'ISSUED')
     .reduce((total, refund) => total + Number(refund.amount), 0));
-
 const actionTabs = computed(() => {
-    const isRto = ['RTO', 'UNREPAIRABLE'].includes(jobOrder.value?.current_status);
+    const isRto = jobOrder.value?.current_status === 'RTO';
     const isFinal = ['PICKED_UP', 'RTO_RELEASED'].includes(jobOrder.value?.current_status);
     const tabs = isRto || isFinal ? [] : [{ key: 'status', label: 'Status' }];
 
@@ -114,6 +114,7 @@ const actionTabs = computed(() => {
         { key: 'history', label: 'History' },
     ];
 });
+const activeActionLabel = computed(() => actionTabs.value.find((tab) => tab.key === activeAction.value)?.label || 'Job action');
 
 const partForm = ref({
     spare_part_id: '',
@@ -142,7 +143,7 @@ const activeWarrantyService = computed(() => warrantyAssessments.value.find((ass
 
     return warrantyJob
         && warrantyJob.current_status !== 'PICKED_UP'
-        && !['UNREPAIRABLE', 'RTO', 'RTO_RELEASED'].includes(warrantyJob.current_status);
+        && !['RTO', 'RTO_RELEASED'].includes(warrantyJob.current_status);
 }) || null);
 
 const warrantyExpiresAt = computed(() => {
@@ -289,7 +290,6 @@ const formatStatus = (status) => {
     if (status === 'PICKED_UP') return 'RELEASED';
     if (status === 'RTO_RELEASED') return 'RTO RELEASED';
     if (status === 'RTO') return 'RTO';
-    if (status === 'UNREPAIRABLE') return 'RTO';
     return status ? status.replaceAll('_', ' ') : '';
 };
 
@@ -328,8 +328,8 @@ const loadJobOrder = async () => {
 
         const data = jobOrderResponse.data;
         jobOrder.value = data.jobOrder;
-        if (['RTO', 'UNREPAIRABLE', 'RTO_RELEASED'].includes(jobOrder.value.current_status)) {
-            activeAction.value = 'refunds';
+        if (activeAction.value && !actionTabs.value.some((tab) => tab.key === activeAction.value)) {
+            activeAction.value = null;
         }
         statusHistories.value = data.statusHistories || [];
         parts.value = data.parts || [];
@@ -660,23 +660,10 @@ onMounted(loadJobOrder);
           <AppLink :to="`/admin/job-orders/${jobOrder.id}/print/intake`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Claim Slip</AppLink>
           <AppLink :to="`/admin/job-orders/${jobOrder.id}/print/warranty`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Warranty</AppLink>
           <AppLink :to="`/admin/job-orders/${jobOrder.id}/invoice`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">{{ jobOrder.service_type === 'WARRANTY_SERVICE' ? 'Service Summary' : 'Invoice' }}</AppLink>
-          <AppLink to="/admin/part-requests" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Parts &amp; Orders</AppLink>
+          <AppLink to="/admin/part-requests" class="btn-soft inline-flex items-center px-3 py-2 text-xs">For Order</AppLink>
           <AppLink :to="`/admin/job-orders/${jobOrder.id}/edit`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Edit</AppLink>
           <AppLink to="/admin/job-orders" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Back</AppLink>
         </div>
-      </div>
-
-      <div class="card p-6" v-if="activeAction === 'release-rto' && ['RTO', 'UNREPAIRABLE'].includes(jobOrder.current_status) && !jobOrder.picked_up_at">
-        <h4 class="text-lg font-semibold text-slate-900 mb-4">Release RTO Unit</h4>
-        <div class="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
-          <p class="font-bold">No repair balance is due for an unsuccessful repair</p>
-          <p class="mt-1">Total: {{ formatCurrency(jobOrder.total_cost) }} · Paid: {{ formatCurrency(jobOrder.amount_paid) }} · Balance: {{ formatCurrency(balance) }}</p>
-          <p class="mt-1">Pending refunds: {{ formatCurrency(pendingRefundTotal) }} · Issued refunds: {{ formatCurrency(issuedRefundTotal) }}</p>
-        </div>
-        <form class="space-y-3" @submit.prevent="releaseRto">
-          <input v-model="pickupForm.picked_up_by" type="text" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Released to / claimed by" required />
-          <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg">Confirm RTO Release</button>
-        </form>
       </div>
 
       <div v-if="jobOrder.service_type === 'WARRANTY_SERVICE'" class="card border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
@@ -693,7 +680,7 @@ onMounted(loadJobOrder);
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div>
                 <p class="text-slate-500">Status</p>
-                <p class="font-semibold text-slate-900">{{ formatStatus(jobOrder.current_status) }}</p>
+                <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(jobOrder.current_status)">{{ formatStatus(jobOrder.current_status) }}</span>
               </div>
               <div>
                 <p class="text-slate-500">Priority</p>
@@ -705,7 +692,7 @@ onMounted(loadJobOrder);
               </div>
               <div>
                 <p class="text-slate-500">Payment Status</p>
-                <p class="font-semibold text-slate-900">{{ (jobOrder.payment_status || 'PENDING').replaceAll('_', ' ') }}</p>
+                <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="paymentStatusClass(jobOrder.payment_status)">{{ (jobOrder.payment_status || 'PENDING').replaceAll('_', ' ') }}</span>
               </div>
               <div>
                 <p class="text-slate-500">Amount Paid</p>
@@ -735,7 +722,7 @@ onMounted(loadJobOrder);
                 <p v-if="jobOrder.repair_approved_at" class="font-semibold text-emerald-700">
                   Approved by {{ jobOrder.repair_approved_by_customer }} - Recorded by {{ jobOrder.repair_approval_recorded_by }} - {{ formatDate(jobOrder.repair_approved_at, true) }}
                 </p>
-                <p v-else class="font-semibold text-amber-700">Customer approval not yet recorded</p>
+                <p v-else class="font-semibold text-amber-700">Customer approval has not been recorded (optional)</p>
                 <p v-if="jobOrder.repair_approval_notes" class="mt-1 text-slate-700">{{ jobOrder.repair_approval_notes }}</p>
               </div>
             </div>
@@ -773,7 +760,7 @@ onMounted(loadJobOrder);
             <h4 class="text-lg font-semibold text-slate-900 mb-4">Timeline</h4>
             <div class="space-y-3">
               <div v-for="entry in statusHistories" :key="entry.id || entry.created_at" class="border-b border-slate-100 pb-3 last:border-0 last:pb-0">
-                <p class="font-semibold text-slate-900">{{ formatStatus(entry.status) }}</p>
+                <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(entry.status)">{{ formatStatus(entry.status) }}</span>
                 <p class="text-sm text-slate-500">{{ formatDate(entry.created_at, true) }}</p>
                 <p v-if="entry.note" class="text-sm text-slate-700">{{ entry.note }}</p>
               </div>
@@ -892,8 +879,7 @@ onMounted(loadJobOrder);
                 v-for="tab in actionTabs"
                 :key="tab.key"
                 type="button"
-                class="rounded-lg px-3 py-2 text-sm font-bold transition"
-                :class="activeAction === tab.key ? 'bg-slate-950 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'"
+                class="rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
                 @click="activeAction = tab.key"
               >
                 {{ tab.label }}
@@ -902,7 +888,8 @@ onMounted(loadJobOrder);
           </div>
 
           <div class="card p-5">
-            <h4 class="text-lg font-semibold text-slate-900 mb-3">Snapshot</h4>
+            <h4 class="text-lg font-semibold text-slate-900 mb-1">Job Summary</h4>
+            <p class="mb-3 text-xs text-slate-500">Counts of records linked to this job; this is not a backup.</p>
             <div class="grid grid-cols-2 gap-3 text-sm">
               <div class="rounded-lg bg-slate-50 p-3">
                 <p class="text-xs font-bold uppercase text-slate-400">Parts</p>
@@ -921,6 +908,42 @@ onMounted(loadJobOrder);
                 <p class="mt-1 font-bold text-slate-900">{{ notifications.length }}</p>
               </div>
             </div>
+          </div>
+
+          <Teleport to="body">
+          <div
+            v-if="activeAction"
+            class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-4"
+            role="dialog"
+            aria-modal="true"
+            :aria-label="activeActionLabel"
+            @click.self="activeAction = null"
+            @keydown.esc.window.stop="activeAction = null"
+          >
+            <section class="max-h-[85vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+              <header class="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-4">
+                <h4 class="text-lg font-semibold text-slate-900">{{ activeActionLabel }}</h4>
+                <button
+                  type="button"
+                  class="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                  aria-label="Close action dialog"
+                  @click="activeAction = null"
+                >
+                  Close
+                </button>
+              </header>
+              <div class="p-5">
+          <div class="card p-6" v-if="activeAction === 'release-rto' && jobOrder.current_status === 'RTO' && !jobOrder.picked_up_at">
+            <h4 class="text-lg font-semibold text-slate-900 mb-4">Release RTO Unit</h4>
+            <div class="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              <p class="font-bold">No repair balance is due for an unsuccessful repair</p>
+              <p class="mt-1">Total: {{ formatCurrency(jobOrder.total_cost) }} · Paid: {{ formatCurrency(jobOrder.amount_paid) }} · Balance: {{ formatCurrency(balance) }}</p>
+              <p class="mt-1">Pending refunds: {{ formatCurrency(pendingRefundTotal) }} · Issued refunds: {{ formatCurrency(issuedRefundTotal) }}</p>
+            </div>
+            <form class="space-y-3" @submit.prevent="releaseRto">
+              <input v-model="pickupForm.picked_up_by" type="text" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Released to / claimed by" required />
+              <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg">Confirm RTO Release</button>
+            </form>
           </div>
 
           <div v-if="activeAction === 'status'" class="card p-6">
@@ -980,6 +1003,7 @@ onMounted(loadJobOrder);
 
           <div v-if="activeAction === 'approval'" class="card p-6">
             <h4 class="text-lg font-semibold text-slate-900 mb-4">Customer Repair Approval</h4>
+            <p class="mb-4 text-sm text-slate-600">Optional: record customer approval for documentation. This does not block repair work or status updates.</p>
             <form class="space-y-3" @submit.prevent="recordRepairApproval">
               <input v-model="approvalForm.repair_approved_by_customer" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Customer/authorized person name" required />
               <textarea v-model="approvalForm.repair_approval_notes" rows="3" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Approval method, approved estimate, or notes"></textarea>
@@ -1200,6 +1224,10 @@ onMounted(loadJobOrder);
             </div>
             <p v-else class="text-sm text-slate-500">No customer notifications recorded yet.</p>
           </div>
+              </div>
+            </section>
+          </div>
+          </Teleport>
 
         </div>
       </div>

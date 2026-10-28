@@ -46,7 +46,6 @@ const form = reactive({
             PICKED_UP: true,
             RTO: true,
             RTO_RELEASED: true,
-            UNREPAIRABLE: true,
         },
     },
 });
@@ -60,7 +59,6 @@ const notificationEvents = [
     { key: 'PICKED_UP', label: 'RELEASED' },
     { key: 'RTO', label: 'RTO awaiting return' },
     { key: 'RTO_RELEASED', label: 'RTO released' },
-    { key: 'UNREPAIRABLE', label: 'RTO' },
 ];
 
 const businessDays = [
@@ -87,7 +85,7 @@ const publicLinks = computed(() => [
     {
         key: 'booking',
         label: 'Drop-off Booking',
-        description: 'For customers planning to bring a unit to the shop.',
+        description: 'For customers scheduling a device drop-off.',
         url: bookingUrl.value,
         empty: 'Drop-off booking link unavailable.',
     },
@@ -458,9 +456,9 @@ onMounted(loadShop);
 
     <div v-else class="space-y-6">
       <section class="admin-hero p-6">
-        <p class="text-xs font-bold uppercase text-teal-300">Workspace configuration</p>
+        <p class="text-xs font-bold uppercase text-teal-700">Workspace configuration</p>
         <h3 class="mt-2 font-display text-3xl">Shop Settings</h3>
-        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-300">Manage business profile details and public customer links for tracking, drop-off booking, and consultation.</p>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Manage business profile details and public customer links for tracking and consultation.</p>
       </section>
 
       <div v-if="successMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{{ successMessage }}</div>

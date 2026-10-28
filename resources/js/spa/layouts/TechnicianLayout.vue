@@ -1,9 +1,10 @@
 <script setup>
-import { computed, ref } from 'vue';
-import { authState, logout } from '../composables/auth';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { authState, ensureRoles, logout } from '../composables/auth';
 import { useNavigation, navigate } from '../navigation';
 import AppLink from '../components/AppLink.vue';
 import ChangePasswordButton from '../components/ChangePasswordButton.vue';
+import { appConfig } from '../config';
 
 const props = defineProps({
     title: {
@@ -15,12 +16,60 @@ const props = defineProps({
 const { location } = useNavigation();
 const currentPath = computed(() => location.path);
 const user = computed(() => authState.user);
+const openAssignedJobs = ref(null);
+const alertsError = ref('');
+const alertsLoading = ref(false);
+let alertsRefreshInterval;
+const shopName = computed(() => user.value?.shop?.name || appConfig.name);
+const shopLogo = computed(() => user.value?.shop?.logo_url || '');
 const mobileNavOpen = ref(false);
+
+const loadAlerts = async () => {
+    if (alertsLoading.value) return;
+
+    alertsLoading.value = true;
+    alertsError.value = '';
+    try {
+        const auth = await ensureRoles(['technician']);
+        if (!auth.ok) {
+            openAssignedJobs.value = null;
+            return;
+        }
+
+        const { data } = await window.axios.get('/api/technician/alerts');
+        openAssignedJobs.value = Number(data.open_assigned_jobs || 0);
+    } catch (error) {
+        openAssignedJobs.value = null;
+        alertsError.value = error?.response?.data?.message || 'Unable to load assigned-job alerts.';
+    } finally {
+        alertsLoading.value = false;
+    }
+};
 
 const onLogout = async () => {
     await logout();
     navigate('/login', { replace: true });
 };
+
+onMounted(() => {
+    loadAlerts();
+    alertsRefreshInterval = window.setInterval(loadAlerts, 60_000);
+    window.addEventListener('focus', loadAlerts);
+});
+
+onBeforeUnmount(() => {
+    window.clearInterval(alertsRefreshInterval);
+    window.removeEventListener('focus', loadAlerts);
+});
+
+watch(currentPath, loadAlerts);
+watch(() => user.value?.role, (role) => {
+    if (role === 'technician') {
+        loadAlerts();
+    } else {
+        openAssignedJobs.value = null;
+    }
+});
 </script>
 
 <template>
@@ -37,10 +86,14 @@ const onLogout = async () => {
       :class="mobileNavOpen ? 'translate-x-0' : '-translate-x-full'"
     >
       <div class="border-b border-white/10 p-5">
-        <AppLink to="/technician" class="flex items-start gap-3">
-          <img src="/images/repairsync-cloud-logo.png" alt="RepairSync Cloud" class="mt-1 h-11 w-40 shrink-0 object-cover object-center brightness-0 invert" />
+        <AppLink to="/technician" class="flex min-w-0 items-center gap-3">
+          <span class="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white text-sm font-bold text-slate-950">
+            <img v-if="shopLogo" :src="shopLogo" alt="Shop logo" class="h-full w-full object-contain p-1.5" />
+            <img v-else src="/images/repairsync-cloud-logo.png" alt="RepairSync Cloud" class="h-full w-full object-contain p-1.5 brightness-0" />
+          </span>
           <span class="min-w-0">
-            <span class="mt-1 block text-sm text-slate-300">Technician Workspace</span>
+            <span class="block truncate text-lg font-semibold text-white">{{ shopName }}</span>
+            <span class="block truncate text-xs text-slate-300">{{ appConfig.tagline }}</span>
           </span>
         </AppLink>
       </div>
@@ -49,6 +102,18 @@ const onLogout = async () => {
         <AppLink to="/technician" class="nav-link" :class="currentPath === '/technician' ? 'nav-link-active' : ''">
           <i class="fas fa-screwdriver-wrench w-5"></i>
           <span>My Jobs</span>
+          <span
+            v-if="openAssignedJobs"
+            class="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-teal-400 px-2 py-0.5 text-xs font-bold text-teal-950"
+            :aria-label="`${openAssignedJobs} open assigned jobs`"
+            title="Open assigned jobs"
+          >{{ openAssignedJobs > 99 ? '99+' : openAssignedJobs }}</span>
+          <span
+            v-else-if="alertsError"
+            class="ml-auto inline-flex h-5 w-5 items-center justify-center rounded-full bg-amber-400 text-xs font-bold text-slate-950"
+            :title="alertsError"
+            aria-label="Could not load assigned-job count"
+          >!</span>
         </AppLink>
 
         <AppLink to="/track" class="nav-link" :class="currentPath.startsWith('/track') ? 'nav-link-active' : ''">

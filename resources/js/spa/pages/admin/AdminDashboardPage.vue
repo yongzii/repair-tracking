@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue';
 import AdminLayout from '../../layouts/AdminLayout.vue';
 import AppLink from '../../components/AppLink.vue';
 import { adminRoles, authState, ensureRoles } from '../../composables/auth';
+import { jobOrderStatusClass, paymentStatusClass } from '../../composables/jobOrderStatus';
 import { navigate } from '../../navigation';
 
 const loading = ref(true);
@@ -42,18 +43,10 @@ const healthCards = computed(() => {
     ];
 });
 
-const statusClass = (status, overdue = false) => {
-    if (overdue) return 'bg-rose-50 text-rose-700 ring-rose-200';
-    if (status === 'READY_FOR_PICKUP' || status === 'PICKED_UP') return 'bg-emerald-50 text-emerald-700 ring-emerald-200';
-    if (status === 'WAITING_PARTS') return 'bg-amber-50 text-amber-700 ring-amber-200';
-    if (['UNREPAIRABLE', 'RTO', 'RTO_RELEASED'].includes(status)) return 'bg-slate-100 text-slate-700 ring-slate-200';
-    return 'bg-teal-50 text-teal-700 ring-teal-200';
-};
-
 const formatStatus = (status) => {
     if (status === 'PICKED_UP') return 'RELEASED';
     if (status === 'RTO_RELEASED') return 'RTO RELEASED';
-    if (status === 'RTO' || status === 'UNREPAIRABLE') return 'RTO';
+    if (status === 'RTO') return 'RTO';
     return status ? status.replaceAll('_', ' ') : '';
 };
 
@@ -103,7 +96,7 @@ onMounted(loadDashboard);
             </p>
             <div class="mt-6 flex flex-wrap gap-3">
               <AppLink to="/admin/job-orders/create" class="rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-teal-900/10 hover:bg-teal-700">New Job Order</AppLink>
-              <AppLink to="/admin/part-requests" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Review Parts</AppLink>
+              <AppLink to="/admin/part-requests" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Open For Order</AppLink>
               <AppLink to="/admin/reports" class="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Open Reports</AppLink>
             </div>
           </div>
@@ -161,9 +154,10 @@ onMounted(loadDashboard);
                   <p v-if="job.technician_name" class="mt-1 text-xs text-slate-500">Tech: {{ job.technician_name }}</p>
                 </div>
                 <div class="shrink-0 text-right">
-                  <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="statusClass(job.current_status, job.is_overdue)">
+                  <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(job.current_status)">
                     {{ formatStatus(job.current_status) }}
                   </span>
+                  <span v-if="job.is_overdue" class="ml-2 inline-flex rounded-full bg-rose-50 px-2 py-1 text-[11px] font-bold text-rose-700 ring-1 ring-rose-200">Overdue</span>
                   <p v-if="job.estimated_completion_formatted" class="mt-2 text-xs text-slate-500">{{ job.estimated_completion_formatted }}</p>
                 </div>
               </div>
@@ -172,33 +166,6 @@ onMounted(loadDashboard);
           </div>
         </div>
 
-        <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div class="mb-5 flex items-center justify-between gap-4">
-            <div>
-              <h3 class="text-lg font-bold text-slate-950">Open Parts &amp; Orders</h3>
-              <p class="mt-1 text-sm text-slate-500">Requested parts that may affect repair completion.</p>
-            </div>
-            <AppLink to="/admin/part-requests" class="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Open Queue</AppLink>
-          </div>
-
-          <div class="space-y-3">
-            <div v-for="request in stats.partRequests" :key="request.job_id" class="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
-              <div class="flex items-start justify-between gap-4">
-                <div class="min-w-0">
-                  <AppLink :to="`/admin/job-orders/${request.job_id}`" class="font-bold text-slate-950 hover:text-teal-700">{{ request.job_order_number }}</AppLink>
-                  <p class="mt-1 text-sm text-slate-600">{{ request.customer_name }}</p>
-                  <p class="mt-1 text-xs text-slate-500">Tech: {{ request.technician_name || 'Unassigned' }}</p>
-                </div>
-                <div class="shrink-0 text-right">
-                  <p class="text-sm font-bold text-amber-700">{{ request.requested_part }}</p>
-                  <p class="mt-1 text-xs text-slate-500">Qty {{ request.requested_quantity }}</p>
-                  <p class="text-xs text-slate-500">{{ request.requested_at_formatted }}</p>
-                </div>
-              </div>
-            </div>
-            <p v-if="!stats.partRequests.length" class="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No active parts requests right now.</p>
-          </div>
-        </div>
       </section>
 
       <section class="grid grid-cols-1 gap-6 xl:grid-cols-[0.82fr_1.18fr]">
@@ -257,12 +224,13 @@ onMounted(loadDashboard);
                   </td>
                   <td class="px-4 py-4 text-slate-700">{{ job.customer_name }}</td>
                   <td class="px-4 py-4">
-                    <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="statusClass(job.current_status, job.is_overdue)">
-                      {{ job.is_overdue ? 'OVERDUE' : formatStatus(job.current_status) }}
+                    <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(job.current_status)">
+                      {{ formatStatus(job.current_status) }}
                     </span>
+                    <span v-if="job.is_overdue" class="ml-2 inline-flex rounded-full bg-rose-50 px-2 py-1 text-[11px] font-bold text-rose-700 ring-1 ring-rose-200">Overdue</span>
                   </td>
                   <td class="px-4 py-4">
-                    <p class="font-semibold text-slate-800">{{ job.payment_status }}</p>
+                    <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="paymentStatusClass(job.payment_status)">{{ job.payment_status }}</span>
                     <p class="text-xs text-slate-500">Balance: {{ formatCurrency(job.balance) }}</p>
                   </td>
                   <td class="px-4 py-4">

@@ -14,6 +14,18 @@ use Illuminate\Validation\Rule;
 
 class ShopController extends Controller
 {
+    public function publicIndex()
+    {
+        return response()->json([
+            'shops' => Shop::query()
+                ->where('is_active', true)
+                ->whereNotNull('trial_ends_at')
+                ->where('trial_ends_at', '>', now())
+                ->orderBy('name')
+                ->get(['id', 'name', 'slug']),
+        ]);
+    }
+
     public function show(Request $request)
     {
         $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
@@ -89,7 +101,6 @@ class ShopController extends Controller
             'notification_settings.events.PICKED_UP' => ['nullable', 'boolean'],
             'notification_settings.events.RTO' => ['nullable', 'boolean'],
             'notification_settings.events.RTO_RELEASED' => ['nullable', 'boolean'],
-            'notification_settings.events.UNREPAIRABLE' => ['nullable', 'boolean'],
         ]);
 
         $slug = $validated['slug'] ?? Str::slug($validated['name']);
@@ -357,6 +368,7 @@ class ShopController extends Controller
             'is_active' => (bool) $shop->is_active,
             'public_tracking_url' => url('/shops/' . $shop->slug . '/track'),
             'public_booking_url' => url('/shops/' . $shop->slug . '/book'),
+            'public_booking_url' => url('/shops/' . $shop->slug . '/book'),
             'public_consultation_url' => url('/shops/' . $shop->slug . '/consultation'),
         ];
     }
@@ -448,7 +460,6 @@ class ShopController extends Controller
             'PICKED_UP',
             'RTO',
             'RTO_RELEASED',
-            'UNREPAIRABLE',
         ];
 
         $settings = $settings ?? [];

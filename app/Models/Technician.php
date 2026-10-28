@@ -38,13 +38,13 @@ class Technician extends Model
     // Get count of jobs currently assigned
     public function currentJobsCount()
     {
-        return $this->jobOrders()->whereNotIn('current_status', ['PICKED_UP', 'RTO_RELEASED', 'UNREPAIRABLE'])->count();
+        return $this->jobOrders()->whereNotIn('current_status', ['PICKED_UP', 'RTO_RELEASED'])->count();
     }
 
     // Get count of completed jobs
     public function completedJobsCount()
     {
-        return $this->jobOrders()->whereIn('current_status', ['PICKED_UP', 'RTO_RELEASED', 'UNREPAIRABLE'])->count();
+        return $this->jobOrders()->whereIn('current_status', ['PICKED_UP', 'RTO_RELEASED'])->count();
     }
 
     // Get average rating

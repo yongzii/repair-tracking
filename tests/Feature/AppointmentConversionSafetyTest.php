@@ -56,4 +56,37 @@ class AppointmentConversionSafetyTest extends TestCase
         $this->assertSame('COMPLETED', $appointment->status);
         $this->assertSame(1, JobOrder::query()->where('shop_id', $shop->id)->count());
     }
+
+    public function test_consultation_cannot_be_converted_directly_into_a_job_order(): void
+    {
+        $shop = Shop::create([
+            'name' => 'Consultation Only Conversion Shop',
+            'slug' => 'consultation-only-conversion-shop',
+            'trial_ends_at' => now()->addDays(30),
+            'is_active' => true,
+        ]);
+        $staff = User::factory()->create([
+            'shop_id' => $shop->id,
+            'role' => User::ROLE_STAFF,
+            'is_active' => true,
+        ]);
+        $consultation = Appointment::create([
+            'shop_id' => $shop->id,
+            'confirmation_code' => 'APT-2026-CONSULTATION1',
+            'customer_name' => 'Consultation Customer',
+            'customer_phone' => '09123456789',
+            'booking_type' => 'CONSULTATION',
+            'device_type' => 'Laptop',
+            'concern' => 'Laptop shuts down unexpectedly.',
+            'preferred_at' => null,
+            'status' => 'PENDING',
+        ]);
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/appointments/{$consultation->id}/convert-to-job-order")
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Consultations are advice requests and cannot be converted to job orders. Create a separate repair booking if the customer wants to proceed.');
+
+        $this->assertSame(0, JobOrder::query()->where('shop_id', $shop->id)->count());
+    }
 }
