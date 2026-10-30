@@ -2,6 +2,7 @@ const WelcomePage = () => import('./pages/WelcomePage.vue');
 const LoginPage = () => import('./pages/LoginPage.vue');
 const TrackPage = () => import('./pages/TrackPage.vue');
 const AppointmentBookingPage = () => import('./pages/AppointmentBookingPage.vue');
+const ShopProfilePage = () => import('./pages/ShopProfilePage.vue');
 const ShopOnboardingPage = () => import('./pages/ShopOnboardingPage.vue');
 const AdminDashboardPage = () => import('./pages/admin/AdminDashboardPage.vue');
 const JobOrdersPage = () => import('./pages/admin/JobOrdersPage.vue');
@@ -58,6 +59,11 @@ export const resolveRoute = (path) => {
 
     if (path.startsWith('/shops/')) {
         const segments = path.split('/').filter(Boolean);
+        if (segments.length === 2) {
+            const slug = decodeURIComponent(segments[1]);
+            return { component: ShopProfilePage, params: { slug }, title: 'Repair Shop' };
+        }
+
         if (segments.length === 3 && segments[2] === 'consultation') {
             const shopSlug = decodeURIComponent(segments[1]);
             return {
@@ -164,7 +170,7 @@ export const resolveRoute = (path) => {
             return {
                 component: JobOrderPrintPage,
                 params: { id: id.replace('/print/intake', ''), mode: 'intake' },
-                title: 'Claim Stab and Job Order Slip',
+                title: 'Claim Stub and Job Order Slip',
             };
         }
         if (id.endsWith('/print/warranty')) {

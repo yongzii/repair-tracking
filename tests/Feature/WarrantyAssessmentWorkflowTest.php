@@ -165,6 +165,42 @@ class WarrantyAssessmentWorkflowTest extends TestCase
             ->assertJsonPath('warrantyAssessments.0.reported_issue', 'Screen flickers again after repair.');
     }
 
+    public function test_print_data_uses_configured_shop_terms_for_claim_and_warranty_slips(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $shop->update([
+            'claim_terms' => "Custom claim term one.\n\nCustom claim term two.",
+            'warranty_terms' => "Custom warranty term one.\nCustom warranty term two.",
+        ]);
+        $jobOrder = $this->createPickedUpWarrantyJob($shop);
+
+        $this->actingAs($admin)
+            ->getJson("/api/admin/job-orders/{$jobOrder->id}/print-data")
+            ->assertOk()
+            ->assertJsonPath('claim_terms', ['Custom claim term one.', 'Custom claim term two.'])
+            ->assertJsonPath('warranty_terms', ['Custom warranty term one.', 'Custom warranty term two.'])
+            ->assertJsonPath('warranty.days', 30)
+            ->assertJsonPath('warranty.starts_at_formatted', $jobOrder->picked_up_at->format('M d, Y'));
+    }
+
+    public function test_print_data_uses_existing_system_default_terms_when_shop_terms_are_empty(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $shop->update([
+            'claim_terms' => " \n ",
+            'warranty_terms' => null,
+        ]);
+        $jobOrder = $this->createPickedUpWarrantyJob($shop);
+
+        $this->actingAs($admin)
+            ->getJson("/api/admin/job-orders/{$jobOrder->id}/print-data")
+            ->assertOk()
+            ->assertJsonPath('claim_terms.0', 'Check-up and diagnosis are free of charge.')
+            ->assertJsonPath('claim_terms', fn (array $terms) => count($terms) === 7)
+            ->assertJsonPath('warranty_terms.0', 'Warranty covers only the specific repair or replacement listed on this slip.')
+            ->assertJsonPath('warranty_terms', fn (array $terms) => count($terms) === 5);
+    }
+
     public function test_warranty_service_invoice_is_labeled_as_service_summary(): void
     {
         [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);

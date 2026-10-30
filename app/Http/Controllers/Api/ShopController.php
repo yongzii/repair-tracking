@@ -14,15 +14,79 @@ use Illuminate\Validation\Rule;
 
 class ShopController extends Controller
 {
-    public function publicIndex()
+    public function publicIndex(Request $request)
     {
+        $validated = $request->validate([
+            'search' => ['nullable', 'string', 'max:100'],
+            'page' => ['nullable', 'integer', 'min:1', 'max:1000000'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:50'],
+        ]);
+        $search = trim($validated['search'] ?? '');
+        $perPage = (int) ($validated['per_page'] ?? 12);
+
+        $shops = Shop::query()
+            ->where('is_active', true)
+            ->whereNotNull('trial_ends_at')
+            ->where('trial_ends_at', '>', now())
+            ->withCount(['serviceItems as active_services_count' => fn ($query) => $query
+                ->where('service_items.is_active', true)
+                ->whereHas('category', fn ($categoryQuery) => $categoryQuery
+                    ->where('service_categories.is_active', true)
+                    ->whereColumn('service_categories.shop_id', 'service_items.shop_id'))])
+            ->when($search !== '', function ($query) use ($search) {
+                $like = '%' . $search . '%';
+
+                $query->where(function ($shopQuery) use ($like) {
+                    $shopQuery
+                        ->where('name', 'like', $like)
+                        ->orWhere('address', 'like', $like)
+                        ->orWhereHas('serviceItems', function ($serviceQuery) use ($like) {
+                            $serviceQuery
+                                ->where('service_items.is_active', true)
+                                ->whereHas('category', function ($categoryQuery) {
+                                    $categoryQuery
+                                        ->where('service_categories.is_active', true)
+                                        ->whereColumn('service_categories.shop_id', 'service_items.shop_id');
+                                })
+                                ->where(function ($detailsQuery) use ($like) {
+                                    $detailsQuery
+                                        ->where('service_items.name', 'like', $like)
+                                        ->orWhere('service_items.description', 'like', $like);
+                                });
+                        });
+                });
+            })
+            ->with(['serviceItems' => fn ($query) => $query
+                ->select(['id', 'shop_id', 'name'])
+                ->where('service_items.is_active', true)
+                ->whereHas('category', fn ($categoryQuery) => $categoryQuery
+                    ->where('service_categories.is_active', true)
+                    ->whereColumn('service_categories.shop_id', 'service_items.shop_id'))
+                ->orderBy('service_items.name')
+                ->limit(4)])
+            ->orderBy('name')
+            ->paginate($perPage, ['id', 'name', 'slug', 'address', 'logo_path'], 'page', (int) ($validated['page'] ?? 1));
+
         return response()->json([
-            'shops' => Shop::query()
-                ->where('is_active', true)
-                ->whereNotNull('trial_ends_at')
-                ->where('trial_ends_at', '>', now())
-                ->orderBy('name')
-                ->get(['id', 'name', 'slug']),
+            'shops' => $shops->getCollection()
+                ->map(fn (Shop $shop) => [
+                    'id' => $shop->id,
+                    'name' => $shop->name,
+                    'slug' => $shop->slug,
+                    'address' => $shop->address,
+                    'logo_url' => $shop->logoUrl(),
+                    'services' => $shop->serviceItems->pluck('name')->values(),
+                    'services_more_count' => max(0, $shop->active_services_count - $shop->serviceItems->count()),
+                ])
+                ->values(),
+            'pagination' => [
+                'current_page' => $shops->currentPage(),
+                'last_page' => $shops->lastPage(),
+                'per_page' => $shops->perPage(),
+                'total' => $shops->total(),
+                'from' => $shops->firstItem(),
+                'to' => $shops->lastItem(),
+            ],
         ]);
     }
 
@@ -53,7 +117,8 @@ class ShopController extends Controller
                 'slug' => $shop->slug,
                 'phone' => $shop->phone,
                 'address' => $shop->address,
-                'business_hours' => $this->normalizeBusinessHours($shop->business_hours ?? []),
+                'description' => $shop->description,
+                'business_hours' => $this->publicBusinessHours($shop->business_hours),
                 'logo_url' => $shop->logoUrl(),
                 'service_catalog' => $this->serviceCatalog($shop, true),
             ],
@@ -82,11 +147,12 @@ class ShopController extends Controller
             'email' => ['nullable', 'email', 'max:150', Rule::unique('shops', 'email')->ignore($shop->id)],
             'phone' => ['nullable', 'string', 'max:30'],
             'address' => ['nullable', 'string', 'max:255'],
+            'description' => ['nullable', 'string', 'max:5000'],
             'business_hours' => ['nullable', 'array'],
             'business_hours.*.open' => ['nullable', 'boolean'],
             'business_hours.*.open_time' => ['nullable', 'date_format:H:i'],
             'business_hours.*.close_time' => ['nullable', 'date_format:H:i'],
-            'default_warranty_days' => ['required', 'integer', 'min:0', 'max:3650'],
+            'default_warranty_days' => ['sometimes', 'integer', 'min:0', 'max:3650'],
             'claim_terms' => ['nullable', 'string', 'max:10000'],
             'warranty_terms' => ['nullable', 'string', 'max:10000'],
             'notification_settings' => ['nullable', 'array'],
@@ -112,10 +178,23 @@ class ShopController extends Controller
             'email' => $validated['email'] ?? null,
             'phone' => $validated['phone'] ?? null,
             'address' => $validated['address'] ?? null,
-            'business_hours' => $this->normalizeBusinessHours($validated['business_hours'] ?? []),
-            'default_warranty_days' => $validated['default_warranty_days'],
-            'claim_terms' => $validated['claim_terms'] ?? null,
-            'warranty_terms' => $validated['warranty_terms'] ?? null,
+            'description' => array_key_exists('description', $validated)
+                ? $validated['description']
+                : $shop->description,
+            'business_hours' => array_key_exists('business_hours', $validated)
+                ? (empty($validated['business_hours'])
+                    ? null
+                    : $this->normalizeBusinessHours($validated['business_hours']))
+                : $shop->business_hours,
+            'default_warranty_days' => array_key_exists('default_warranty_days', $validated)
+                ? $validated['default_warranty_days']
+                : $shop->default_warranty_days,
+            'claim_terms' => array_key_exists('claim_terms', $validated)
+                ? $validated['claim_terms']
+                : $shop->claim_terms,
+            'warranty_terms' => array_key_exists('warranty_terms', $validated)
+                ? $validated['warranty_terms']
+                : $shop->warranty_terms,
             'notification_settings' => $this->normalizeNotificationSettings($validated['notification_settings'] ?? []),
         ]);
 
@@ -350,7 +429,11 @@ class ShopController extends Controller
             'email' => $shop->email,
             'phone' => $shop->phone,
             'address' => $shop->address,
-            'business_hours' => $this->normalizeBusinessHours($shop->business_hours ?? []),
+            'description' => $shop->description,
+            'business_hours' => empty($shop->business_hours)
+                ? null
+                : $this->normalizeBusinessHours($shop->business_hours),
+            'business_hours_configured' => !empty($shop->business_hours),
             'logo_path' => $shop->logo_path,
             'logo_url' => $shop->logoUrl(),
             'default_warranty_days' => $shop->default_warranty_days,
@@ -379,6 +462,11 @@ class ShopController extends Controller
             ->when($activeOnly, fn ($query) => $query->where('is_active', true))
             ->with(['services' => fn ($query) => $query
                 ->when($activeOnly, fn ($builder) => $builder->where('is_active', true))
+                ->when($activeOnly, fn ($builder) => $builder
+                    ->where('service_items.shop_id', $shop->id)
+                    ->whereHas('category', fn ($categoryQuery) => $categoryQuery
+                        ->where('service_categories.is_active', true)
+                        ->where('service_categories.shop_id', $shop->id)))
                 ->orderBy('sort_order')
                 ->orderBy('name')])
             ->orderBy('sort_order')
@@ -441,8 +529,40 @@ class ShopController extends Controller
                     $key => [
                         'label' => $label,
                         'open' => $open,
-                        'open_time' => $day['open_time'] ?? '09:00',
-                        'close_time' => $day['close_time'] ?? '18:00',
+                        'open_time' => array_key_exists('open_time', $day) ? $day['open_time'] : '09:00',
+                        'close_time' => array_key_exists('close_time', $day) ? $day['close_time'] : '18:00',
+                    ],
+                ];
+            })
+            ->all();
+    }
+
+    private function publicBusinessHours(?array $hours): ?array
+    {
+        if (empty($hours)) {
+            return null;
+        }
+
+        $days = [
+            'monday' => 'Monday',
+            'tuesday' => 'Tuesday',
+            'wednesday' => 'Wednesday',
+            'thursday' => 'Thursday',
+            'friday' => 'Friday',
+            'saturday' => 'Saturday',
+            'sunday' => 'Sunday',
+        ];
+
+        return collect($days)
+            ->mapWithKeys(function (string $label, string $key) use ($hours) {
+                $day = is_array($hours[$key] ?? null) ? $hours[$key] : [];
+
+                return [
+                    $key => [
+                        'label' => $day['label'] ?? $label,
+                        'open' => array_key_exists('open', $day) ? (bool) $day['open'] : null,
+                        'open_time' => $day['open_time'] ?? null,
+                        'close_time' => $day['close_time'] ?? null,
                     ],
                 ];
             })

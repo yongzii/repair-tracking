@@ -12,6 +12,7 @@ class Shop extends Model
         'email',
         'phone',
         'address',
+        'description',
         'business_hours',
         'logo_path',
         'default_warranty_days',

@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { adminRoles, authState, platformRoles } from '../composables/auth';
 import AppLink from '../components/AppLink.vue';
+import PublicShopDirectory from '../components/PublicShopDirectory.vue';
 import { appConfig } from '../config';
 
 const mobileMenuOpen = ref(false);
@@ -63,6 +64,7 @@ const closeMobileMenu = () => {
         </AppLink>
 
         <nav aria-label="Main navigation" class="hidden items-center gap-8 text-sm font-medium text-slate-300 md:flex">
+          <a href="#available-shops" class="transition hover:text-white">Find a Shop</a>
           <a href="#features" class="transition hover:text-white">Features</a>
           <AppLink to="/track" class="transition hover:text-white">Track Repair</AppLink>
           <AppLink to="/consultation" class="transition hover:text-white">Free Consultation</AppLink>
@@ -96,9 +98,9 @@ const closeMobileMenu = () => {
           aria-label="Mobile navigation"
           class="absolute inset-x-4 top-[4.5rem] z-30 grid gap-1 rounded-2xl border border-white/10 bg-slate-900 p-3 shadow-2xl md:hidden"
         >
+          <a href="#available-shops" class="rounded-lg px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5" @click="closeMobileMenu">Find a Shop</a>
           <a href="#features" class="rounded-lg px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5" @click="closeMobileMenu">Features</a>
           <AppLink to="/track" class="rounded-lg px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5" @click="closeMobileMenu">Track Repair</AppLink>
-          <AppLink to="/consultation" class="rounded-lg px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5" @click="closeMobileMenu">Free Consultation</AppLink>
           <AppLink to="/consultation" class="rounded-lg px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/5" @click="closeMobileMenu">Free Consultation</AppLink>
           <AppLink v-if="canOpenPortal" :to="portalPath" class="mt-1 rounded-lg bg-teal-400 px-4 py-3 text-sm font-bold text-slate-950" @click="closeMobileMenu">Dashboard</AppLink>
           <AppLink v-else-if="technicianPortal" to="/technician" class="mt-1 rounded-lg bg-teal-400 px-4 py-3 text-sm font-bold text-slate-950" @click="closeMobileMenu">My Jobs</AppLink>
@@ -232,6 +234,8 @@ const closeMobileMenu = () => {
         </div>
       </div>
     </section>
+
+    <PublicShopDirectory />
 
     <section id="features" class="scroll-mt-8 bg-white px-5 py-16 sm:px-8 sm:py-20 lg:px-10 lg:py-24">
       <div class="mx-auto max-w-7xl">

@@ -1020,6 +1020,7 @@ onMounted(loadJobOrder);
               <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg">Save Warranty</button>
             </form>
             <p class="mt-3 text-xs text-slate-500">Set to 0 if no warranty applies. Print the warranty certificate only after coverage is confirmed.</p>
+            <p class="mt-2 text-xs text-slate-500">This warranty duration applies to this Job Order and is calculated from its pickup date. Shop Warranty Slip Terms only customize the printed document.</p>
           </div>
 
           <div v-if="activeAction === 'assessment'" class="card p-6">

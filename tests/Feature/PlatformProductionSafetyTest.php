@@ -80,9 +80,14 @@ class PlatformProductionSafetyTest extends TestCase
 
         $this->assertNotNull($shop);
         $this->assertNull($shop->trial_ends_at);
+        $this->assertNull($shop->description);
         $this->assertSame('pending-payment-repair', $response->json('shop.slug'));
         $this->assertSame('pending-owner@example.com', $response->json('user.email'));
         $this->assertFalse($response->json('user.shop.has_active_access'));
+
+        $this->getJson('/api/shops/pending-payment-repair/profile')
+            ->assertOk()
+            ->assertJsonPath('shop.description', null);
 
         $owner = User::firstWhere('email', 'pending-owner@example.com');
         $this->assertAuthenticatedAs($owner);

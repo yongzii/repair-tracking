@@ -33,8 +33,9 @@ const form = reactive({
     email: '',
     phone: '',
     address: '',
+    description: '',
     business_hours: {},
-    default_warranty_days: 30,
+    business_hours_configured: false,
     claim_terms: '',
     warranty_terms: '',
     notification_settings: {
@@ -86,6 +87,18 @@ const formatCurrency = (amount) => `PHP ${Number(amount || 0).toLocaleString(und
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
 })}`;
+const onBusinessHoursToggle = () => {
+    if (form.business_hours_configured && !Object.keys(form.business_hours).length) {
+        Object.assign(form.business_hours, Object.fromEntries(
+            businessDays.map((day) => [day.key, {
+                label: day.label,
+                open: false,
+                open_time: '',
+                close_time: '',
+            }])
+        ));
+    }
+};
 const publicLinks = computed(() => [
     {
         key: 'tracking',
@@ -144,9 +157,9 @@ const normalizeBusinessHours = (hours = {}) => Object.fromEntries(
             day.key,
             {
                 label: current.label || day.label,
-                open: current.open ?? day.key !== 'sunday',
-                open_time: current.open_time || '09:00',
-                close_time: current.close_time || '18:00',
+                open: current.open ?? false,
+                open_time: current.open_time ?? '',
+                close_time: current.close_time ?? '',
             },
         ];
     })
@@ -207,8 +220,9 @@ const loadShop = async () => {
             email: data.shop.email || '',
             phone: data.shop.phone || '',
             address: data.shop.address || '',
-            business_hours: normalizeBusinessHours(data.shop.business_hours),
-            default_warranty_days: data.shop.default_warranty_days ?? 30,
+            description: data.shop.description || '',
+            business_hours: data.shop.business_hours_configured ? normalizeBusinessHours(data.shop.business_hours) : {},
+            business_hours_configured: Boolean(data.shop.business_hours_configured),
             claim_terms: data.shop.claim_terms || '',
             warranty_terms: data.shop.warranty_terms || '',
             notification_settings: normalizeNotificationSettings(data.shop.notification_settings),
@@ -233,8 +247,8 @@ const saveShop = async () => {
             email: form.email || null,
             phone: form.phone || null,
             address: form.address || null,
-            business_hours: normalizeBusinessHours(form.business_hours),
-            default_warranty_days: Number(form.default_warranty_days || 0),
+            description: form.description.trim() || null,
+            business_hours: form.business_hours_configured ? normalizeBusinessHours(form.business_hours) : null,
             claim_terms: form.claim_terms || null,
             warranty_terms: form.warranty_terms || null,
             notification_settings: normalizeNotificationSettings(form.notification_settings),
@@ -242,6 +256,10 @@ const saveShop = async () => {
 
         shop.value = data.shop;
         refreshServiceCatalog(data.shop.service_catalog);
+        form.business_hours_configured = Boolean(data.shop.business_hours_configured);
+        form.business_hours = data.shop.business_hours_configured
+            ? normalizeBusinessHours(data.shop.business_hours)
+            : {};
         if (authState.user?.shop) {
             authState.user.shop = {
                 ...authState.user.shop,
@@ -471,8 +489,6 @@ const normalizeNotificationSettings = (settings = {}) => ({
     ),
 });
 
-Object.assign(form.business_hours, normalizeBusinessHours());
-
 onMounted(loadShop);
 </script>
 
@@ -590,38 +606,55 @@ onMounted(loadShop);
               <input v-model="form.address" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
             </label>
 
+            <label class="space-y-1.5 md:col-span-2">
+              <span class="text-xs font-bold uppercase text-slate-500">Shop Description <span class="font-normal normal-case text-slate-400">(Optional)</span></span>
+              <textarea
+                v-model="form.description"
+                rows="4"
+                maxlength="5000"
+                class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-teal-600 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                placeholder="Tell customers about your shop and the repair services you provide."
+              ></textarea>
+              <span class="text-xs text-slate-500">Shown on your public shop profile when provided.</span>
+            </label>
+
             <section class="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
               <div class="mb-3 flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
-                <h4 class="font-bold text-slate-950">Business Hours</h4>
-                <p class="text-xs text-slate-500">Shown in customer pages.</p>
-              </div>
-              <div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
-                <div v-for="day in businessDays" :key="day.key" class="grid grid-cols-[74px_1fr_1fr] items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
-                  <label class="flex items-center gap-2 text-xs font-bold text-slate-800">
-                    <input v-model="form.business_hours[day.key].open" type="checkbox" class="rounded border-slate-300 text-teal-600 focus:ring-teal-500" />
-                    {{ day.label }}
-                  </label>
-                  <input v-model="form.business_hours[day.key].open_time" type="time" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs disabled:bg-slate-100 disabled:text-slate-400" :disabled="!form.business_hours[day.key].open" />
-                  <input v-model="form.business_hours[day.key].close_time" type="time" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs disabled:bg-slate-100 disabled:text-slate-400" :disabled="!form.business_hours[day.key].open" />
+                <div>
+                  <h4 class="font-bold text-slate-950">Business Hours</h4>
+                  <p class="text-xs text-slate-500">Shown in customer pages.</p>
                 </div>
+                <label class="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input v-model="form.business_hours_configured" type="checkbox" class="rounded border-slate-300 text-teal-600 focus:ring-teal-500" @change="onBusinessHoursToggle" />
+                  Set business hours
+                </label>
               </div>
+              <p v-if="!form.business_hours_configured" class="rounded-lg bg-white p-3 text-sm text-slate-600">Business hours are not configured. Enable this option to publish the shop's schedule.</p>
+              <template v-else>
+                <p class="mb-3 text-xs text-slate-500">Select each open day and enter its hours. Days left unchecked will be shown as closed.</p>
+                <div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                  <div v-for="day in businessDays" :key="day.key" class="grid grid-cols-[74px_1fr_1fr] items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
+                    <label class="flex items-center gap-2 text-xs font-bold text-slate-800">
+                      <input v-model="form.business_hours[day.key].open" type="checkbox" class="rounded border-slate-300 text-teal-600 focus:ring-teal-500" />
+                      {{ day.label }}
+                    </label>
+                    <input v-model="form.business_hours[day.key].open_time" type="time" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs disabled:bg-slate-100 disabled:text-slate-400" :disabled="!form.business_hours[day.key].open" :required="form.business_hours[day.key].open" />
+                    <input v-model="form.business_hours[day.key].close_time" type="time" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs disabled:bg-slate-100 disabled:text-slate-400" :disabled="!form.business_hours[day.key].open" :required="form.business_hours[day.key].open" />
+                  </div>
+                </div>
+              </template>
             </section>
 
-            <div class="md:col-span-2 grid grid-cols-1 gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
-              <label class="flex items-center justify-between gap-3 rounded-md bg-white px-3 py-2">
-                <span class="text-xs font-bold uppercase text-slate-500">Warranty Days</span>
-                <input v-model.number="form.default_warranty_days" type="number" min="0" max="3650" class="w-24 rounded-md border border-slate-300 px-2 py-1.5 text-sm text-right" required />
-              </label>
-            </div>
-
             <label class="space-y-1.5">
-              <span class="text-xs font-bold uppercase text-slate-500">Claim Stab Terms</span>
-              <textarea v-model="form.claim_terms" rows="4" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="One term per line. Leave empty to use system defaults."></textarea>
+              <span class="text-xs font-bold uppercase text-slate-500">Claim Stub Terms</span>
+              <textarea v-model="form.claim_terms" rows="4" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="One term per line."></textarea>
+              <span class="text-xs leading-5 text-slate-500">Customize the terms displayed on printed Claim Stubs. Leave empty to use the system default terms.</span>
             </label>
 
             <label class="space-y-1.5">
               <span class="text-xs font-bold uppercase text-slate-500">Warranty Slip Terms</span>
-              <textarea v-model="form.warranty_terms" rows="4" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="One term per line. Leave empty to use system defaults."></textarea>
+              <textarea v-model="form.warranty_terms" rows="4" class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" placeholder="One term per line."></textarea>
+              <span class="text-xs leading-5 text-slate-500">Customize the terms displayed on printed Warranty Slips. Leave empty to use the system default terms. These terms do not determine an individual Job Order's warranty duration.</span>
             </label>
 
             <section class="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
