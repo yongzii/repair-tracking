@@ -162,12 +162,6 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <p v-else class="mt-4 text-sm leading-6 text-slate-600">Business hours not yet configured.</p>
-          <div v-if="shop.phone || shop.address" class="mt-5 border-t border-slate-100 pt-4">
-            <h3 class="text-sm font-bold text-[#0f1b2d]">Contact</h3>
-            <p v-if="shop.phone" class="mt-2 break-words text-sm text-slate-600">{{ shop.phone }}</p>
-            <p v-if="shop.address" class="mt-2 break-words text-sm leading-6 text-slate-600">{{ shop.address }}</p>
-          </div>
-          <p v-else class="mt-5 border-t border-slate-100 pt-4 text-sm text-slate-500">Contact information not yet provided.</p>
         </section>
 
         <section class="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6" aria-labelledby="available-services-title">
