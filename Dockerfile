@@ -12,6 +12,7 @@ FROM php:8.3-apache-bookworm AS php-base
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+	ca-certificates \
         libcurl4-openssl-dev \
         libicu-dev \
         libonig-dev \
