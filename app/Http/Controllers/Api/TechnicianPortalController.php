@@ -237,7 +237,7 @@ class TechnicianPortalController extends Controller
         ]);
 
         $file = $validated['photo'];
-        $path = $file->store("repair-photos/{$jobOrder->shop_id}/{$jobOrder->id}", 'local');
+        $path = $file->store("repair-photos/{$jobOrder->shop_id}/{$jobOrder->id}", 'r2');
 
         $photo = RepairPhoto::create([
             'shop_id' => $jobOrder->shop_id,
@@ -281,6 +281,7 @@ class TechnicianPortalController extends Controller
 
         $before = $photo->only(['photo_type', 'photo_path', 'original_name', 'description', 'uploaded_by']);
 
+        Storage::disk('r2')->delete($photo->photo_path);
         Storage::disk('local')->delete($photo->photo_path);
         $photo->delete();
 

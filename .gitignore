@@ -26,3 +26,5 @@ Thumbs.db
 
 docker-smoke.env
 certs/
+
+.env.tidb

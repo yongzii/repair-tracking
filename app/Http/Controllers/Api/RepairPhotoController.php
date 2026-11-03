@@ -66,20 +66,30 @@ class RepairPhotoController extends Controller
 
     private function stream(RepairPhoto $photo)
     {
-        $disk = Storage::disk('local');
+    $r2 = Storage::disk('r2');
+    $local = Storage::disk('local');
 
-        if (!$disk->exists($photo->photo_path)) {
-            abort(Response::HTTP_NOT_FOUND, 'Photo file not found.');
-        }
+    // Prefer persistent R2 storage.
+    // Fall back to local storage for legacy photos.
+    if ($r2->exists($photo->photo_path)) {
+        $contents = $r2->get($photo->photo_path);
+    } elseif ($local->exists($photo->photo_path)) {
+        $contents = $local->get($photo->photo_path);
+    } else {
+        abort(Response::HTTP_NOT_FOUND, 'Photo file not found.');
+    }
 
-        $mimeType = $disk->mimeType($photo->photo_path);
-        if (!in_array($mimeType, ['image/jpeg', 'image/png', 'image/webp'], true)) {
-            abort(Response::HTTP_UNSUPPORTED_MEDIA_TYPE, 'Unsupported photo type.');
-        }
+    // Detect the actual image MIME type.
+    $mimeType = (new \finfo(FILEINFO_MIME_TYPE))->buffer($contents);
 
-        return response()->file($disk->path($photo->photo_path), [
-            'Content-Type' => $mimeType,
-            'X-Content-Type-Options' => 'nosniff',
+    if (!in_array($mimeType, ['image/jpeg', 'image/png', 'image/webp'], true)) {
+        abort(Response::HTTP_UNSUPPORTED_MEDIA_TYPE, 'Unsupported photo type.');
+    }
+
+    return response($contents, Response::HTTP_OK, [
+        'Content-Type' => $mimeType,
+        'X-Content-Type-Options' => 'nosniff',
+        'Cache-Control' => 'private, no-store',
         ]);
     }
 }
