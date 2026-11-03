@@ -1,221 +1,100 @@
-# Repair Service Management System
+# RepairSync Cloud System Guide
 
-A professional, enterprise-grade repair shop management system designed for electronics repair operations. This system helps manage repair jobs, track costs, manage payments, and keep customers informed in real-time.
+This guide describes the current application structure and workflows represented by the source code. It replaces earlier documentation written for a Blade-based Laravel 11 version. It is not proof that a production deployment, external provider, or every workflow has been configured and tested.
 
-## 🎯 Key Features
+## What the system does
 
-### 1. **Job Order Management**
-- Unique auto-generated job order numbers (RSMS-YYYY-XXXXXX format)
-- Complete device information tracking (brand, model, serial number)
-- Detailed problem description documentation
-- Full audit trail with automatic status history
+RepairSync Cloud is a web-based repair-shop management system for electronics repair operations. It supports multiple shop workspaces and provides:
 
-### 2. **Real-Time Status Tracking**
-- 7 status levels: RECEIVED → DIAGNOSING → WAITING_PARTS → IN_PROGRESS → READY_FOR_PICKUP → PICKED_UP
-- Alternative: UNREPAIRABLE (can be set at any time)
-- Customers can check status anytime by job order number
-- Status changes are automatically logged with timestamps
+- Public shop information, repair booking, and repair-status tracking.
+- Shop onboarding, accounts, service catalog, and workspace settings.
+- Repair job intake, assignment, status history, device location, photos, and warranty records.
+- Technician-specific access to assigned jobs.
+- Inventory, stock movements, shop part requests, and job-specific part ordering.
+- Customer payments, balances, RTO (return to owner) handling, and refunds.
+- Shop dashboards, reports, exports, and shop audit logs.
+- Platform-side shop and subscription administration.
+- Queued email and SMS notification code, subject to deployment configuration.
 
-### 3. **Priority Service Levels**
-- **STANDARD** - Regular repair (3-5 days)
-- **EXPRESS** - Faster service (1-2 days)
-- **EMERGENCY** - Same-day/next-day service
-- Different pricing tiers for each level
+There is no customer sign-in role in the current role model. Customers submit public consultation requests, use confirmation lookup, and track repairs.
 
-### 4. **Financial Management**
-- **Cost Tracking**: Parts cost + Labor cost = Total cost
-- **Payment Tracking**: Track who paid, when, and how much
-- **Payment Statuses**: PENDING → PARTIAL → PAID
-- **Balance Calculation**: Automatically shows how much customer owes
-- **Profit Margin Analysis**: Track business profitability
+## Technology and architecture
 
-### 5. **Warranty Management**
-- Set warranty periods per job (default: 30 days)
-- Automatic warranty expiry calculation
-- Track which repairs are under warranty
-- Support for warranty claims and follow-ups
+- **Backend:** PHP 8.2+ and Laravel 12. The checked-in Composer lockfile resolves Laravel 12.39.0.
+- **Frontend:** Vue 3 single-page application. The checked-in npm lockfile resolves Vue 3.5.28.
+- **API requests:** Axios sends same-origin JSON requests with browser credentials and a CSRF header.
+- **Build and styling:** Vite 7 and Tailwind CSS 4. The frontend is mounted by a Blade shell; the main application pages are Vue components, not a traditional Blade page set.
+- **Database:** Laravel supports SQLite and MySQL configuration. The default configuration falls back to SQLite; the production example uses MySQL. Check the deployment environment to know which database is in use.
+- **Authentication:** Laravel session authentication with CSRF protection. This is not a bearer-token API architecture.
+- **External services:** Mail and Twilio SMS are configurable. Their presence in source does not prove that credentials, a queue worker, or delivery are operational.
 
-### 6. **Pickup Tracking**
-- Record who picked up the device
-- Automatic timestamp when picked up
-- Automatic status change to PICKED_UP
-- Just like Shopee/delivery platforms!
+The browser loads the Blade application shell and Vite-built Vue code. Vue calls Laravel API routes. Controllers validate and authorize the request, use Eloquent models to access the database, and return JSON. Laravel queues customer notifications when applicable. File access is handled through local private/public disks and scoped application routes.
 
-### 7. **Admin Dashboard**
-Real-time metrics visible at a glance:
-- **Job Statistics**: Total jobs, in progress, completed
-- **Financial KPIs**: Total revenue, amount paid, pending payments, profit margin
-- **Performance Metrics**: Completion rate, average turnaround time
-- **Service Mix**: Express vs Standard jobs breakdown
-- **Charts**: Device type distribution, status distribution, monthly trends
+Useful entry points:
 
-### 8. **Advanced Reporting**
-- Monthly comparison reports
-- Device breakdown analytics
-- Status distribution visualization
-- Turnaround time analysis
-- Financial performance tracking
+- `routes/api.php` — public, shop, platform, and technician API routes.
+- `routes/web.php` — application shell and SPA fallback.
+- `resources/js/spa/routes.js` — client-side page routes.
+- `app/Http/Controllers/Api/` — API controller implementations.
+- `app/Models/` and `database/migrations/` — domain models and schema history.
+- `config/filesystems.php` — local, public, and S3 disk configuration.
 
-### 9. **Staff Management**
-- Add and manage technicians
-- Assign technicians to jobs
-- Track technician specialties
-- Active/Inactive status management
+## Roles
 
-### 10. **Customer Experience**
-- Public tracking page (no login required)
-- Customers search by job order number
-- See complete repair timeline
-- View current status with icons
-- Track pickup information
+The persisted roles are `platform_admin`, `shop_admin`, `admin`, `staff`, and `technician`. `shop_admin` and `admin` are treated as aliases by role helper methods. The `customer` is not a persisted account role.
 
-## 📊 Dashboard Metrics
+- **Platform administrator:** Manages shops, platform subscription settings/requests, subscription payments, and failed queue jobs.
+- **Shop administrator (`shop_admin` or `admin`):** Has shop-level administration such as shop settings, user/technician management, reports, and audit-log access.
+- **Shop staff:** Performs authorized daily shop operations, such as job, appointment, and inventory workflows. Some sensitive actions require an administrator.
+- **Technician:** Uses the technician portal and is restricted to their linked profile, shop, and assigned jobs.
+- **Customer:** Uses public consultation requests, confirmation lookup, and repair tracking without signing in.
 
-### Main KPIs
-- **Total Jobs**: All repair jobs in system
-- **In Progress**: Currently being repaired
-- **Picked Up**: Completed and collected
-- **Completion Rate**: % of finished repairs
-- **Total Revenue**: All costs charged
+Navigation visibility is not the security boundary. Backend route middleware and controller-level role, shop, and assignment checks determine access.
 
-### Financial Metrics
-- **Amount Paid**: Total received from customers
-- **Pending Payments**: Outstanding balances
-- **Profit Margin**: Revenue after parts cost
-- **Average Turnaround**: Days from receipt to pickup
+## Main workflow
 
-## 💰 Cost Management
+1. A shop owner registers a shop and account. Onboarding creates a default service catalog.
+2. The shop configures its profile, services, staff, technicians, business hours, and notification settings.
+3. A customer submits a consultation request, or shop staff creates a job directly.
+4. Staff review and respond to consultations; job orders are created through the normal job-intake workflow.
+5. Staff assign a technician. The technician works on assigned jobs and records repair progress and evidence.
+6. Staff and technicians record parts needs. Inventory and procurement actions update stock and job records.
+7. Shop users record costs and customer payments. The system tracks payments and outstanding balance.
+8. A job proceeds to pickup or the RTO/refund process. Customers can use public tracking to view permitted repair information.
+9. Shops can use reports and shop audit logs. Platform administrators manage shop access and subscription requests.
 
-### How It Works:
-1. Create job order with estimated cost
-2. During repair, update actual parts & labor costs
-3. Total cost calculated automatically
-4. Record customer payments as received
-5. System tracks outstanding balance
-6. See profit margin in real-time
+## Job and related workflow statuses
 
-### Example:
-```
-Repair Job: RSMS-2025-ABC123
-Parts Cost:    ₱500
-Labor Cost:    ₱1,000
-Total Cost:    ₱1,500
+The current job statuses exposed by the job controller include:
 
-Amount Paid:   ₱800
-Payment Status: PARTIAL
-Balance:       ₱700
-```
+`RECEIVED`, `DIAGNOSING`, `WAITING_PARTS`, `IN_PROGRESS`, `READY_FOR_PICKUP`, `PICKED_UP`, `RTO`, and `RTO_RELEASED`.
 
-## 🛠️ How to Use
+Older migrations/documentation include `UNREPAIRABLE`; the later migration consolidates that status into RTO. Pickup is a dedicated action that requires the job to be ready for pickup. RTO release/refund actions have separate handling. Do not treat this list as a complete role-by-role transition matrix.
 
-### For Admin (Shop Owner/Staff)
+Consultation requests use `PENDING`, `CANCELLED`, and `COMPLETED`. The existing appointment schema retains historical booking values and columns; public creation now accepts consultations only.
 
-**Creating a Job Order:**
-1. Click "New Job Order"
-2. Enter customer & device info
-3. Describe the problem
-4. Set priority (Standard/Express/Emergency)
-5. Set warranty period (default 30 days)
-6. Save (system auto-generates job number)
+## Security and operations notes
 
-**Updating Status:**
-1. Open job order
-2. Select new status
-3. Add notes (visible to customer)
-4. Click "Update Status"
-5. Status history updated automatically
+- Authenticated API routes check the session, active account, and active shop as applicable.
+- Public tracking and some confirmation/photo lookup routes have throttles.
+- Controllers apply shop and technician assignment checks; shop scoping is not a universal model-level global scope.
+- Payment recording and selected stock, appointment, and subscription operations use transactions/row locks. Payment requests use an idempotency key; some parts operations support optional idempotency keys.
+- Repair images and subscription proofs are served through scoped handlers. Verify the configured storage disk in production.
+- Notifications require a functioning queue worker and valid mail/SMS provider settings.
+- Audit logging is explicitly called by mutations; source does not establish that every mutation is logged or that logs are tamper-proof.
 
-**Recording Costs:**
-1. Open job order
-2. Scroll to "Financial Details"
-3. Enter parts cost & labor cost
-4. Click "Update Costs"
-5. Total calculated automatically
+## Reports and customer communication
 
-**Recording Payments:**
-1. Open job order
-2. Click "Record Payment"
-3. Enter amount paid
-4. Add payment notes (optional)
-5. Payment status updates automatically
+The application has dashboard and report endpoints, CSV export, and a print-oriented report view. The repository does not establish a configured server-side PDF-generation engine. Notification records and queued email/SMS delivery code exist, but delivery must be validated in the target environment.
 
-**Marking Pickup:**
-1. Set status to "Ready for Pickup"
-2. When customer arrives, click "Mark as Picked Up"
-3. Enter person's name who picked up
-4. System auto-records pickup timestamp
-5. Status becomes PICKED_UP
-6. Customer sees notification
+The platform audit-log page is currently a placeholder, not a platform-wide feed. Shop audit logs are a separate feature.
 
-### For Customers (Public Tracking)
+## Running and testing
 
-1. Go to **http://yoursite.com/track**
-2. Enter job order number
-3. View:
-   - Current status with icon
-   - Device information
-   - Problem description
-   - Complete timeline of all status updates
-   - When device was picked up
+See `DEPLOYMENT_RUNBOOK.md` for production-oriented deployment instructions. Review its commands and storage steps for the target environment before execution.
 
-## 🔐 Security
+The default PHPUnit configuration uses SQLite `:memory:` for feature/unit tests. The MySQL concurrency suite is separate and uses a dedicated test database; its guarded refresh step is destructive to that test database. Do not point it at production or a developer's application database. See `MYSQL_CONCURRENCY_TESTING.md`.
 
-- Admin panel requires login (default: admin@example.com / password)
-- Customer tracking page is public (no login needed)
-- All transactions logged with timestamps
-- Audit trail for all changes
+## Documentation boundaries
 
-## 📱 Responsive Design
-
-- Works on desktop, tablet, and mobile
-- Beautiful Tailwind CSS styling
-- Font Awesome icons throughout
-- Professional blue & teal color scheme
-
-## 🚀 Technical Stack
-
-- **Framework**: Laravel 11 (PHP)
-- **Database**: MySQL
-- **Frontend**: Blade Templates + Tailwind CSS
-- **Icons**: Font Awesome 6.4.0
-- **Authentication**: Laravel built-in auth
-
-## 📝 Database Tables
-
-- `users` - Admin accounts
-- `job_orders` - Repair jobs with all metadata
-- `status_histories` - Immutable audit log
-- `technicians` - Staff management
-- `repair_photos` - Before/after photos (ready for implementation)
-
-## 🎁 Future Enhancements
-
-Ready to implement when needed:
-- Email/SMS customer notifications
-- Photo uploads (before/after repair)
-- PDF invoice generation
-- Customer feedback/ratings
-- Export reports (CSV/PDF)
-- Multi-location support
-- Advanced scheduling
-
-## 💡 Tips for Maximum Benefit
-
-1. **Set Priority Correctly**: Different turnaround times for different service levels
-2. **Update Costs Immediately**: Record parts costs as they're used
-3. **Add Detailed Notes**: Notes appear to customer - builds confidence
-4. **Record Payments Promptly**: Keep balance accurate
-5. **Mark Pickup**: Completes the job and tracks collection
-6. **Check Dashboard Daily**: See business metrics at a glance
-
-## 📞 Support
-
-For questions or feature requests, contact the development team.
-
----
-
-**Version**: 1.0.0  
-**Last Updated**: December 27, 2025  
-**Status**: Production Ready ✅
-
-Built for modern electronics repair shop management
+This guide describes source-level behavior. Verify roles and workflows in the running deployment before a live demonstration. Do not use demo credentials from older documentation. Configure real secrets outside version control.

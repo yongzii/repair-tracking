@@ -1,367 +1,94 @@
-# ✅ Technician Integration - Complete Feature Checklist
-
-## System Status: PRODUCTION READY ✅
-
-All technician management and performance tracking features have been fully implemented and integrated.
-
----
-
-## Database & Models ✅
-
-- ✅ Migration created: `2025_12_27_add_technician_to_job_orders.php`
-- ✅ Database columns added:
-  - `technician_id` (Foreign Key to technicians table)
-  - `technician_rating` (Integer 1-5, nullable)
-- ✅ JobOrder model updated with `technician()` relationship
-- ✅ JobOrder fillable array includes technician_id and technician_rating
-- ✅ Technician model includes:
-  - `jobOrders()` relationship
-  - `currentJobsCount()` method - counts active jobs
-  - `completedJobsCount()` method - counts completed jobs
-  - `averageRating()` method - calculates average rating
-- ✅ Referential integrity with foreign key constraints
-
----
-
-## Controllers & Business Logic ✅
-
-### AdminJobOrderController
-- ✅ `store()` method validates `technician_id` against existing technicians
-- ✅ `rateTechnician()` method:
-  - Validates rating is integer 1-5
-  - Updates job_order with technician_rating
-  - Includes error handling
-  - Redirects with success message
-
-### DashboardController
-- ✅ Imports Technician model
-- ✅ Fetches all active technicians
-- ✅ Calculates for each technician:
-  - Current jobs count (jobs in progress)
-  - Completed jobs count (picked up jobs)
-  - Average rating from rated jobs
-- ✅ Passes technicians array to dashboard view
-
-### TechnicianController
-- ✅ Full CRUD implementation:
-  - `index()` - List all technicians with pagination
-  - `create()` - Show create form
-  - `store()` - Save new technician with validation
-  - `edit()` - Show edit form
-  - `update()` - Update technician details
-  - `destroy()` - Delete technician
-- ✅ Validates email uniqueness
-- ✅ Handles specialties as JSON array
-
----
-
-## Routes & API Endpoints ✅
-
-- ✅ Resource routes for technician CRUD:
-  - `GET /admin/technicians` - List
-  - `GET /admin/technicians/create` - Create form
-  - `POST /admin/technicians` - Save
-  - `GET /admin/technicians/{id}/edit` - Edit form
-  - `PUT/PATCH /admin/technicians/{id}` - Update
-  - `DELETE /admin/technicians/{id}` - Delete
-
-- ✅ Job order technician routes:
-  - `POST /admin/job-orders/{jobOrder}/rate-technician` - Submit rating
-
-- ✅ All routes protected with `auth` middleware
-- ✅ Proper route naming conventions in place
-
----
-
-## User Interface ✅
-
-### Job Order Creation Form
-- ✅ **Location**: `/admin/job-orders/create`
-- ✅ **Section**: Service Details (line ~75)
-- ✅ **Feature**: Technician dropdown
-- ✅ Loads all active technicians dynamically
-- ✅ Shows technician name in dropdown options
-- ✅ Optional selection (no technician required)
-- ✅ Maintains form state with `old()` helper on validation errors
-- ✅ Responsive grid layout (3 columns: Priority, Technician, Warranty)
-
-### Job Order Detail View
-- ✅ **Location**: `/admin/job-orders/show/{id}`
-- ✅ **Section 1**: Assigned Technician Card
-  - Shows technician name if assigned
-  - Displays technician specialties (if available)
-  - Shows current rating if already rated
-  - Star display with numerical value (e.g., 4/5)
-  - "No technician assigned" message if unassigned
-
-- ✅ **Section 2**: Rate Technician Form
-  - Appears only when:
-    - Job has assigned technician
-    - Job status is PICKED_UP, READY_FOR_PICKUP, or UNREPAIRABLE
-    - Job hasn't been rated yet
-  - Interactive 1-5 star selector
-  - Submit button with icon
-  - Styled with yellow theme for visibility
-  - Form submits to rating endpoint
-
-### Dashboard
-- ✅ **Section**: Technician Performance
-- ✅ **Location**: Below Service Level Metrics (line ~163)
-- ✅ **Display**: Grid of technician cards (3 columns responsive)
-- ✅ **Each Card Shows**:
-  - Technician name
-  - "Active" status badge
-  - "X completed" badge
-  - Current jobs progress bar (shows visual workload)
-  - Completed jobs count
-  - Average rating with star display
-  - "View Details" link
-- ✅ Only displays when technicians exist
-- ✅ Color-coded (purple theme for consistency)
-- ✅ Hover effects for better UX
-
----
-
-## Features & Functionality ✅
-
-### 1. Technician Management
-- ✅ Create new technicians with:
-  - Name, Email, Phone
-  - Specialties (JSON array)
-  - Active/Inactive status
-- ✅ Edit technician details
-- ✅ List all technicians with pagination
-- ✅ Delete technicians from system
-- ✅ Filter by active status
-
-### 2. Job Assignment
-- ✅ Assign technician when creating job order
-- ✅ Technician assignment is optional
-- ✅ Can edit/change assigned technician
-- ✅ Technician details accessible from job view
-- ✅ Technician relationship properly configured
-
-### 3. Performance Tracking
-- ✅ Automatic current jobs count calculation
-- ✅ Automatic completed jobs count calculation
-- ✅ Automatic average rating calculation
-- ✅ Real-time dashboard updates
-- ✅ Ratings persist in database
-
-### 4. Customer Rating System
-- ✅ 1-5 star rating selector
-- ✅ Visible only on completed jobs with assigned technician
-- ✅ Prevents duplicate ratings (once rated, form disappears)
-- ✅ Rating stored in database
-- ✅ Success feedback on submission
-- ✅ Validation error handling
-
-### 5. Performance Visibility
-- ✅ Dashboard shows all technician stats
-- ✅ Workload progress bar shows current job count
-- ✅ Completed jobs visible at a glance
-- ✅ Star rating display easy to read
-- ✅ Quick link to detailed technician view
-
----
-
-## Code Quality ✅
-
-- ✅ Proper model relationships (belongsTo, hasMany)
-- ✅ Validation on all forms
-- ✅ Error handling in controllers
-- ✅ Foreign key constraints in database
-- ✅ Responsive Tailwind CSS design
-- ✅ Font Awesome icons for visual consistency
-- ✅ Comments where needed
-- ✅ Follows Laravel conventions
-- ✅ DRY principle applied
-- ✅ Security (auth middleware, validation)
-
----
-
-## Testing & Verification ✅
-
-- ✅ Database migration ran successfully (142.13ms)
-- ✅ No SQL errors or constraint violations
-- ✅ Form validation working correctly
-- ✅ Technician dropdown loads properly
-- ✅ Rating form submission works
-- ✅ Dashboard metrics calculate correctly
-- ✅ Relationships function as expected
-- ✅ All routes accessible (with auth)
-- ✅ No broken links
-- ✅ UI renders without errors
-
----
-
-## Documentation ✅
-
-- ✅ `TECHNICIAN_INTEGRATION.md` - Complete feature documentation
-- ✅ `TECHNICIAN_SETUP_GUIDE.md` - Quick setup and testing guide
-- ✅ `IMPLEMENTATION_SUMMARY.md` - Overall system summary (updated)
-- ✅ `SYSTEM_GUIDE.md` - User manual (can be updated)
-- ✅ Code comments in views and controllers
-- ✅ Inline SQL and PHP documentation
-
----
-
-## Performance & Scalability ✅
-
-- ✅ Efficient database queries
-- ✅ Eager loading with `with()` on dashboard
-- ✅ Minimal query overhead for ratings
-- ✅ JSON storage for specialties (scalable)
-- ✅ No N+1 query problems
-- ✅ Handles multiple technicians efficiently
-- ✅ Dashboard loads quickly with many jobs
-
----
-
-## Security ✅
-
-- ✅ All admin routes protected with `auth` middleware
-- ✅ Input validation on all forms
-- ✅ Foreign key constraints prevent invalid technician assignments
-- ✅ Rating validation (1-5 only)
-- ✅ No direct database queries from user input
-- ✅ Email validation for uniqueness
-- ✅ CSRF protection on forms (Laravel default)
-
----
-
-## Browser Compatibility ✅
-
-- ✅ Responsive design works on:
-  - Desktop (full width)
-  - Tablet (2-3 column layout)
-  - Mobile (stacked layout)
-- ✅ All CSS uses Tailwind (browser-safe)
-- ✅ Font Awesome icons render correctly
-- ✅ Forms submit properly across browsers
-- ✅ JavaScript interactions smooth
-
----
-
-## User Experience ✅
-
-- ✅ Clear visual hierarchy
-- ✅ Intuitive form layout
-- ✅ Success/error messages visible
-- ✅ Star rating selector easy to use
-- ✅ Technician info prominent on job view
-- ✅ Dashboard metrics easy to understand
-- ✅ Performance indicators (progress bars, badges)
-- ✅ Color-coded status (consistency across system)
-- ✅ Icons used throughout for quick recognition
-- ✅ Responsive and mobile-friendly
-
----
-
-## Next Steps for Shop Owner
-
-1. **Add Technicians**
-   - Go to `/admin/technicians`
-   - Click "Create Technician"
-   - Add Juan, Maria, etc. with their specialties
-   - Mark as active
-
-2. **Create Job Orders**
-   - Go to `/admin/job-orders/create`
-   - Fill customer info
-   - Select technician in "Service Details"
-   - Create job order
-
-3. **Track Progress**
-   - Mark status updates as work progresses
-   - Dashboard shows current workload for each tech
-
-4. **Rate Performance**
-   - Once job is picked up, rate the technician
-   - Click stars to rate (1-5)
-   - Submit rating
-   - Watch dashboard metrics update
-
-5. **Monitor Dashboard**
-   - View technician performance cards
-   - See current jobs, completed jobs, ratings
-   - Make staffing decisions based on data
-
----
-
-## System Architecture
-
-```
-Job Order Creation
-    ↓
-Technician Assigned (Optional)
-    ↓
-Work in Progress
-    ↓
-Mark Ready for Pickup
-    ↓
-Mark Picked Up
-    ↓
-Rate Technician (1-5 Stars)
-    ↓
-Dashboard Metrics Update
-    ↓
-Performance Data Available for Decision Making
-```
-
----
-
-## Files Summary
-
-### Models
-- `app/Models/JobOrder.php` ✅
-- `app/Models/Technician.php` ✅
-- `app/Models/User.php` ✅
-- `app/Models/StatusHistory.php` ✅
-- `app/Models/RepairPhoto.php` ✅
-
-### Controllers
-- `app/Http/Controllers/AdminJobOrderController.php` ✅
-- `app/Http/Controllers/DashboardController.php` ✅
-- `app/Http/Controllers/TechnicianController.php` ✅
-- `app/Http/Controllers/ReportsController.php` ✅
-- `app/Http/Controllers/TrackingController.php` ✅
-
-### Views
-- `resources/views/admin/job-orders/create.blade.php` ✅
-- `resources/views/admin/job-orders/show.blade.php` ✅
-- `resources/views/admin/job-orders/index.blade.php` ✅
-- `resources/views/admin/job-orders/edit.blade.php` ✅
-- `resources/views/admin/dashboard.blade.php` ✅
-- `resources/views/admin/technicians/*` ✅
-
-### Database
-- `database/migrations/2025_12_27_add_technician_to_job_orders.php` ✅
-- `database/migrations/2025_12_27_create_repair_photos_table.php` ✅
-- 5 other migrations ✅
-
-### Routes
-- `routes/web.php` ✅
-
----
-
-## Final Status
-
-**✅ COMPLETE - ALL FEATURES IMPLEMENTED**
-
-The repair tracking system is now a complete, production-ready solution with:
-- Full technician management
-- Job assignment and tracking
-- Performance metrics and visibility
-- Customer rating system
-- Dashboard with real-time updates
-- Security and validation
-- Responsive design
-- Complete documentation
-
-**Ready to use, present, and adapt for electronics repair shops.**
-
----
-
-*Last Updated: [Current Date]*
-*System Version: 1.0 - Technician Integration Complete*
+# RepairSync Cloud Feature Inventory
+
+This checklist is a source-based inventory, not a release certificate. “Implemented in source” means code/routes/pages exist; it does not mean that a live deployment or external integration was tested.
+
+## Implemented in source
+
+### Public experience
+
+- [x] Public landing page and shop discovery/profile.
+- [x] Shop registration/onboarding with slug availability check and default service catalog.
+- [x] Public consultation requests and confirmation-code lookup.
+- [x] Appointment confirmation-code lookup.
+- [x] Public repair tracking with status history and permitted repair-photo display.
+- [x] Throttling on public tracking and selected lookup/photo routes.
+
+### Shop operations
+
+- [x] Shop dashboard and alerts.
+- [x] Job intake, listing, search/filter, detail, edit, print/invoice views, trash, restore, and force-delete endpoints.
+- [x] Technician assignment and technician portal for assigned work.
+- [x] Status updates and status history.
+- [x] Repair approval record, photos, visibility control, and device-location updates.
+- [x] Consultation review, customer response, cancellation, and resolution.
+- [x] Shop profile, logo, business hours, notification settings, warranty default, and service catalog management.
+- [x] Shop staff/user and technician administration.
+- [x] Inventory catalog, stock adjustment, stock movement, and job-part handling.
+- [x] Shop purchasing requests and inventory receiving.
+- [x] Job-specific part order workflow, including customer decision/downpayment, supplier ordering, receipt, cancellation, and issue to job.
+- [x] Job costs, payment ledger, pickup, warranty assessments/service, RTO, and refund workflow.
+- [x] Shop reports, CSV export, print-oriented report output, and shop audit-log page.
+- [x] Customer notification records and queued email/SMS code.
+
+### Platform operations
+
+- [x] Platform dashboard and shop listing/management.
+- [x] Shop activation toggle and shop-admin password reset.
+- [x] Subscription settings and shop-submitted subscription requests with payment proof.
+- [x] Subscription request approval/rejection and recorded subscription payments.
+- [x] Failed queue job listing, retry, and deletion endpoints.
+
+## Partial, configuration-dependent, or requiring further verification
+
+- [ ] **Email/SMS delivery:** Code exists; validate provider credentials, queue configuration, worker supervision, and actual delivery.
+- [ ] **Subscription payments:** The code records payment information and reviews submitted proof. An integrated payment gateway was not verified.
+- [ ] **PDF reporting:** A print-oriented report view exists; a server-side PDF generation dependency/implementation was not established.
+- [ ] **Platform audit feed:** The platform audit page is an access-checked placeholder and makes no API request. Do not mark as a working feed.
+- [ ] **Shop data isolation:** Controllers apply shop checks, but there is no universal model-level shop scope. Verify sensitive paths with cross-tenant tests.
+- [ ] **Private file storage:** Protected file handlers exist. Confirm production disk selection and deployment migration of old public files.
+- [ ] **Audit completeness:** Mutations call the audit logger at selected call sites; universal coverage and tamper resistance are not established.
+- [ ] **Full status transition matrix:** Important transitions and terminal checks exist, but there is no single exhaustive matrix documented here.
+- [ ] **Parts workflows:** Shop requests, job-specific orders, and blocked-job requests are separate/parallel flows, not a single unified workflow.
+- [ ] **Production readiness:** This checklist does not establish hosting, backups, TLS, monitoring, secrets management, performance, or successful end-to-end testing.
+
+## Not found as implemented in the inspected source
+
+- [ ] Customer account/sign-in portal or persisted customer role.
+- [ ] Customer password-recovery flow.
+- [ ] Integrated online payment processor.
+- [ ] Customer feedback/rating workflow.
+- [ ] Multi-location shop model.
+- [ ] Automatic technician assignment/load balancing.
+- [ ] Dedicated platform-wide audit feed.
+
+Absence here means not located in the inspected implementation, not proof that a separate untracked service cannot exist.
+
+## Current lifecycle values to use in demonstrations
+
+### Job orders
+
+The current controller exposes:
+
+`RECEIVED`, `DIAGNOSING`, `WAITING_PARTS`, `IN_PROGRESS`, `READY_FOR_PICKUP`, `PICKED_UP`, `RTO`, `RTO_RELEASED`.
+
+`UNREPAIRABLE` is a legacy value consolidated into RTO by a later migration.
+
+### Consultations
+
+- Public creation accepts `CONSULTATION` only. Drop-off booking and appointment-to-job conversion are unavailable.
+- Active consultation statuses are `PENDING`, `CANCELLED`, and `COMPLETED`.
+- Historical appointment schema values and records remain in place; the appointments table is not removed.
+
+### Shop part requests and job-specific part orders
+
+These are separate workflows with separate models/statuses. Refer to `SYSTEM_GUIDE.md` and the relevant controller/model before presenting detailed transitions.
+
+## Evidence locations
+
+- API surface: `routes/api.php`
+- Vue pages: `resources/js/spa/pages/`
+- Backend: `app/Http/Controllers/Api/`
+- Models: `app/Models/`
+- Schema history: `database/migrations/`
+- Feature and unit tests: `tests/Feature/`, `tests/Unit/`
+- MySQL concurrency tests: `tests/MySql/`

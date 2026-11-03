@@ -26,6 +26,8 @@ try {
         || ($_SERVER['DB_HOST'] ?? getenv('DB_HOST')) !== '127.0.0.1'
         || ($_SERVER['DB_PORT'] ?? getenv('DB_PORT')) !== '3306'
         || ($_SERVER['DB_DATABASE'] ?? getenv('DB_DATABASE')) !== 'repair_tracking_test'
+        || !in_array($_SERVER['DB_URL'] ?? getenv('DB_URL'), ['', false, null], true)
+        || !in_array($_SERVER['DB_SOCKET'] ?? getenv('DB_SOCKET'), ['', false, null], true)
     ) {
         throw new RuntimeException('Refusing MySQL concurrency worker outside the dedicated local test database.');
     }
@@ -36,10 +38,14 @@ try {
     if (
         config('app.env') !== 'mysql-testing'
         || config('database.default') !== 'mysql'
+        || config('database.connections.mysql.driver') !== 'mysql'
         || config('database.connections.mysql.database') !== 'repair_tracking_test'
         || config('database.connections.mysql.host') !== '127.0.0.1'
         || (string) config('database.connections.mysql.port') !== '3306'
         || config('database.connections.mysql.url')
+        || config('database.connections.mysql.unix_socket')
+        || config('database.connections.mysql.read')
+        || config('database.connections.mysql.write')
     ) {
         throw new RuntimeException('Refusing MySQL concurrency worker because the effective database configuration is unsafe.');
     }

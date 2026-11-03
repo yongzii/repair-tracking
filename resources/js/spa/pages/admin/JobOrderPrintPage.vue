@@ -20,7 +20,7 @@ const claimQr = ref(null);
 const tagQr = ref(null);
 
 const isWarrantyMode = computed(() => props.params.mode === 'warranty');
-const title = computed(() => (isWarrantyMode.value ? 'Warranty Slip' : 'Claim Stab and Job Order Slip'));
+const title = computed(() => (isWarrantyMode.value ? 'Warranty Slip' : 'Claim Stub and Job Order Slip'));
 
 const formatCurrency = (value) => {
     const amount = Number(value || 0);
@@ -181,7 +181,7 @@ onMounted(loadPrintData);
           </header>
 
           <div class="title-row">
-            <h2>Claim Stab</h2>
+            <h2>Claim Stub</h2>
             <span>{{ printData.service.received_at_formatted }}</span>
           </div>
 
@@ -210,7 +210,7 @@ onMounted(loadPrintData);
           <div class="claim-bottom">
             <div class="claim-release">
               <div class="claim-signature">Signature over printed name</div>
-              <p>Present this claim stab when claiming the device.</p>
+              <p>Present this claim stub when claiming the device.</p>
               <strong>{{ printData.shop.phone || 'Contact number not set' }}</strong>
             </div>
             <div class="qr-block">

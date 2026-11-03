@@ -2,67 +2,59 @@
 
 namespace Tests;
 
+use App\Support\TestDatabaseGuard;
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Support\Facades\DB;
 
 abstract class TestCase extends BaseTestCase
 {
     protected function setUp(): void
     {
-        if ($this->environmentValue('APP_ENV') === 'mysql-testing') {
-            $this->assertEnvironmentValue('DB_CONNECTION', 'mysql');
-            $this->assertEnvironmentValue('DB_HOST', '127.0.0.1');
-            $this->assertEnvironmentValue('DB_PORT', '3306');
-            $this->assertEnvironmentValue('DB_DATABASE', 'repair_tracking_test');
-            $this->assertEnvironmentValue('DB_URL', '');
-        } elseif ($this->environmentValue('APP_ENV') !== 'testing') {
+        $environment = $this->testEnvironment();
+
+        if (($environment['APP_ENV'] ?? null) === 'mysql-testing') {
+            TestDatabaseGuard::assertEnvironment($environment);
+        } elseif (($environment['APP_ENV'] ?? null) !== 'testing') {
             throw new \RuntimeException('Refusing to run tests outside the isolated testing environments.');
+        } else {
+            TestDatabaseGuard::assertSqliteTestEnvironment($environment);
+        }
+
+        $this->app = $this->createApplication();
+        $config = [
+            'app_env' => config('app.env'),
+            'default_connection' => config('database.default'),
+            'mysql' => config('database.connections.mysql', []),
+            'sqlite' => config('database.connections.sqlite', []),
+        ];
+
+        if (($environment['APP_ENV'] ?? null) === 'mysql-testing') {
+            TestDatabaseGuard::assertConfiguration($config);
+        } else {
+            TestDatabaseGuard::assertSqliteTestConfiguration($config);
         }
 
         parent::setUp();
 
-        $connection = config('database.default');
-        $database = config("database.connections.{$connection}.database");
-
-        if (config('app.env') === 'mysql-testing') {
-            if (
-                $connection !== 'mysql'
-                || $database !== 'repair_tracking_test'
-                || config('database.connections.mysql.host') !== '127.0.0.1'
-                || (string) config('database.connections.mysql.port') !== '3306'
-                || config('database.connections.mysql.url')
-            ) {
-                throw new \RuntimeException('Refusing MySQL integration tests unless they use the dedicated local repair_tracking_test database.');
-            }
-
-            $nonInnoDbTables = \Illuminate\Support\Facades\DB::select(
+        if (($environment['APP_ENV'] ?? null) === 'mysql-testing') {
+            $nonInnoDbTables = DB::select(
                 'SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = ? AND ENGINE <> ?',
                 ['BASE TABLE', 'InnoDB']
             );
             if ($nonInnoDbTables !== []) {
                 throw new \RuntimeException('Refusing MySQL integration tests because repair_tracking_test contains non-InnoDB tables.');
             }
-
-            return;
-        }
-
-        if ($connection !== 'sqlite' || $database !== ':memory:') {
-            throw new \RuntimeException(sprintf(
-                'Refusing to run tests against [%s/%s]. Tests must use sqlite :memory: to protect local data.',
-                $connection,
-                $database
-            ));
         }
     }
 
-    private function environmentValue(string $key): string|false
+    private function testEnvironment(): array
     {
-        return $_SERVER[$key] ?? $_ENV[$key] ?? getenv($key);
-    }
-
-    private function assertEnvironmentValue(string $key, string $expected): void
-    {
-        if ($this->environmentValue($key) !== $expected) {
-            throw new \RuntimeException("Refusing MySQL integration tests: {$key} must be explicitly set to the dedicated test configuration.");
+        $environment = [];
+        foreach (['APP_ENV', 'DB_CONNECTION', 'DB_HOST', 'DB_PORT', 'DB_DATABASE', 'DB_URL', 'DB_SOCKET'] as $key) {
+            $value = $_SERVER[$key] ?? $_ENV[$key] ?? getenv($key);
+            $environment[$key] = $value === false ? null : $value;
         }
+
+        return $environment;
     }
 }

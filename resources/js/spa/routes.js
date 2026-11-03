@@ -2,6 +2,7 @@ const WelcomePage = () => import('./pages/WelcomePage.vue');
 const LoginPage = () => import('./pages/LoginPage.vue');
 const TrackPage = () => import('./pages/TrackPage.vue');
 const AppointmentBookingPage = () => import('./pages/AppointmentBookingPage.vue');
+const BookingUnavailablePage = () => import('./pages/BookingUnavailablePage.vue');
 const ShopProfilePage = () => import('./pages/ShopProfilePage.vue');
 const ShopOnboardingPage = () => import('./pages/ShopOnboardingPage.vue');
 const AdminDashboardPage = () => import('./pages/admin/AdminDashboardPage.vue');
@@ -50,7 +51,7 @@ export const resolveRoute = (path) => {
     }
 
     if (path === '/book') {
-        return { component: AppointmentBookingPage, params: {}, title: 'Book Drop-off' };
+        return { component: BookingUnavailablePage, params: {}, title: 'Booking Unavailable' };
     }
 
     if (path === '/consultation') {
@@ -76,9 +77,9 @@ export const resolveRoute = (path) => {
         if (segments.length === 3 && segments[2] === 'book') {
             const shopSlug = decodeURIComponent(segments[1]);
             return {
-                component: AppointmentBookingPage,
+                component: BookingUnavailablePage,
                 params: { shopSlug },
-                title: 'Book Drop-off',
+                title: 'Booking Unavailable',
             };
         }
 

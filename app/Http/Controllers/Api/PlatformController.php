@@ -12,6 +12,7 @@ use App\Models\SubscriptionRequest;
 use App\Models\Technician;
 use App\Models\User;
 use App\Support\AuditLogger;
+use App\Support\ManilaDateTime;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -674,9 +675,9 @@ class PlatformController extends Controller
             'status_label' => strtoupper($notification->status),
             'trigger' => $notification->trigger,
             'trigger_label' => $this->platformReminderTriggerLabel($notification->trigger),
-            'queued_at_formatted' => $notification->queued_at?->format('M d, Y h:i A'),
-            'sent_at_formatted' => $notification->sent_at?->format('M d, Y h:i A'),
-            'failed_at_formatted' => $notification->failed_at?->format('M d, Y h:i A'),
+            'queued_at_formatted' => ManilaDateTime::format($notification->queued_at),
+            'sent_at_formatted' => ManilaDateTime::format($notification->sent_at),
+            'failed_at_formatted' => ManilaDateTime::format($notification->failed_at),
             'error_message' => $notification->error_message,
         ];
     }
@@ -706,8 +707,8 @@ class PlatformController extends Controller
             'status' => $request->status,
             'status_label' => strtoupper($request->status),
             'admin_notes' => $request->admin_notes,
-            'created_at_formatted' => $request->created_at?->format('M d, Y h:i A'),
-            'reviewed_at_formatted' => $request->reviewed_at?->format('M d, Y h:i A'),
+            'created_at_formatted' => ManilaDateTime::format($request->created_at),
+            'reviewed_at_formatted' => ManilaDateTime::format($request->reviewed_at),
         ];
     }
 

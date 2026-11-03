@@ -96,7 +96,6 @@ Route::middleware('web')->group(function () {
         Route::get('/appointments/{appointment}', [AppointmentController::class, 'show']);
         Route::get('/appointments/{appointment}/photo', [AppointmentController::class, 'showStaffPhoto'])->name('admin.appointment.photo');
         Route::post('/appointments/{appointment}/status', [AppointmentController::class, 'updateStatus']);
-        Route::post('/appointments/{appointment}/convert-to-job-order', [AppointmentController::class, 'convertToJobOrder']);
 
         Route::get('/job-orders/meta', [JobOrderController::class, 'meta']);
         Route::get('/job-orders', [JobOrderController::class, 'index']);

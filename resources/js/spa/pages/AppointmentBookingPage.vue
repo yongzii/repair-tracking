@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { onMounted, reactive, ref, watch } from 'vue';
 import AppLink from '../components/AppLink.vue';
 import { isCsrfMismatch, refreshCsrfToken } from '../composables/auth';
 
@@ -11,14 +11,10 @@ const props = defineProps({
 });
 
 const shopSlug = ref(props.params.shopSlug || '');
-const isConsultationMode = computed(() => props.params.mode === 'consultation');
-const defaultBookingType = isConsultationMode.value ? 'CONSULTATION' : 'DROP_OFF';
-const pageLabel = computed(() => isConsultationMode.value ? 'Free Consultation' : 'Drop-off Booking');
-const pageTitle = computed(() => isConsultationMode.value ? 'Request Technical Advice' : 'Book a Device Drop-off');
-const concernLabel = computed(() => isConsultationMode.value ? 'Describe the Issue' : 'Concern');
-const preferredTimeLabel = computed(() => isConsultationMode.value ? 'Preferred Consultation Time' : 'Preferred Drop-off Date and Time');
-const submitLabel = computed(() => isConsultationMode.value ? 'Submit Consultation Request' : 'Submit Drop-off Request');
-const successFallback = computed(() => isConsultationMode.value ? 'Consultation request submitted.' : 'Drop-off request submitted.');
+const pageLabel = 'Free Consultation';
+const pageTitle = 'Request Technical Advice';
+const submitLabel = 'Submit Consultation Request';
+const successFallback = 'Consultation request submitted.';
 const loading = ref(false);
 const lookupLoading = ref(false);
 const errorMessage = ref('');
@@ -36,10 +32,8 @@ const form = reactive({
     customer_name: '',
     customer_email: '',
     customer_phone: '',
-    booking_type: defaultBookingType,
     device_type: '',
     service_category_id: '',
-    service_item_id: '',
     brand: '',
     model: '',
     concern: '',
@@ -48,7 +42,6 @@ const form = reactive({
     previous_repairs: '',
     troubleshooting_attempted: '',
     additional_details: '',
-    preferred_at: '',
 });
 const statusForm = reactive({
     shop_slug: props.params.shopSlug || '',
@@ -56,48 +49,7 @@ const statusForm = reactive({
 });
 let shopProfileTimer = null;
 
-const businessDays = [
-    { key: 'monday', label: 'Mon' },
-    { key: 'tuesday', label: 'Tue' },
-    { key: 'wednesday', label: 'Wed' },
-    { key: 'thursday', label: 'Thu' },
-    { key: 'friday', label: 'Fri' },
-    { key: 'saturday', label: 'Sat' },
-    { key: 'sunday', label: 'Sun' },
-];
-const todayKey = computed(() => businessDays[(new Date().getDay() + 6) % 7].key);
-
 const formatStatus = (value) => (value ? value.replaceAll('_', ' ') : '');
-
-const formatTime = (value) => {
-    if (!value) return '';
-    const [hourValue, minute = '00'] = value.split(':');
-    const hour = Number(hourValue);
-    const suffix = hour >= 12 ? 'PM' : 'AM';
-    const displayHour = hour % 12 || 12;
-    return `${displayHour}:${minute} ${suffix}`;
-};
-
-const formatHours = (day) => {
-    if (!day?.open) return 'Closed';
-    return `${formatTime(day.open_time)} - ${formatTime(day.close_time)}`;
-};
-
-const shopHoursRows = computed(() => businessDays
-    .map((day) => ({
-        ...day,
-        details: shopProfile.value?.business_hours?.[day.key],
-    }))
-    .filter((day) => day.details));
-
-const todayHours = computed(() => {
-    const hours = shopProfile.value?.business_hours?.[todayKey.value];
-    return hours ? formatHours(hours) : '';
-});
-const selectedCategoryServices = computed(() => {
-    const category = shopProfile.value?.service_catalog?.find((item) => String(item.id) === String(form.service_category_id));
-    return category?.services || [];
-});
 
 const loadShopProfile = async (slug) => {
     const normalizedShopSlug = slug.trim().toLowerCase();
@@ -126,16 +78,11 @@ const onPhotoChange = (event) => {
 const buildPayload = () => {
     const payload = new FormData();
 
-    const historyFields = ['problem_started', 'previous_incidents', 'previous_repairs', 'troubleshooting_attempted', 'additional_details'];
+    payload.set('booking_type', 'CONSULTATION');
     Object.entries(form).forEach(([key, value]) => {
-        if (!isConsultationMode.value && historyFields.includes(key)) return;
         payload.append(key, value || '');
     });
 
-    if (isConsultationMode.value) {
-        payload.delete('preferred_at');
-        payload.delete('service_item_id');
-    }
     if (form.service_category_id === 'other') {
         payload.delete('service_category_id');
     }
@@ -145,7 +92,7 @@ const buildPayload = () => {
     payload.set('brand', form.brand || '');
     payload.set('model', form.model || '');
 
-    if (isConsultationMode.value && consultationPhoto.value) {
+    if (consultationPhoto.value) {
         payload.append('photo', consultationPhoto.value);
     }
 
@@ -179,10 +126,8 @@ const submitRequest = async () => {
             customer_name: '',
             customer_email: '',
             customer_phone: '',
-            booking_type: defaultBookingType,
             device_type: '',
             service_category_id: '',
-            service_item_id: '',
             brand: '',
             model: '',
             concern: '',
@@ -191,7 +136,6 @@ const submitRequest = async () => {
             previous_repairs: '',
             troubleshooting_attempted: '',
             additional_details: '',
-            preferred_at: '',
         });
         consultationPhoto.value = null;
         if (photoInput.value) {
@@ -240,7 +184,7 @@ const lookupStatus = async () => {
         const { data } = await window.axios.get(`/api/shops/${encodeURIComponent(normalizedShopSlug)}/appointments/${encodeURIComponent(confirmationCode)}`);
         statusAppointment.value = data.appointment;
     } catch (error) {
-        lookupErrorMessage.value = error?.response?.data?.message || 'Appointment request not found.';
+        lookupErrorMessage.value = error?.response?.data?.message || 'Consultation request not found.';
     } finally {
         lookupLoading.value = false;
     }
@@ -255,7 +199,6 @@ watch(shopSlug, (value) => {
 watch(
     () => form.service_category_id,
     (categoryId) => {
-        form.service_item_id = '';
         const category = shopProfile.value?.service_catalog?.find((item) => String(item.id) === String(categoryId));
         form.device_type = category?.name || '';
     }
@@ -274,11 +217,8 @@ onMounted(() => {
         <div>
           <p class="text-xs font-bold uppercase tracking-[0.2em] text-teal-800">{{ pageLabel }}</p>
           <h1 class="mt-3 font-display text-3xl leading-tight text-slate-950 sm:text-4xl">{{ pageTitle }}</h1>
-          <p v-if="isConsultationMode" class="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+          <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
             The shop will review your request and send one response; this is not a chat. Share as much relevant detail as you can so the shop can give you a useful answer.
-          </p>
-          <p v-else class="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
-            Schedule when you plan to bring the device to the shop so staff can prepare the intake queue.
           </p>
         </div>
         <AppLink :to="shopSlug ? `/shops/${shopSlug}/track` : '/track'" class="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-950 hover:bg-slate-100">Track Repair</AppLink>
@@ -295,25 +235,20 @@ onMounted(() => {
       <div class="public-card p-4 sm:p-6 xl:col-span-2">
         <div class="mb-5">
           <p class="text-xs font-bold uppercase text-teal-700">Customer request form</p>
-          <h2 class="mt-2 text-xl font-bold text-slate-950">{{ isConsultationMode ? 'Your Device and Problem' : 'Service Details' }}</h2>
+          <h2 class="mt-2 text-xl font-bold text-slate-950">Your Device and Problem</h2>
         </div>
         <form class="grid grid-cols-1 gap-4 md:grid-cols-2" @submit.prevent="submitRequest">
-          <label v-if="isConsultationMode && !props.params.shopSlug" class="space-y-2 md:col-span-2">
+          <label v-if="!props.params.shopSlug" class="space-y-2 md:col-span-2">
             <span class="text-sm font-bold text-slate-700">Shop Code</span>
             <input v-model="shopSlug" class="w-full min-w-0 rounded-lg border border-slate-300 px-4 py-2" placeholder="Enter the shop code" required />
             <span class="block text-xs text-slate-500">Enter the shop code provided by the repair shop.</span>
             <span v-if="shopProfileError" class="block text-sm text-rose-700">{{ shopProfileError }}</span>
           </label>
 
-          <div v-else-if="isConsultationMode" class="md:col-span-2 rounded-lg bg-slate-50 px-4 py-3">
+          <div v-else class="md:col-span-2 rounded-lg bg-slate-50 px-4 py-3">
             <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Selected shop</p>
             <p class="mt-1 font-semibold text-slate-900">{{ shopProfile?.name || shopSlug }}</p>
           </div>
-
-          <label v-else-if="!props.params.shopSlug" class="space-y-2 md:col-span-2">
-            <span class="text-sm font-bold text-slate-700">Shop Code</span>
-            <input v-model="shopSlug" class="w-full min-w-0 rounded-lg border border-slate-300 px-4 py-2" placeholder="Enter the shop code" required />
-          </label>
 
           <label class="space-y-2">
             <span class="text-sm font-bold text-slate-700">Customer Name</span>
@@ -341,19 +276,6 @@ onMounted(() => {
             <input v-if="!shopProfile?.service_catalog?.length || form.service_category_id === 'other'" v-model="form.device_type" class="w-full min-w-0 rounded-lg border border-slate-300 px-4 py-2" maxlength="80" required />
           </label>
 
-          <label v-if="!isConsultationMode" class="space-y-2">
-            <span class="text-sm font-bold text-slate-700">Service Needed</span>
-            <select v-model="form.service_item_id" class="w-full rounded-lg border border-slate-300 px-4 py-2" :disabled="!form.service_category_id">
-              <option value="">Choose service</option>
-              <option v-for="service in selectedCategoryServices" :key="service.id" :value="service.id">{{ service.name }}</option>
-            </select>
-          </label>
-
-          <label v-if="!isConsultationMode" class="space-y-2">
-            <span class="text-sm font-bold text-slate-700">{{ preferredTimeLabel }}</span>
-            <input v-model="form.preferred_at" type="datetime-local" class="w-full rounded-lg border border-slate-300 px-4 py-2" required />
-          </label>
-
           <label class="space-y-2">
             <span class="text-sm font-bold text-slate-700">Brand <span class="font-normal text-slate-400">(optional)</span></span>
             <input v-model="form.brand" class="w-full rounded-lg border border-slate-300 px-4 py-2" />
@@ -365,11 +287,10 @@ onMounted(() => {
           </label>
 
           <label class="space-y-2 md:col-span-2">
-            <span class="text-sm font-bold text-slate-700">{{ isConsultationMode ? 'Describe the Problem in Detail' : concernLabel }}</span>
-            <textarea v-model="form.concern" rows="5" maxlength="3000" minlength="10" class="w-full rounded-lg border border-slate-300 px-4 py-2" :placeholder="isConsultationMode ? 'Describe what is happening, any error messages, and how the device behaves.' : ''" required></textarea>
+            <span class="text-sm font-bold text-slate-700">Describe the Problem in Detail</span>
+            <textarea v-model="form.concern" rows="5" maxlength="3000" minlength="10" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="Describe what is happening, any error messages, and how the device behaves." required></textarea>
           </label>
 
-          <template v-if="isConsultationMode">
             <div class="space-y-1 md:col-span-2">
               <h3 class="text-sm font-bold text-slate-800">Device History <span class="font-normal text-slate-500">(optional)</span></h3>
               <p class="text-xs text-slate-500">Share anything that may help the shop understand the problem.</p>
@@ -395,9 +316,8 @@ onMounted(() => {
               <span class="text-sm font-bold text-slate-700">Other relevant details</span>
               <textarea v-model="form.additional_details" rows="2" maxlength="1000" class="w-full rounded-lg border border-slate-300 px-4 py-2"></textarea>
             </label>
-          </template>
 
-          <label v-if="isConsultationMode" class="space-y-2 md:col-span-2">
+          <label class="space-y-2 md:col-span-2">
             <span class="text-sm font-bold text-slate-700">Photo of Device or Issue</span>
             <input ref="photoInput" type="file" accept="image/jpeg,image/png,image/webp" class="w-full rounded-lg border border-slate-300 px-4 py-2" @change="onPhotoChange" />
             <span class="block text-xs text-slate-500">Optional. JPG, PNG, or WebP up to 5 MB.</span>
@@ -412,10 +332,10 @@ onMounted(() => {
       </div>
 
       <div class="space-y-6">
-      <div v-if="!isConsultationMode" class="public-card min-w-0 p-4 sm:p-6">
-        <p class="text-xs font-bold uppercase text-teal-700">{{ isConsultationMode ? 'Selected shop' : 'Shop schedule' }}</p>
-        <h2 class="mt-2 text-lg font-bold text-slate-950">{{ isConsultationMode ? 'Selected Shop' : 'Business Hours' }}</h2>
-        <div v-if="shopProfileLoading" class="mt-4 text-sm text-slate-500">Loading shop hours...</div>
+      <div class="public-card min-w-0 p-4 sm:p-6">
+        <p class="text-xs font-bold uppercase text-teal-700">Selected shop</p>
+        <h2 class="mt-2 text-lg font-bold text-slate-950">Shop Contact</h2>
+        <div v-if="shopProfileLoading" class="mt-4 text-sm text-slate-500">Loading shop details...</div>
         <div v-else-if="shopProfile" class="mt-4">
           <div class="flex min-w-0 items-center gap-3">
             <div v-if="shopProfile.logo_url" class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
@@ -423,30 +343,19 @@ onMounted(() => {
             </div>
             <div class="min-w-0">
               <p class="break-words font-bold text-slate-950">{{ shopProfile.name }}</p>
-              <p v-if="!isConsultationMode && todayHours" class="text-sm font-semibold text-teal-700">Today: {{ todayHours }}</p>
             </div>
           </div>
-          <p v-if="isConsultationMode && shopProfile.phone" class="mt-3 text-sm text-slate-600">Phone: {{ shopProfile.phone }}</p>
+          <p v-if="shopProfile.phone" class="mt-3 text-sm text-slate-600">Phone: {{ shopProfile.phone }}</p>
           <p v-if="shopProfile.address" class="mt-3 text-sm text-slate-500">{{ shopProfile.address }}</p>
-          <div v-if="!isConsultationMode && shopHoursRows.length" class="mt-4 grid grid-cols-2 gap-2 text-xs">
-            <div v-for="day in shopHoursRows" :key="day.key" class="rounded-lg bg-slate-50 px-3 py-2">
-              <p class="font-bold text-slate-700">{{ day.label }}</p>
-              <p class="mt-1 text-slate-500">{{ formatHours(day.details) }}</p>
-            </div>
-          </div>
         </div>
-        <p v-else class="mt-4 text-sm text-slate-500">{{ isConsultationMode ? 'Select a shop to view its contact details.' : 'Enter a valid shop code to view the shop schedule.' }}</p>
+        <p v-else class="mt-4 text-sm text-slate-500">Select a shop to view its contact details.</p>
       </div>
 
       <div class="public-card min-w-0 p-4 sm:p-6">
         <p class="text-xs font-bold uppercase text-teal-700">Lookup</p>
         <h2 class="mt-2 text-lg font-bold text-slate-950">Check Request Status</h2>
         <form class="mt-4 space-y-3" @submit.prevent="lookupStatus">
-          <label v-if="!isConsultationMode && !props.params.shopSlug" class="space-y-2 block">
-            <span class="text-sm font-bold text-slate-700">Shop Code</span>
-            <input v-model="statusForm.shop_slug" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="default-shop" required />
-          </label>
-          <label v-else-if="isConsultationMode && !props.params.shopSlug" class="space-y-2 block">
+          <label v-if="!props.params.shopSlug" class="space-y-2 block">
             <span class="text-sm font-bold text-slate-700">Shop Code</span>
             <input v-model="statusForm.shop_slug" class="w-full min-w-0 rounded-lg border border-slate-300 px-4 py-2" placeholder="Enter the shop code" required />
           </label>
@@ -470,15 +379,7 @@ onMounted(() => {
             <p class="text-slate-500">Reference Code</p>
             <p class="font-semibold text-slate-900">{{ statusAppointment.confirmation_code }}</p>
           </div>
-          <div v-if="statusAppointment.booking_type !== 'CONSULTATION'">
-            <p class="text-slate-500">Preferred</p>
-            <p class="font-semibold text-slate-900">{{ statusAppointment.preferred_at_formatted }}</p>
-          </div>
-          <div v-if="statusAppointment.booking_type !== 'CONSULTATION'">
-            <p class="text-slate-500">Scheduled</p>
-            <p class="font-semibold text-slate-900">{{ statusAppointment.scheduled_at_formatted || 'Not set yet' }}</p>
-          </div>
-          <p v-if="statusAppointment.booking_type === 'CONSULTATION' && !statusAppointment.customer_response?.trim() && statusAppointment.status === 'PENDING'" class="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sky-900">
+          <p v-if="!statusAppointment.customer_response?.trim() && statusAppointment.status === 'PENDING'" class="rounded-lg border border-sky-200 bg-sky-50 p-3 text-sky-900">
             Your consultation request has been received. The shop has not responded yet.
           </p>
           <div v-if="statusAppointment.customer_response?.trim()">
@@ -488,10 +389,6 @@ onMounted(() => {
           <div v-if="statusAppointment.photo_url">
             <p class="text-slate-500">Submitted Photo</p>
             <a :href="statusAppointment.photo_url" target="_blank" rel="noreferrer" class="font-semibold text-slate-900 hover:text-slate-700">View photo</a>
-          </div>
-          <div v-if="statusAppointment.booking_type !== 'CONSULTATION' && statusAppointment.recommended_action_label">
-            <p class="text-slate-500">Next Step</p>
-            <p class="font-semibold text-slate-900">{{ statusAppointment.recommended_action_label }}</p>
           </div>
         </div>
       </div>

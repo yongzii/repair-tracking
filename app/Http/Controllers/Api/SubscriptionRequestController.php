@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\PlatformSubscriptionSetting;
 use App\Models\SubscriptionRequest;
 use App\Models\User;
+use App\Support\ManilaDateTime;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 
@@ -51,8 +52,8 @@ class SubscriptionRequestController extends Controller
                 'reference_number' => $subscriptionRequest->reference_number,
                 'proof_url' => $subscriptionRequest->proofUrl(),
                 'status' => $subscriptionRequest->status,
-                'created_at_formatted' => $subscriptionRequest->created_at?->format('M d, Y h:i A'),
-                'reviewed_at_formatted' => $subscriptionRequest->reviewed_at?->format('M d, Y h:i A'),
+                'created_at_formatted' => ManilaDateTime::format($subscriptionRequest->created_at),
+                'reviewed_at_formatted' => ManilaDateTime::format($subscriptionRequest->reviewed_at),
             ] : null,
         ]);
     }
@@ -167,7 +168,7 @@ class SubscriptionRequestController extends Controller
             'reference_number' => $request->reference_number,
             'proof_url' => $request->proofUrl(),
             'status' => $request->status,
-            'created_at_formatted' => $request->created_at?->format('M d, Y h:i A'),
+            'created_at_formatted' => ManilaDateTime::format($request->created_at),
         ];
     }
 }

@@ -14,7 +14,7 @@ class PublicAppointmentConfirmationTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_public_confirmation_returns_customer_safe_appointment_details_only(): void
+    public function test_public_consultation_confirmation_returns_customer_safe_details_only(): void
     {
         [$shop, $appointment] = $this->createAppointment();
 
@@ -22,11 +22,12 @@ class PublicAppointmentConfirmationTest extends TestCase
             ->assertOk()
             ->assertJsonPath('appointment.confirmation_code', $appointment->confirmation_code)
             ->assertJsonPath('appointment.customer_name', 'Customer Name')
-            ->assertJsonPath('appointment.status', 'CONFIRMED')
+            ->assertJsonPath('appointment.booking_type', 'CONSULTATION')
+            ->assertJsonPath('appointment.status', 'COMPLETED')
             ->assertJsonPath('appointment.preferred_at_formatted', $appointment->preferred_at->format('M d, Y h:i A'))
             ->assertJsonPath('appointment.scheduled_at_formatted', $appointment->scheduled_at->format('M d, Y h:i A'))
-            ->assertJsonPath('appointment.customer_response', 'Your device is ready for drop-off.')
-            ->assertJsonPath('appointment.recommended_action_label', 'Bring the device to the shop')
+            ->assertJsonPath('appointment.customer_response', 'We have provided the requested guidance.')
+            ->assertJsonPath('appointment.status_label', 'Responded')
             ->assertJsonPath('appointment.photo_url', null)
             ->assertJsonMissingPath('appointment.id')
             ->assertJsonMissingPath('appointment.shop_id')
@@ -54,9 +55,90 @@ class PublicAppointmentConfirmationTest extends TestCase
             ->assertJsonPath('appointment.id', $appointment->id)
             ->assertJsonPath('appointment.customer_email', 'customer@example.test')
             ->assertJsonPath('appointment.customer_phone', '09123456789')
-            ->assertJsonPath('appointment.staff_note', 'Internal scheduling note.')
+            ->assertJsonPath('appointment.staff_note', 'Internal consultation note.')
             ->assertJsonPath('appointment.responded_by', 'Shop Staff')
             ->assertJsonPath('appointment.responded_at', $appointment->responded_at->toJSON());
+    }
+
+    public function test_staff_can_clear_an_internal_note_with_empty_or_null_input(): void
+    {
+        [$shop, $appointment] = $this->createAppointment();
+        $shop->update(['trial_ends_at' => now()->addDays(30)]);
+        $staff = User::factory()->create([
+            'shop_id' => $shop->id,
+            'role' => User::ROLE_STAFF,
+            'is_active' => true,
+        ]);
+
+        foreach (['', null] as $staffNote) {
+            $appointment->update(['staff_note' => 'Internal consultation note.']);
+
+            $this->actingAs($staff)
+                ->postJson("/api/admin/appointments/{$appointment->id}/status", [
+                    'status' => 'PENDING',
+                    'staff_note' => $staffNote,
+                    'customer_response' => 'Please contact us if you need more help.',
+                ])
+                ->assertOk();
+
+            $this->assertNull($appointment->fresh()->staff_note);
+        }
+    }
+
+    public function test_omitting_staff_note_preserves_the_existing_internal_note(): void
+    {
+        [$shop, $appointment] = $this->createAppointment();
+        $shop->update(['trial_ends_at' => now()->addDays(30)]);
+        $staff = User::factory()->create([
+            'shop_id' => $shop->id,
+            'role' => User::ROLE_STAFF,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/appointments/{$appointment->id}/status", [
+                'status' => 'PENDING',
+                'customer_response' => 'Please contact us if you need more help.',
+            ])
+            ->assertOk();
+
+        $this->assertSame('Internal consultation note.', $appointment->fresh()->staff_note);
+    }
+
+    public function test_internal_note_is_visible_only_to_authorized_users_from_the_same_shop(): void
+    {
+        [$shop, $appointment] = $this->createAppointment();
+        $otherShop = Shop::create([
+            'name' => 'Other Consultation Shop ' . uniqid(),
+            'slug' => 'other-consultation-' . uniqid(),
+            'is_active' => true,
+        ]);
+        $otherShopAdmin = User::factory()->create([
+            'shop_id' => $otherShop->id,
+            'role' => User::ROLE_ADMIN,
+            'is_active' => true,
+        ]);
+        $shopAdmin = User::factory()->create([
+            'shop_id' => $shop->id,
+            'role' => User::ROLE_ADMIN,
+            'is_active' => true,
+        ]);
+
+        $this->getJson("/api/admin/appointments/{$appointment->id}")
+            ->assertUnauthorized();
+
+        $this->actingAs($shopAdmin)
+            ->getJson("/api/admin/appointments/{$appointment->id}")
+            ->assertOk()
+            ->assertJsonPath('appointment.staff_note', 'Internal consultation note.');
+
+        $this->actingAs($otherShopAdmin)
+            ->getJson("/api/admin/appointments/{$appointment->id}")
+            ->assertNotFound();
+
+        $this->getJson("/api/shops/{$shop->slug}/appointments/{$appointment->confirmation_code}")
+            ->assertOk()
+            ->assertJsonMissingPath('appointment.staff_note');
     }
 
     public function test_public_confirmation_lookup_is_rate_limited_after_thirty_requests(): void
@@ -200,7 +282,7 @@ class PublicAppointmentConfirmationTest extends TestCase
             ->assertJsonValidationErrors('concern');
     }
 
-    public function test_public_consultations_and_drop_off_bookings_keep_separate_time_requirements(): void
+    public function test_public_appointment_creation_rejects_drop_off_and_accepts_consultation(): void
     {
         $shop = Shop::create([
             'name' => 'Consultation Only Shop ' . uniqid(),
@@ -217,6 +299,7 @@ class PublicAppointmentConfirmationTest extends TestCase
             'concern' => 'Device will not power on.',
         ])
             ->assertCreated()
+            ->assertJsonPath('message', 'Consultation request submitted.')
             ->assertJsonPath('appointment.booking_type', 'CONSULTATION');
 
         $this->postJson("/api/shops/{$shop->slug}/appointments", [
@@ -225,18 +308,17 @@ class PublicAppointmentConfirmationTest extends TestCase
             'booking_type' => 'DROP_OFF',
             'device_type' => 'Phone',
             'concern' => 'Device will not power on.',
-        ])->assertUnprocessable()
-            ->assertJsonValidationErrors('preferred_at');
-
-        $this->postJson("/api/shops/{$shop->slug}/appointments", [
-            'customer_name' => 'Drop-off Customer',
-            'customer_phone' => '09123456789',
-            'booking_type' => 'DROP_OFF',
-            'device_type' => 'Phone',
-            'concern' => 'Device will not power on.',
             'preferred_at' => now()->addDay()->toIso8601String(),
-        ])->assertCreated()
-            ->assertJsonPath('appointment.booking_type', 'DROP_OFF');
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('booking_type');
+
+        $this->assertSame(1, Appointment::query()->where('shop_id', $shop->id)->count());
+    }
+
+    public function test_appointment_conversion_api_route_is_removed(): void
+    {
+        $this->postJson('/api/admin/appointments/1/convert-to-job-order')
+            ->assertNotFound();
     }
 
     public function test_consultation_reply_is_customer_written_status_independent_and_keeps_follow_ups_open(): void
@@ -448,17 +530,16 @@ class PublicAppointmentConfirmationTest extends TestCase
             'customer_name' => 'Customer Name',
             'customer_email' => 'customer@example.test',
             'customer_phone' => '09123456789',
-            'booking_type' => 'DROP_OFF',
+            'booking_type' => 'CONSULTATION',
             'device_type' => 'Phone',
             'brand' => 'Example',
             'model' => 'Model One',
             'concern' => 'Device does not power on.',
             'preferred_at' => now()->addDay(),
             'scheduled_at' => now()->addDays(2),
-            'status' => 'CONFIRMED',
-            'staff_note' => 'Internal scheduling note.',
-            'customer_response' => 'Your device is ready for drop-off.',
-            'recommended_action' => 'BRING_TO_SHOP',
+            'status' => 'COMPLETED',
+            'staff_note' => 'Internal consultation note.',
+            'customer_response' => 'We have provided the requested guidance.',
             'responded_at' => now(),
             'responded_by' => 'Shop Staff',
         ]);

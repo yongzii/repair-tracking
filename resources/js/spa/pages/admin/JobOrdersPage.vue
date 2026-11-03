@@ -731,7 +731,7 @@ watch(
             <textarea v-model="form.included_accessories" class="md:col-span-2 px-4 py-2 border border-slate-300 rounded-lg" rows="3" placeholder="Included accessories (optional): charger, bag, SIM, memory card..."></textarea>
             <label class="md:col-span-2 flex items-center gap-3 text-sm text-slate-600">
               <input v-model="form.open_intake_packet" type="checkbox" class="rounded border-slate-300" />
-              Open claim stab and job order slip after saving
+              Open claim stub and job order slip after saving
             </label>
 
             <div class="md:col-span-2 flex justify-end gap-3 pt-2">

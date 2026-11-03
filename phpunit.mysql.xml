@@ -16,6 +16,7 @@
         <env name="DB_PORT" value="3306" force="true"/>
         <env name="DB_DATABASE" value="repair_tracking_test" force="true"/>
         <env name="DB_URL" value="" force="true"/>
+        <env name="DB_SOCKET" value="" force="true"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_STORE" value="array"/>
         <env name="MAIL_MAILER" value="array"/>

@@ -439,6 +439,7 @@ class WorkflowConcurrencyTest extends TestCase
             'DB_USERNAME' => (string) $database['username'],
             'DB_PASSWORD' => (string) $database['password'],
             'DB_URL' => '',
+            'DB_SOCKET' => '',
         ];
 
         DB::beginTransaction();

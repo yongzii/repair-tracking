@@ -4,16 +4,11 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Appointment;
-use App\Models\JobOrder;
 use App\Models\ServiceCategory;
-use App\Models\ServiceItem;
 use App\Models\Shop;
-use App\Models\StatusHistory;
 use App\Models\User;
 use App\Support\AuditLogger;
-use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -27,45 +22,34 @@ class AppointmentController extends Controller
         }
 
         if (!$shop->hasActiveAccess()) {
-            abort(402, 'This shop is not accepting new appointment requests until its subscription is renewed.');
+            abort(402, 'This shop is not accepting new consultation requests until its subscription is renewed.');
         }
 
-        $isConsultation = $request->input('booking_type') === 'CONSULTATION';
         $validated = $request->validate([
             'customer_name' => ['required', 'string', 'max:120'],
             'customer_email' => ['nullable', 'email', 'max:150', 'required_without:customer_phone'],
             'customer_phone' => ['nullable', 'string', 'max:30', 'required_without:customer_email'],
-            'booking_type' => ['required', Rule::in(['CONSULTATION', 'DROP_OFF'])],
+            'booking_type' => ['required', Rule::in(['CONSULTATION'])],
             'device_type' => ['required', 'string', 'max:80'],
             'service_category_id' => ['nullable', 'integer'],
-            'service_item_id' => ['nullable', 'integer'],
             'brand' => ['nullable', 'string', 'max:80'],
             'model' => ['nullable', 'string', 'max:80'],
-            'concern' => array_merge(
-                ['required', 'string', 'max:3000'],
-                $isConsultation ? ['min:10'] : []
-            ),
+            'concern' => ['required', 'string', 'min:10', 'max:3000'],
             'problem_started' => ['nullable', 'string', 'max:200'],
             'previous_incidents' => ['nullable', 'string', 'max:500'],
             'previous_repairs' => ['nullable', 'string', 'max:500'],
             'troubleshooting_attempted' => ['nullable', 'string', 'max:1000'],
             'additional_details' => ['nullable', 'string', 'max:1000'],
             'photo' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
-            'preferred_at' => ['nullable', 'required_if:booking_type,DROP_OFF', 'date', 'after:now'],
         ]);
-        if ($isConsultation) {
-            $validated['concern'] = $this->buildConsultationConcern($validated);
-            unset(
-                $validated['problem_started'],
-                $validated['previous_incidents'],
-                $validated['previous_repairs'],
-                $validated['troubleshooting_attempted'],
-                $validated['additional_details']
-            );
-        }
-        if ($validated['booking_type'] === 'CONSULTATION') {
-            $validated['service_item_id'] = null;
-        }
+        $validated['concern'] = $this->buildConsultationConcern($validated);
+        unset(
+            $validated['problem_started'],
+            $validated['previous_incidents'],
+            $validated['previous_repairs'],
+            $validated['troubleshooting_attempted'],
+            $validated['additional_details']
+        );
         $validated = $this->normalizeServiceSelection($shop->id, $validated);
 
         $photoPath = null;
@@ -86,7 +70,7 @@ class AppointmentController extends Controller
         ]);
 
         return response()->json([
-            'message' => 'Appointment request submitted.',
+            'message' => 'Consultation request submitted.',
             'appointment' => $this->mapAppointment($appointment, $this->publicPhotoUrl($shop, $appointment)),
         ], 201);
     }
@@ -98,14 +82,11 @@ class AppointmentController extends Controller
 
         $query = Appointment::query()
             ->where('shop_id', $shopId)
-            ->orderByRaw('COALESCE(preferred_at, created_at) DESC');
+            ->where('booking_type', 'CONSULTATION')
+            ->orderByDesc('created_at');
 
         if ($status = $request->query('status')) {
             $query->where('status', $status);
-        }
-
-        if ($type = $request->query('booking_type')) {
-            $query->where('booking_type', $type);
         }
 
         if ($search = trim((string) $request->query('search', ''))) {
@@ -148,7 +129,7 @@ class AppointmentController extends Controller
 
         if (!$appointment) {
             return response()->json([
-                'message' => 'Appointment request not found for this shop.',
+                'message' => 'Consultation request not found for this shop.',
             ], 404);
         }
 
@@ -202,52 +183,37 @@ class AppointmentController extends Controller
         $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
         $this->ensureSameShop($request, $appointment);
 
-        $recommendedActions = $this->recommendedActions();
         if ($appointment->booking_type !== 'CONSULTATION') {
-            unset($recommendedActions['REQUEST_INFORMATION']);
+            abort(404, 'Consultation request not found.');
         }
 
         $validated = $request->validate([
-            'status' => ['required', Rule::in(
-                $appointment->booking_type === 'CONSULTATION'
-                    ? ['PENDING', 'CANCELLED', 'COMPLETED']
-                    : ['PENDING', 'CONFIRMED', 'RESCHEDULED', 'CANCELLED', 'COMPLETED']
-            )],
-            'scheduled_at' => [
-                'nullable',
-                'date',
-                Rule::requiredIf(fn () => $appointment->booking_type === 'DROP_OFF' && in_array($request->input('status'), ['CONFIRMED', 'RESCHEDULED'], true)),
-            ],
+            'status' => ['required', Rule::in(['PENDING', 'CANCELLED', 'COMPLETED'])],
             'staff_note' => ['nullable', 'string', 'max:2000'],
             'customer_response' => [
-                $appointment->booking_type === 'CONSULTATION' && $request->input('status') !== 'CANCELLED' ? 'required' : 'nullable',
+                $request->input('status') !== 'CANCELLED' ? 'required' : 'nullable',
                 'string',
                 'max:3000',
             ],
-            'recommended_action' => ['nullable', Rule::in(array_keys($recommendedActions))],
+            'recommended_action' => ['nullable', Rule::in(array_keys($this->recommendedActions()))],
         ]);
-        if (
-            $appointment->booking_type === 'CONSULTATION'
-            && $request->input('status') !== 'CANCELLED'
-            && !strlen(trim((string) ($validated['customer_response'] ?? '')))
-        ) {
+        if ($request->input('status') !== 'CANCELLED' && !strlen(trim((string) ($validated['customer_response'] ?? '')))) {
             return response()->json([
                 'message' => 'A non-empty reply is required for this consultation.',
                 'errors' => ['customer_response' => ['Please enter a reply to the customer.']],
             ], 422);
         }
 
-        $before = $appointment->only(['status', 'scheduled_at', 'staff_note', 'customer_response', 'recommended_action']);
+        $before = $appointment->only(['status', 'staff_note', 'customer_response', 'recommended_action']);
         $appointment->update([
             'status' => $validated['status'],
-            'scheduled_at' => $validated['scheduled_at'] ?? $appointment->scheduled_at,
-            'staff_note' => $validated['staff_note'] ?? $appointment->staff_note,
+            'staff_note' => array_key_exists('staff_note', $validated)
+                ? $validated['staff_note']
+                : $appointment->staff_note,
             'customer_response' => isset($validated['customer_response'])
                 ? (strlen(trim($validated['customer_response'])) ? trim($validated['customer_response']) : null)
                 : $appointment->customer_response,
-            'recommended_action' => $appointment->booking_type === 'CONSULTATION'
-                ? null
-                : ($validated['recommended_action'] ?? $appointment->recommended_action),
+            'recommended_action' => $validated['recommended_action'] ?? $appointment->recommended_action,
             'responded_at' => now(),
             'responded_by' => $user->name,
         ]);
@@ -260,125 +226,13 @@ class AppointmentController extends Controller
             record: $appointment,
             description: "Updated appointment {$appointment->confirmation_code} to {$appointment->status}.",
             oldValues: $before,
-            newValues: $appointment->fresh()->only(['status', 'scheduled_at', 'staff_note', 'customer_response', 'recommended_action'])
+            newValues: $appointment->fresh()->only(['status', 'staff_note', 'customer_response', 'recommended_action'])
         );
 
         return response()->json([
             'message' => 'Appointment updated successfully.',
             'appointment' => $this->mapAppointment($appointment->fresh(), $this->staffPhotoUrl($appointment)),
         ]);
-    }
-
-    public function convertToJobOrder(Request $request, Appointment $appointment)
-    {
-        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
-        $this->ensureSameShop($request, $appointment);
-        $this->ensureShopCanStartNewWork($request);
-
-        if ($appointment->booking_type === 'CONSULTATION') {
-            return response()->json([
-                'message' => 'Consultations are advice requests and cannot be converted to job orders. Create a separate repair booking if the customer wants to proceed.',
-            ], 422);
-        }
-
-        $validated = $request->validate([
-            'priority' => ['nullable', Rule::in(['STANDARD', 'EXPRESS', 'EMERGENCY'])],
-            'estimated_completion' => ['nullable', 'date'],
-        ]);
-
-        $conversion = DB::transaction(function () use ($appointment, $request, $validated, $user) {
-            $lockedAppointment = Appointment::query()
-                ->where('shop_id', $appointment->shop_id)
-                ->lockForUpdate()
-                ->findOrFail($appointment->id);
-
-            if ($lockedAppointment->converted_job_order_id) {
-                return response()->json([
-                    'message' => 'This appointment is already linked to a job order.',
-                    'jobOrder' => $lockedAppointment->convertedJobOrder,
-                ], 422);
-            }
-
-            if ($lockedAppointment->status === 'CANCELLED') {
-                return response()->json([
-                    'message' => 'Cancelled appointments cannot be converted to job orders.',
-                ], 422);
-            }
-
-            $jobOrder = JobOrder::create([
-                'shop_id' => $lockedAppointment->shop_id,
-                'job_order_number' => $this->generateJobOrderNumber(),
-                'customer_name' => $lockedAppointment->customer_name,
-                'customer_contact' => $lockedAppointment->customer_phone ?: $lockedAppointment->customer_email,
-                'customer_email' => $lockedAppointment->customer_email,
-                'customer_phone' => $lockedAppointment->customer_phone,
-                'device_type' => $lockedAppointment->device_type,
-                'service_category_id' => $lockedAppointment->service_category_id,
-                'service_item_id' => $lockedAppointment->service_item_id,
-                'brand' => $lockedAppointment->brand,
-                'model' => $lockedAppointment->model,
-                'problem_description' => $lockedAppointment->concern,
-                'included_accessories' => null,
-                'received_by' => $user->name,
-                'current_status' => 'RECEIVED',
-                'device_location' => 'AT_SHOP',
-                'priority' => $validated['priority'] ?? 'STANDARD',
-                'warranty_days' => 0,
-                'payment_status' => 'PENDING',
-                'parts_cost' => 0,
-                'labor_cost' => 0,
-                'total_cost' => 0,
-                'amount_paid' => 0,
-                'estimated_completion' => $validated['estimated_completion'] ?? null,
-                'internal_notes' => "Created from appointment {$lockedAppointment->confirmation_code}.",
-            ]);
-
-            StatusHistory::create([
-                'shop_id' => $lockedAppointment->shop_id,
-                'job_order_id' => $jobOrder->id,
-                'status' => 'RECEIVED',
-                'note' => "Converted from appointment {$lockedAppointment->confirmation_code}.",
-            ]);
-
-            $lockedAppointment->update([
-                'status' => 'COMPLETED',
-                'recommended_action' => 'JOB_ORDER_CREATED',
-                'converted_job_order_id' => $jobOrder->id,
-                'responded_at' => now(),
-                'responded_by' => $user->name,
-            ]);
-
-            return ['appointment' => $lockedAppointment, 'jobOrder' => $jobOrder];
-        });
-
-        if ($conversion instanceof JsonResponse) {
-            return $conversion;
-        }
-
-        $appointment = $conversion['appointment'];
-        $jobOrder = $conversion['jobOrder'];
-
-        AuditLogger::log(
-            request: $request,
-            user: $user,
-            action: 'appointment.converted_to_job_order',
-            module: 'appointments',
-            record: $appointment,
-            description: "Converted appointment {$appointment->confirmation_code} to job order {$jobOrder->job_order_number}.",
-            newValues: [
-                'job_order_id' => $jobOrder->id,
-                'job_order_number' => $jobOrder->job_order_number,
-            ]
-        );
-
-        return response()->json([
-            'message' => 'Appointment converted to job order.',
-            'appointment' => $this->mapAppointment($appointment->fresh(), $this->staffPhotoUrl($appointment)),
-            'jobOrder' => [
-                'id' => $jobOrder->id,
-                'job_order_number' => $jobOrder->job_order_number,
-            ],
-        ], 201);
     }
 
     /**
@@ -568,25 +422,6 @@ class AppointmentController extends Controller
     private function normalizeServiceSelection(int $shopId, array $validated): array
     {
         $categoryId = $validated['service_category_id'] ?? null;
-        $serviceId = $validated['service_item_id'] ?? null;
-        $service = null;
-
-        if ($serviceId) {
-            $service = ServiceItem::query()
-                ->where('shop_id', $shopId)
-                ->where('is_active', true)
-                ->find($serviceId);
-
-            if (!$service) {
-                abort(422, 'Selected service is not available for this shop.');
-            }
-
-            if ($categoryId && (int) $service->service_category_id !== (int) $categoryId) {
-                abort(422, 'Selected service does not belong to the selected device category.');
-            }
-
-            $categoryId = $service->service_category_id;
-        }
 
         if ($categoryId) {
             $category = ServiceCategory::query()
@@ -599,11 +434,9 @@ class AppointmentController extends Controller
             }
 
             $validated['service_category_id'] = $category->id;
-            $validated['service_item_id'] = $service?->id;
             $validated['device_type'] = $category->name;
         } else {
             $validated['service_category_id'] = null;
-            $validated['service_item_id'] = null;
         }
 
         return $validated;
@@ -625,14 +458,4 @@ class AppointmentController extends Controller
         ];
     }
 
-    private function generateJobOrderNumber(): string
-    {
-        $prefix = strtoupper((string) config('repair.job_order_prefix', 'RSMS'));
-
-        do {
-            $jobOrderNumber = $prefix . '-' . date('Y') . '-' . Str::upper(Str::random(6));
-        } while (JobOrder::where('job_order_number', $jobOrderNumber)->exists());
-
-        return $jobOrderNumber;
-    }
 }

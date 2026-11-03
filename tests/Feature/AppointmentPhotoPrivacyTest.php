@@ -27,7 +27,6 @@ class AppointmentPhotoPrivacyTest extends TestCase
             'booking_type' => 'CONSULTATION',
             'device_type' => 'Phone',
             'concern' => 'Screen is cracked.',
-            'preferred_at' => now()->addDay()->toIso8601String(),
             'photo' => UploadedFile::fake()->image('device.jpg'),
         ])->assertCreated();
 
@@ -141,7 +140,6 @@ class AppointmentPhotoPrivacyTest extends TestCase
             'device_type' => 'Phone',
             'concern' => 'Device photo test.',
             'photo_path' => $photoPath,
-            'preferred_at' => now()->addDay(),
             'status' => 'PENDING',
         ]);
     }

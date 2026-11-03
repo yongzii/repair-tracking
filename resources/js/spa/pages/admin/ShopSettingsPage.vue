@@ -76,7 +76,6 @@ const businessDays = [
 ];
 
 const trackingUrl = computed(() => shop.value?.public_tracking_url || '');
-const bookingUrl = computed(() => shop.value?.public_booking_url || '');
 const consultationUrl = computed(() => shop.value?.public_consultation_url || '');
 const subscriptionRequestStatusClass = computed(() => ({
     pending: 'bg-amber-50 text-amber-700 ring-amber-200',
@@ -106,13 +105,6 @@ const publicLinks = computed(() => [
         description: 'For customers with an existing job order number.',
         url: trackingUrl.value,
         empty: 'Tracking link unavailable.',
-    },
-    {
-        key: 'booking',
-        label: 'Drop-off Booking',
-        description: 'For customers scheduling a device drop-off.',
-        url: bookingUrl.value,
-        empty: 'Drop-off booking link unavailable.',
     },
     {
         key: 'consultation',

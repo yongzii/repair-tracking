@@ -450,8 +450,6 @@ class ShopController extends Controller
             'trial_ends_at_formatted' => $shop->trial_ends_at?->format('M d, Y'),
             'is_active' => (bool) $shop->is_active,
             'public_tracking_url' => url('/shops/' . $shop->slug . '/track'),
-            'public_booking_url' => url('/shops/' . $shop->slug . '/book'),
-            'public_booking_url' => url('/shops/' . $shop->slug . '/book'),
             'public_consultation_url' => url('/shops/' . $shop->slug . '/consultation'),
         ];
     }
