@@ -87,29 +87,31 @@ onMounted(loadTechnician);
 
       <div class="card p-6">
         <h4 class="text-lg font-semibold text-slate-900 mb-3">Assigned Job Orders</h4>
-        <table class="w-full text-sm">
-          <thead class="bg-slate-100">
-            <tr>
-              <th class="px-4 py-3 text-left text-slate-600">Job Order</th>
-              <th class="px-4 py-3 text-left text-slate-600">Customer</th>
-              <th class="px-4 py-3 text-left text-slate-600">Status</th>
-              <th class="px-4 py-3 text-left text-slate-600">Action</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y">
-            <tr v-for="job in jobOrders.data" :key="job.id">
-              <td class="px-4 py-3 font-semibold text-slate-900">{{ job.job_order_number }}</td>
-              <td class="px-4 py-3 text-slate-700">{{ job.customer_name }}</td>
-              <td class="px-4 py-3 text-slate-700">
-                <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(job.current_status)">{{ job.current_status.replaceAll('_', ' ') }}</span>
-              </td>
-              <td class="px-4 py-3"><AppLink :to="`/admin/job-orders/${job.id}`" class="text-slate-900 font-semibold">View</AppLink></td>
-            </tr>
-            <tr v-if="!jobOrders.data.length">
-              <td colspan="4" class="px-4 py-8 text-center text-slate-500">No jobs assigned.</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="max-w-full overflow-x-auto" role="region" aria-label="Assigned job orders" tabindex="0">
+          <table class="w-full min-w-[640px] text-sm">
+            <thead class="bg-slate-100">
+              <tr>
+                <th class="px-4 py-3 text-left text-slate-600">Job Order</th>
+                <th class="px-4 py-3 text-left text-slate-600">Customer</th>
+                <th class="px-4 py-3 text-left text-slate-600">Status</th>
+                <th class="px-4 py-3 text-left text-slate-600">Action</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              <tr v-for="job in jobOrders.data" :key="job.id">
+                <td class="px-4 py-3 font-semibold text-slate-900">{{ job.job_order_number }}</td>
+                <td class="px-4 py-3 text-slate-700">{{ job.customer_name }}</td>
+                <td class="px-4 py-3 text-slate-700">
+                  <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-bold ring-1" :class="jobOrderStatusClass(job.current_status)">{{ job.current_status.replaceAll('_', ' ') }}</span>
+                </td>
+                <td class="px-4 py-3"><AppLink :to="`/admin/job-orders/${job.id}`" class="text-slate-900 font-semibold">View</AppLink></td>
+              </tr>
+              <tr v-if="!jobOrders.data.length">
+                <td colspan="4" class="px-4 py-8 text-center text-slate-500">No jobs assigned.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </AdminLayout>

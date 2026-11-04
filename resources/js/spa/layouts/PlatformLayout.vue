@@ -24,6 +24,7 @@ const alertsError = ref('');
 const pendingRequestCount = ref(null);
 let mobileMediaQuery;
 let alertsRefreshInterval;
+let previousBodyOverflow = null;
 
 const loadPendingRequests = async () => {
     if (alertsLoading.value) return;
@@ -93,6 +94,9 @@ onBeforeUnmount(() => {
     mobileMediaQuery?.removeEventListener('change', syncViewport);
     window.clearInterval(alertsRefreshInterval);
     window.removeEventListener('focus', loadPendingRequests);
+    if (previousBodyOverflow !== null) {
+        document.body.style.overflow = previousBodyOverflow;
+    }
 });
 
 watch(currentPath, () => {
@@ -109,10 +113,23 @@ watch(() => user.value?.role, (role) => {
 
 watch(mobileNavOpen, async (open) => {
     if (open && isMobile.value) {
+        if (previousBodyOverflow === null) {
+            previousBodyOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+        }
+
         await nextTick();
         drawer.value?.querySelector('a[href], button:not([disabled])')?.focus();
-    } else if (!open && isMobile.value) {
-        menuButton.value?.focus();
+    } else {
+        if (previousBodyOverflow !== null) {
+            document.body.style.overflow = previousBodyOverflow;
+            previousBodyOverflow = null;
+        }
+
+        if (isMobile.value) {
+            await nextTick();
+            menuButton.value?.focus();
+        }
     }
 });
 
@@ -135,7 +152,7 @@ const onLogout = async () => {
     <aside
       ref="drawer"
       id="platform-navigation"
-      class="platform-sidebar app-scrollbar fixed inset-y-0 left-0 z-50 flex h-[100dvh] min-h-screen w-72 max-w-[calc(100vw-2rem)] shrink-0 flex-col overflow-hidden transition-transform duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:w-64 lg:max-w-none lg:translate-x-0"
+      class="platform-sidebar app-scrollbar fixed inset-y-0 left-0 z-50 flex h-[100dvh] min-h-0 w-72 max-w-[calc(100vw-2rem)] shrink-0 flex-col overflow-hidden transition-transform duration-200 lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:min-h-screen lg:w-64 lg:max-w-none lg:translate-x-0"
       :class="mobileNavOpen ? 'translate-x-0' : '-translate-x-full'"
       :role="isMobile ? 'dialog' : undefined"
       :aria-label="isMobile ? 'Platform navigation' : undefined"
@@ -161,7 +178,7 @@ const onLogout = async () => {
         </button>
       </div>
 
-      <nav class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto pb-6" @click="mobileNavOpen = false">
+      <nav class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto overscroll-contain pb-6" @click="mobileNavOpen = false">
         <AppLink to="/platform" class="platform-nav-link" :class="currentPath === '/platform' ? 'platform-nav-link-active' : ''">
           <i class="fas fa-layer-group w-5"></i>
           <span>Dashboard</span>

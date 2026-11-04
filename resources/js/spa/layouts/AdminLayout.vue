@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { adminRoles, authState, ensureRoles, logout } from '../composables/auth';
 import { useNavigation, navigate } from '../navigation';
 import AppLink from '../components/AppLink.vue';
@@ -15,6 +15,9 @@ const props = defineProps({
 
 const { location } = useNavigation();
 const mobileNavOpen = ref(false);
+const isMobile = ref(false);
+const drawer = ref(null);
+const menuButton = ref(null);
 const pendingCustomerRequests = ref(null);
 const overdueJobs = ref(null);
 const alertsError = ref('');
@@ -46,6 +49,9 @@ const isPreviewMode = computed(() => Boolean(user.value?.shop && !user.value.sho
 const accessUntil = computed(() => user.value?.shop?.access_until_formatted || '');
 const trackingPath = computed(() => shopSlug.value ? `/shops/${shopSlug.value}/track` : '/track');
 const showSubscribeModal = ref(false);
+const subscriptionDialog = ref(null);
+const subscriptionCloseButton = ref(null);
+const subscribeButton = ref(null);
 const subscriptionLoading = ref(false);
 const subscriptionSubmitting = ref(false);
 const subscriptionError = ref('');
@@ -63,6 +69,9 @@ const subscriptionPlans = computed(() => subscriptionSettings.value?.plans || []
 const subscriptionMethods = computed(() => subscriptionSettings.value?.payment_methods || []);
 const selectedPlan = computed(() => subscriptionPlans.value.find((plan) => plan.key === subscriptionForm.value.plan_key));
 const selectedMethod = computed(() => subscriptionMethods.value.find((method) => method.key === subscriptionForm.value.payment_method_key));
+let mobileMediaQuery;
+let previousBodyOverflow = null;
+let previousModalBodyOverflow = null;
 
 const loadAlerts = async () => {
     if (alertsLoading.value) return;
@@ -99,15 +108,119 @@ const onLogout = async () => {
     navigate('/login', { replace: true });
 };
 
+const syncViewport = () => {
+    isMobile.value = mobileMediaQuery.matches;
+    if (!isMobile.value) {
+        mobileNavOpen.value = false;
+    }
+};
+
+const onDrawerKeydown = (event) => {
+    if (event.key === 'Escape') {
+        mobileNavOpen.value = false;
+        return;
+    }
+
+    if (event.key !== 'Tab' || !isMobile.value) return;
+
+    const focusable = drawer.value?.querySelectorAll('a[href], button:not([disabled])');
+    if (!focusable?.length) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+};
+
+const onSubscriptionDialogKeydown = (event) => {
+    if (event.key === 'Escape') {
+        event.preventDefault();
+        showSubscribeModal.value = false;
+        return;
+    }
+
+    if (event.key !== 'Tab') return;
+
+    const focusable = subscriptionDialog.value?.querySelectorAll(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])'
+    );
+    if (!focusable?.length) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+};
+
+watch([mobileNavOpen, isMobile], async ([open, mobile]) => {
+    if (open && mobile) {
+        if (previousBodyOverflow === null) {
+            previousBodyOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+        }
+
+        await nextTick();
+        drawer.value?.querySelector('a[href], button:not([disabled])')?.focus();
+    } else {
+        if (previousBodyOverflow !== null) {
+            document.body.style.overflow = previousBodyOverflow;
+            previousBodyOverflow = null;
+        }
+
+        if (mobile) {
+            await nextTick();
+            menuButton.value?.focus();
+        }
+    }
+});
+
+watch(showSubscribeModal, async (open) => {
+    if (open) {
+        previousModalBodyOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        await nextTick();
+        subscriptionCloseButton.value?.focus();
+    } else {
+        if (previousModalBodyOverflow !== null) {
+            document.body.style.overflow = previousModalBodyOverflow;
+            previousModalBodyOverflow = null;
+        }
+        await nextTick();
+        subscribeButton.value?.focus();
+    }
+});
+
 onMounted(() => {
+    mobileMediaQuery = window.matchMedia('(max-width: 1023px)');
+    syncViewport();
+    mobileMediaQuery.addEventListener('change', syncViewport);
     loadAlerts();
     alertsRefreshInterval = window.setInterval(loadAlerts, 60_000);
     window.addEventListener('focus', loadAlerts);
 });
 
 onBeforeUnmount(() => {
+    mobileMediaQuery?.removeEventListener('change', syncViewport);
     window.clearInterval(alertsRefreshInterval);
     window.removeEventListener('focus', loadAlerts);
+    if (previousBodyOverflow !== null) {
+        document.body.style.overflow = previousBodyOverflow;
+    }
+    if (previousModalBodyOverflow !== null) {
+        document.body.style.overflow = previousModalBodyOverflow;
+    }
 });
 
 watch(() => user.value?.role, (role) => {
@@ -198,8 +311,16 @@ const submitSubscriptionRequest = async () => {
       @click="mobileNavOpen = false"
     ></button>
     <aside
-      class="sidebar app-scrollbar fixed inset-y-0 left-0 z-50 flex h-screen min-h-screen w-72 shrink-0 flex-col overflow-hidden transition-transform duration-200 lg:sticky lg:z-auto lg:translate-x-0"
+      ref="drawer"
+      id="admin-navigation"
+      class="sidebar app-scrollbar fixed inset-y-0 left-0 z-50 flex h-[100dvh] min-h-0 w-72 shrink-0 flex-col overflow-hidden transition-transform duration-200 lg:sticky lg:h-screen lg:min-h-screen lg:z-auto lg:translate-x-0"
       :class="mobileNavOpen ? 'translate-x-0' : '-translate-x-full'"
+      :role="isMobile ? 'dialog' : undefined"
+      :aria-label="isMobile ? 'Shop administration navigation' : undefined"
+      :aria-modal="isMobile && mobileNavOpen ? 'true' : undefined"
+      :aria-hidden="(isMobile && !mobileNavOpen) || showSubscribeModal ? 'true' : undefined"
+      :inert="(isMobile && !mobileNavOpen) || showSubscribeModal"
+      @keydown="onDrawerKeydown"
     >
       <div class="border-b border-white/10 p-5">
         <AppLink to="/admin" class="flex items-start gap-3">
@@ -216,7 +337,7 @@ const submitSubscriptionRequest = async () => {
         <p v-if="isPreviewMode" class="mt-3 rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-100">Preview Mode</p>
       </div>
 
-      <nav id="admin-navigation" class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto pb-6" @click="mobileNavOpen = false">
+      <nav class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto overscroll-contain pb-6" @click="mobileNavOpen = false">
         <AppLink to="/admin" class="nav-link" :class="isExactActive('/admin') ? 'nav-link-active' : ''">
           <i class="fas fa-chart-line w-5"></i>
           <span>Dashboard</span>
@@ -313,7 +434,7 @@ const submitSubscriptionRequest = async () => {
       </div>
     </aside>
 
-    <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+    <div class="flex min-w-0 flex-1 flex-col overflow-hidden" :inert="isMobile && mobileNavOpen || showSubscribeModal">
       <div class="content-header sticky top-0 z-30 px-4 py-3 sm:px-6 sm:py-4">
         <div class="flex items-center justify-between gap-3">
           <div>
@@ -321,6 +442,7 @@ const submitSubscriptionRequest = async () => {
             <h2 class="text-xl font-bold text-slate-950 sm:text-2xl">{{ title }}</h2>
           </div>
           <button
+            ref="menuButton"
             type="button"
             class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-teal-200 hover:text-teal-700 lg:hidden"
             :aria-expanded="mobileNavOpen"
@@ -341,7 +463,7 @@ const submitSubscriptionRequest = async () => {
           </div>
           <div v-if="isPreviewMode && isAdmin" class="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 sm:flex-row sm:items-center sm:justify-between">
             <span>Preview mode: subscription required before saving records or processing transactions.</span>
-            <button type="button" class="shrink-0 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white hover:bg-slate-800" @click="openSubscribeModal">
+            <button ref="subscribeButton" type="button" class="shrink-0 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white hover:bg-slate-800" @click="openSubscribeModal">
               Subscribe Now
             </button>
           </div>
@@ -359,77 +481,88 @@ const submitSubscriptionRequest = async () => {
       </div>
     </div>
 
-    <div v-if="showSubscribeModal && isAdmin" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4 py-6 backdrop-blur-sm" @click.self="showSubscribeModal = false">
-      <div class="w-full max-w-lg rounded-xl bg-white shadow-2xl shadow-slate-950/20">
+    <div v-if="showSubscribeModal && isAdmin" class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/55 px-3 py-3 backdrop-blur-sm sm:items-center sm:px-4 sm:py-6" @click.self="showSubscribeModal = false">
+      <div
+        ref="subscriptionDialog"
+        class="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white shadow-2xl shadow-slate-950/20 sm:max-h-[calc(100dvh-3rem)]"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="subscription-dialog-title"
+        @keydown="onSubscriptionDialogKeydown"
+      >
         <div class="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
           <div>
             <p class="text-xs font-bold uppercase tracking-[0.16em] text-teal-700">Subscription</p>
-            <h3 class="mt-1 text-xl font-bold text-slate-950">Activate {{ shopName }}</h3>
+            <h3 id="subscription-dialog-title" class="mt-1 text-xl font-bold text-slate-950">Activate {{ shopName }}</h3>
           </div>
-          <button type="button" class="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-bold text-slate-600 hover:bg-slate-50" @click="showSubscribeModal = false">Close</button>
+          <button ref="subscriptionCloseButton" type="button" class="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-bold text-slate-600 hover:bg-slate-50" @click="showSubscribeModal = false">Close</button>
         </div>
 
-        <div class="space-y-4 px-6 py-5 text-sm text-slate-700">
-          <p>{{ subscriptionSettings?.instructions || 'Choose a plan, pay using an available method, then upload proof for verification.' }}</p>
+        <div class="min-h-0 overflow-y-auto overscroll-contain px-6 py-5 text-sm text-slate-700">
+          <div class="space-y-4">
+            <p>{{ subscriptionSettings?.instructions || 'Choose a plan, pay using an available method, then upload proof for verification.' }}</p>
 
-          <div v-if="subscriptionError" class="rounded-lg border border-rose-200 bg-rose-50 p-3 font-semibold text-rose-700">{{ subscriptionError }}</div>
-          <div v-if="subscriptionSuccess" class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 font-semibold text-emerald-700">{{ subscriptionSuccess }}</div>
-          <div v-if="subscriptionLoading" class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-500">Loading subscription options...</div>
+            <div v-if="subscriptionError" class="rounded-lg border border-rose-200 bg-rose-50 p-3 font-semibold text-rose-700">{{ subscriptionError }}</div>
+            <div v-if="subscriptionSuccess" class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 font-semibold text-emerald-700">{{ subscriptionSuccess }}</div>
+            <div v-if="subscriptionLoading" class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-500">Loading subscription options...</div>
 
-          <div v-if="pendingSubscriptionRequest" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
-            <p class="font-bold">Pending verification</p>
-            <p class="mt-1 text-xs">{{ pendingSubscriptionRequest.plan_name }} - {{ formatCurrency(pendingSubscriptionRequest.amount) }} via {{ pendingSubscriptionRequest.payment_method_name }}</p>
-            <p class="mt-1 text-xs">Submitted {{ pendingSubscriptionRequest.created_at_formatted }}</p>
-          </div>
+            <div v-if="pendingSubscriptionRequest" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+              <p class="font-bold">Pending verification</p>
+              <p class="mt-1 text-xs">{{ pendingSubscriptionRequest.plan_name }} - {{ formatCurrency(pendingSubscriptionRequest.amount) }} via {{ pendingSubscriptionRequest.payment_method_name }}</p>
+              <p class="mt-1 text-xs">Submitted {{ pendingSubscriptionRequest.created_at_formatted }}</p>
+            </div>
 
-          <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <p class="text-xs font-bold uppercase text-slate-500">Workspace Code</p>
-            <p class="mt-1 font-bold text-slate-950">{{ shopSlug || 'Not assigned' }}</p>
-          </div>
+            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <p class="text-xs font-bold uppercase text-slate-500">Workspace Code</p>
+              <p class="mt-1 font-bold text-slate-950">{{ shopSlug || 'Not assigned' }}</p>
+            </div>
 
-          <form class="space-y-4" @submit.prevent="submitSubscriptionRequest">
-            <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <label v-for="plan in subscriptionPlans" :key="plan.key" class="cursor-pointer rounded-lg border p-3" :class="subscriptionForm.plan_key === plan.key ? 'border-teal-300 bg-teal-50 ring-2 ring-teal-100' : 'border-slate-200'">
-                <input v-model="subscriptionForm.plan_key" type="radio" class="sr-only" :value="plan.key" />
-                <p class="font-bold text-slate-950">{{ plan.name }}</p>
-                <p class="mt-1 text-xs text-slate-500">{{ formatCurrency(plan.amount) }}</p>
-                <p class="mt-1 text-xs text-slate-500">{{ plan.duration_months }} month{{ plan.duration_months === 1 ? '' : 's' }}</p>
+            <form class="space-y-4" @submit.prevent="submitSubscriptionRequest">
+              <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <label v-for="plan in subscriptionPlans" :key="plan.key" class="cursor-pointer rounded-lg border p-3" :class="subscriptionForm.plan_key === plan.key ? 'border-teal-300 bg-teal-50 ring-2 ring-teal-100' : 'border-slate-200'">
+                  <input v-model="subscriptionForm.plan_key" type="radio" class="sr-only" :value="plan.key" />
+                  <p class="font-bold text-slate-950">{{ plan.name }}</p>
+                  <p class="mt-1 text-xs text-slate-500">{{ formatCurrency(plan.amount) }}</p>
+                  <p class="mt-1 text-xs text-slate-500">{{ plan.duration_months }} month{{ plan.duration_months === 1 ? '' : 's' }}</p>
+                </label>
+              </div>
+
+              <label class="block space-y-2">
+                <span class="text-xs font-bold uppercase text-slate-500">Payment Method</span>
+                <select v-model="subscriptionForm.payment_method_key" class="w-full rounded-lg border border-slate-300 px-3 py-2">
+                  <option v-for="method in subscriptionMethods" :key="method.key" :value="method.key">{{ method.name }}</option>
+                </select>
               </label>
-            </div>
 
-            <label class="block space-y-2">
-              <span class="text-xs font-bold uppercase text-slate-500">Payment Method</span>
-              <select v-model="subscriptionForm.payment_method_key" class="w-full rounded-lg border border-slate-300 px-3 py-2">
-                <option v-for="method in subscriptionMethods" :key="method.key" :value="method.key">{{ method.name }}</option>
-              </select>
-            </label>
+              <div v-if="selectedMethod" class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <p class="font-bold text-slate-950">{{ selectedMethod.name }}</p>
+                <p v-if="selectedMethod.account_name" class="mt-1 text-xs text-slate-600">Account name: {{ selectedMethod.account_name }}</p>
+                <p v-if="selectedMethod.account_number" class="mt-1 text-xs text-slate-600">Account number: {{ selectedMethod.account_number }}</p>
+                <p v-if="selectedMethod.instructions" class="mt-2 text-xs text-slate-500">{{ selectedMethod.instructions }}</p>
+              </div>
 
-            <div v-if="selectedMethod" class="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p class="font-bold text-slate-950">{{ selectedMethod.name }}</p>
-              <p v-if="selectedMethod.account_name" class="mt-1 text-xs text-slate-600">Account name: {{ selectedMethod.account_name }}</p>
-              <p v-if="selectedMethod.account_number" class="mt-1 text-xs text-slate-600">Account number: {{ selectedMethod.account_number }}</p>
-              <p v-if="selectedMethod.instructions" class="mt-2 text-xs text-slate-500">{{ selectedMethod.instructions }}</p>
-            </div>
+              <div v-if="selectedPlan" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+                <p class="font-bold">Amount to pay: {{ formatCurrency(selectedPlan.amount) }}</p>
+                <p class="mt-1 text-xs">After payment verification, your workspace will be activated by the platform admin.</p>
+              </div>
 
-            <div v-if="selectedPlan" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
-              <p class="font-bold">Amount to pay: {{ formatCurrency(selectedPlan.amount) }}</p>
-              <p class="mt-1 text-xs">After payment verification, your workspace will be activated by the platform admin.</p>
-            </div>
+              <label class="block space-y-2">
+                <span class="text-xs font-bold uppercase text-slate-500">Reference Number</span>
+                <input v-model="subscriptionForm.reference_number" class="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="GCash / bank reference optional" />
+              </label>
 
-            <label class="block space-y-2">
-              <span class="text-xs font-bold uppercase text-slate-500">Reference Number</span>
-              <input v-model="subscriptionForm.reference_number" class="w-full rounded-lg border border-slate-300 px-3 py-2" placeholder="GCash / bank reference optional" />
-            </label>
+              <label class="block space-y-2">
+                <span class="text-xs font-bold uppercase text-slate-500">Proof of Payment</span>
+                <input type="file" accept="image/*,.pdf" class="w-full rounded-lg border border-slate-300 px-3 py-2" :required="!pendingSubscriptionRequest" @change="onProofChange" />
+              </label>
 
-            <label class="block space-y-2">
-              <span class="text-xs font-bold uppercase text-slate-500">Proof of Payment</span>
-              <input type="file" accept="image/*,.pdf" class="w-full rounded-lg border border-slate-300 px-3 py-2" :required="!pendingSubscriptionRequest" @change="onProofChange" />
-            </label>
-
-            <button type="submit" class="w-full rounded-lg bg-teal-600 px-4 py-3 font-bold text-white hover:bg-teal-700 disabled:opacity-60" :disabled="subscriptionSubmitting || subscriptionLoading">
-              {{ subscriptionSubmitting ? 'Submitting...' : 'Submit Payment Proof' }}
-            </button>
-          </form>
+              <div class="sticky bottom-0 bg-white pb-1 pt-3">
+                <button type="submit" class="w-full rounded-lg bg-teal-600 px-4 py-3 font-bold text-white hover:bg-teal-700 disabled:opacity-60" :disabled="subscriptionSubmitting || subscriptionLoading">
+                  {{ subscriptionSubmitting ? 'Submitting...' : 'Submit Payment Proof' }}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
     </div>

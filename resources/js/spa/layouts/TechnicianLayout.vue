@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { authState, ensureRoles, logout } from '../composables/auth';
 import { useNavigation, navigate } from '../navigation';
 import AppLink from '../components/AppLink.vue';
@@ -23,6 +23,11 @@ let alertsRefreshInterval;
 const shopName = computed(() => user.value?.shop?.name || appConfig.name);
 const shopLogo = computed(() => user.value?.shop?.logo_url || '');
 const mobileNavOpen = ref(false);
+const isMobile = ref(false);
+const drawer = ref(null);
+const menuButton = ref(null);
+let mobileMediaQuery;
+let previousBodyOverflow = null;
 
 const loadAlerts = async () => {
     if (alertsLoading.value) return;
@@ -51,15 +56,74 @@ const onLogout = async () => {
     navigate('/login', { replace: true });
 };
 
+const syncViewport = () => {
+    isMobile.value = mobileMediaQuery.matches;
+    if (!isMobile.value) {
+        mobileNavOpen.value = false;
+    }
+};
+
+const onDrawerKeydown = (event) => {
+    if (event.key === 'Escape') {
+        mobileNavOpen.value = false;
+        return;
+    }
+
+    if (event.key !== 'Tab' || !isMobile.value) return;
+
+    const focusable = drawer.value?.querySelectorAll('a[href], button:not([disabled])');
+    if (!focusable?.length) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+    }
+};
+
+watch([mobileNavOpen, isMobile], async ([open, mobile]) => {
+    if (open && mobile) {
+        if (previousBodyOverflow === null) {
+            previousBodyOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
+        }
+
+        await nextTick();
+        drawer.value?.querySelector('a[href], button:not([disabled])')?.focus();
+    } else {
+        if (previousBodyOverflow !== null) {
+            document.body.style.overflow = previousBodyOverflow;
+            previousBodyOverflow = null;
+        }
+
+        if (mobile) {
+            await nextTick();
+            menuButton.value?.focus();
+        }
+    }
+});
+
 onMounted(() => {
+    mobileMediaQuery = window.matchMedia('(max-width: 1023px)');
+    syncViewport();
+    mobileMediaQuery.addEventListener('change', syncViewport);
     loadAlerts();
     alertsRefreshInterval = window.setInterval(loadAlerts, 60_000);
     window.addEventListener('focus', loadAlerts);
 });
 
 onBeforeUnmount(() => {
+    mobileMediaQuery?.removeEventListener('change', syncViewport);
     window.clearInterval(alertsRefreshInterval);
     window.removeEventListener('focus', loadAlerts);
+    if (previousBodyOverflow !== null) {
+        document.body.style.overflow = previousBodyOverflow;
+    }
 });
 
 watch(currentPath, loadAlerts);
@@ -82,8 +146,16 @@ watch(() => user.value?.role, (role) => {
       @click="mobileNavOpen = false"
     ></button>
     <aside
-      class="sidebar app-scrollbar fixed inset-y-0 left-0 z-50 flex h-screen min-h-screen w-72 shrink-0 flex-col overflow-hidden transition-transform duration-200 lg:sticky lg:z-auto lg:translate-x-0"
+      ref="drawer"
+      id="technician-navigation"
+      class="sidebar app-scrollbar fixed inset-y-0 left-0 z-50 flex h-[100dvh] min-h-0 w-72 shrink-0 flex-col overflow-hidden transition-transform duration-200 lg:sticky lg:h-screen lg:min-h-screen lg:z-auto lg:translate-x-0"
       :class="mobileNavOpen ? 'translate-x-0' : '-translate-x-full'"
+      :role="isMobile ? 'dialog' : undefined"
+      :aria-label="isMobile ? 'Technician navigation' : undefined"
+      :aria-modal="isMobile && mobileNavOpen ? 'true' : undefined"
+      :aria-hidden="isMobile && !mobileNavOpen ? 'true' : undefined"
+      :inert="isMobile && !mobileNavOpen"
+      @keydown="onDrawerKeydown"
     >
       <div class="border-b border-white/10 p-5">
         <AppLink to="/technician" class="flex min-w-0 items-center gap-3">
@@ -98,7 +170,7 @@ watch(() => user.value?.role, (role) => {
         </AppLink>
       </div>
 
-      <nav id="technician-navigation" class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto pb-6" @click="mobileNavOpen = false">
+      <nav class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto overscroll-contain pb-6" @click="mobileNavOpen = false">
         <AppLink to="/technician" class="nav-link" :class="currentPath === '/technician' ? 'nav-link-active' : ''">
           <i class="fas fa-screwdriver-wrench w-5"></i>
           <span>My Jobs</span>
@@ -137,7 +209,7 @@ watch(() => user.value?.role, (role) => {
       </div>
     </aside>
 
-    <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
+    <div class="flex min-w-0 flex-1 flex-col overflow-hidden" :inert="isMobile && mobileNavOpen">
       <div class="content-header sticky top-0 z-30 px-4 py-3 sm:px-6 sm:py-4">
         <div class="flex items-center justify-between gap-3">
           <div>
@@ -145,6 +217,7 @@ watch(() => user.value?.role, (role) => {
           <h2 class="text-xl font-bold text-slate-950 sm:text-2xl">{{ title }}</h2>
           </div>
           <button
+            ref="menuButton"
             type="button"
             class="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-teal-200 hover:text-teal-700 lg:hidden"
             :aria-expanded="mobileNavOpen"
