@@ -292,10 +292,10 @@
             "intro intro"
             "notices notices"
             "metrics metrics"
-            "overview activity"
-            "shops activity"
+            "overview overview"
+            "payments payments"
             "actions actions"
-            "footprint footprint";
+            "shops activity";
         gap: 1.25rem;
     }
 
@@ -303,10 +303,10 @@
     .platform-dashboard-notices { grid-area: notices; }
     .platform-dashboard-metrics { grid-area: metrics; }
     .platform-dashboard-overview { grid-area: overview; }
+    .platform-dashboard-payments { grid-area: payments; }
     .platform-dashboard-shops { grid-area: shops; }
     .platform-dashboard-activity { grid-area: activity; }
     .platform-dashboard-actions { grid-area: actions; }
-    .platform-dashboard-footprint { grid-area: footprint; }
 
     .platform-page-heading {
         display: flex;
@@ -616,10 +616,10 @@
                 "notices"
                 "metrics"
                 "overview"
-                "shops"
-                "activity"
+                "payments"
                 "actions"
-                "footprint";
+                "shops"
+                "activity";
         }
 
         .platform-dashboard-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

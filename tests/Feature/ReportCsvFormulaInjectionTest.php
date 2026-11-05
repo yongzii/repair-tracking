@@ -61,7 +61,9 @@ class ReportCsvFormulaInjectionTest extends TestCase
         );
         $jobRows = array_values(array_filter(
             $rows,
-            fn (array $row) => isset($row[1]) && str_starts_with($row[1], 'TEST-CSV-FORMULA-')
+            fn (array $row) => count($row) >= 13
+                && isset($row[1])
+                && str_starts_with($row[1], 'TEST-CSV-FORMULA-')
         ));
         $exportedNames = array_column($jobRows, 2);
 

@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PartRequest;
 use App\Models\SparePart;
-use App\Models\StockMovement;
 use App\Models\User;
 use App\Support\AuditLogger;
 use Illuminate\Database\QueryException;
@@ -310,26 +309,13 @@ class PartRequestController extends Controller
         $this->ensureSameShop($request, $partRequest);
         $shopId = $this->currentShopId($request);
 
-        $validated = $request->validate([
-            'spare_part_id' => [
-                'required',
-                Rule::exists('spare_parts', 'id')->where(fn ($query) => $query->where('shop_id', $shopId)),
-            ],
-        ]);
-
-        [$updated, $changed] = DB::transaction(function () use ($partRequest, $validated, $shopId, $user) {
+        [$updated, $changed] = DB::transaction(function () use ($partRequest, $shopId, $user) {
             $lockedRequest = PartRequest::query()
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
                 ->findOrFail($partRequest->id);
 
             if ($lockedRequest->status === PartRequest::STATUS_RECEIVED) {
-                if ((int) $lockedRequest->inventory_spare_part_id !== (int) $validated['spare_part_id']) {
-                    throw ValidationException::withMessages([
-                        'spare_part_id' => 'This request has already been received into a different inventory item.',
-                    ]);
-                }
-
                 return [$lockedRequest->fresh()->load(['jobOrder', 'requestedBy', 'updatedBy', 'inventoryPart', 'receivedBy']), false];
             }
 
@@ -339,33 +325,11 @@ class PartRequestController extends Controller
                 ]);
             }
 
-            $inventoryPart = SparePart::query()
-                ->where('shop_id', $shopId)
-                ->lockForUpdate()
-                ->findOrFail($validated['spare_part_id']);
-            if (!$inventoryPart->is_active || strcasecmp(trim($inventoryPart->name), trim($lockedRequest->part_name)) !== 0) {
-                throw ValidationException::withMessages([
-                    'spare_part_id' => 'Select an active inventory item whose name matches the requested part.',
-                ]);
-            }
-
-            $inventoryPart->increment('stock_quantity', (int) $lockedRequest->quantity);
-            $inventoryPart->refresh();
             $lockedRequest->update([
                 'status' => PartRequest::STATUS_RECEIVED,
-                'inventory_spare_part_id' => $inventoryPart->id,
                 'received_at' => now(),
                 'received_by_user_id' => $user->id,
                 'updated_by_user_id' => $user->id,
-            ]);
-            StockMovement::create([
-                'shop_id' => $shopId,
-                'spare_part_id' => $inventoryPart->id,
-                'type' => 'IN',
-                'quantity_change' => (int) $lockedRequest->quantity,
-                'balance_after' => $inventoryPart->stock_quantity,
-                'note' => "Received {$lockedRequest->quantity} for general part request #{$lockedRequest->id}.",
-                'created_by' => $user->name,
             ]);
 
             return [$lockedRequest->fresh()->load(['jobOrder', 'requestedBy', 'updatedBy', 'inventoryPart', 'receivedBy']), true];
@@ -378,13 +342,13 @@ class PartRequestController extends Controller
                 action: 'part_request.received',
                 module: 'part_requests',
                 record: $updated,
-                description: "Received {$updated->quantity} {$updated->part_name} into inventory.",
-                newValues: $updated->only(['status', 'inventory_spare_part_id', 'received_at', 'received_by_user_id'])
+                description: "Marked the {$updated->part_name} part request as received.",
+                newValues: $updated->only(['status', 'received_at', 'received_by_user_id', 'updated_by_user_id'])
             );
         }
 
         return response()->json([
-            'message' => 'Part request received into inventory.',
+            'message' => 'Part request marked as received.',
             'request' => $this->mapRequest($updated),
         ]);
     }

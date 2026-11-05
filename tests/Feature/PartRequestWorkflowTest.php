@@ -359,7 +359,7 @@ class PartRequestWorkflowTest extends TestCase
             ->assertJsonValidationErrors('part');
     }
 
-    public function test_general_request_receiving_updates_inventory_once_and_cannot_be_marked_received_directly(): void
+    public function test_general_request_receiving_confirms_delivery_without_changing_inventory_and_cannot_be_marked_received_directly(): void
     {
         [$shop, $admin] = $this->createShopUser(User::ROLE_SHOP_ADMIN);
         $partRequest = PartRequest::create([
@@ -370,7 +370,7 @@ class PartRequestWorkflowTest extends TestCase
         $inventoryPart = SparePart::create([
             'shop_id' => $shop->id,
             'name' => 'LCD display',
-            'stock_quantity' => 0,
+            'stock_quantity' => 7,
             'reorder_level' => 2,
             'unit_cost' => 100,
             'is_active' => true,
@@ -387,7 +387,7 @@ class PartRequestWorkflowTest extends TestCase
             'status' => PartRequest::STATUS_RECEIVED,
         ])->assertUnprocessable()->assertJsonValidationErrors('status');
 
-        $this->assertSame(0, (int) $inventoryPart->fresh()->stock_quantity);
+        $this->assertSame(7, (int) $inventoryPart->fresh()->stock_quantity);
         $this->assertDatabaseCount('stock_movements', 0);
         $this->assertDatabaseHas('part_requests', [
             'id' => $partRequest->id,
@@ -396,17 +396,29 @@ class PartRequestWorkflowTest extends TestCase
         ]);
 
         $receivePath = "/api/admin/part-requests/{$partRequest->id}/receive";
-        $this->patchJson($receivePath, ['spare_part_id' => $inventoryPart->id])->assertOk();
-        $this->patchJson($receivePath, ['spare_part_id' => $inventoryPart->id])->assertOk();
+        $this->patchJson($receivePath)
+            ->assertOk()
+            ->assertJsonPath('message', 'Part request marked as received.');
 
-        $this->assertSame(3, (int) $inventoryPart->fresh()->stock_quantity);
-        $this->assertDatabaseCount('stock_movements', 1);
-        $this->assertDatabaseHas('stock_movements', [
-            'shop_id' => $shop->id,
-            'spare_part_id' => $inventoryPart->id,
-            'type' => 'IN',
-            'quantity_change' => 3,
-            'balance_after' => 3,
+        $receivedRequest = $partRequest->fresh();
+        $this->assertSame(PartRequest::STATUS_RECEIVED, $receivedRequest->status);
+        $this->assertNotNull($receivedRequest->received_at);
+        $this->assertSame($admin->id, $receivedRequest->received_by_user_id);
+        $this->assertSame($admin->id, $receivedRequest->updated_by_user_id);
+        $this->assertNull($receivedRequest->inventory_spare_part_id);
+        $receivedAt = $receivedRequest->received_at;
+
+        $this->patchJson($receivePath)->assertOk();
+
+        $this->assertEquals($receivedAt, $partRequest->fresh()->received_at);
+        $this->assertSame($admin->id, $partRequest->fresh()->received_by_user_id);
+        $this->assertSame(7, (int) $inventoryPart->fresh()->stock_quantity);
+        $this->assertDatabaseCount('stock_movements', 0);
+        $this->assertDatabaseCount('audit_logs', 3);
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $admin->id,
+            'action' => 'part_request.received',
+            'description' => 'Marked the LCD display part request as received.',
         ]);
     }
 
@@ -417,7 +429,7 @@ class PartRequestWorkflowTest extends TestCase
         $inventoryPart = SparePart::create([
             'shop_id' => $shopB->id,
             'name' => 'Battery',
-            'stock_quantity' => 0,
+            'stock_quantity' => 5,
             'reorder_level' => 1,
             'unit_cost' => 100,
             'is_active' => true,
@@ -458,19 +470,20 @@ class PartRequestWorkflowTest extends TestCase
             'job_order_id' => null,
         ]);
 
-        $this->patchJson("/api/admin/part-requests/{$partRequest->id}/receive", [
-            'spare_part_id' => $inventoryPart->id,
-        ])->assertNotFound();
-        $this->assertSame(0, (int) $inventoryPart->fresh()->stock_quantity);
+        $this->patchJson("/api/admin/part-requests/{$partRequest->id}/receive")
+            ->assertNotFound();
+        $this->assertSame(5, (int) $inventoryPart->fresh()->stock_quantity);
 
-        $this->actingAs($adminB)->patchJson("/api/admin/part-requests/{$partRequest->id}/receive", [
-            'spare_part_id' => $inventoryPart->id,
-        ])->assertOk();
-        $this->assertSame(2, (int) $inventoryPart->fresh()->stock_quantity);
+        $this->actingAs($adminB)
+            ->patchJson("/api/admin/part-requests/{$partRequest->id}/receive")
+            ->assertOk()
+            ->assertJsonPath('request.status', PartRequest::STATUS_RECEIVED);
+        $this->assertSame(5, (int) $inventoryPart->fresh()->stock_quantity);
+        $this->assertDatabaseCount('stock_movements', 0);
         $this->assertNotNull($created->json('request.id'));
     }
 
-    public function test_general_request_receiving_rejects_an_inventory_item_with_a_different_name(): void
+    public function test_general_request_receiving_does_not_require_a_matching_inventory_item(): void
     {
         [$shop, $admin] = $this->createShopUser(User::ROLE_SHOP_ADMIN);
         $partRequest = PartRequest::create([
@@ -488,9 +501,10 @@ class PartRequestWorkflowTest extends TestCase
             'is_active' => true,
         ]);
 
-        $this->actingAs($admin)->patchJson("/api/admin/part-requests/{$partRequest->id}/receive", [
-            'spare_part_id' => $otherPart->id,
-        ])->assertUnprocessable()->assertJsonValidationErrors('spare_part_id');
+        $this->actingAs($admin)
+            ->patchJson("/api/admin/part-requests/{$partRequest->id}/receive")
+            ->assertOk()
+            ->assertJsonPath('request.status', PartRequest::STATUS_RECEIVED);
 
         $this->assertSame(0, (int) $otherPart->fresh()->stock_quantity);
         $this->assertDatabaseCount('stock_movements', 0);

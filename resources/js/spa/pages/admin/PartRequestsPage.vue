@@ -11,7 +11,6 @@ const successMessage = ref('');
 const activeTab = ref('for_order');
 const checklist = ref([]);
 const requests = ref([]);
-const inventoryItems = ref([]);
 const selectedParts = ref({});
 const quantityDrafts = ref({});
 const savingOrder = ref(false);
@@ -19,8 +18,6 @@ const addPartOpen = ref(false);
 const savingNewPart = ref(false);
 const addPartForm = ref({ part_name: '', category: '', quantity: 1 });
 const receiveId = ref(null);
-const receiveDrafts = ref({});
-const receiveCategoryDrafts = ref({});
 
 const orderedRequests = computed(() => requests.value.filter((request) => request.status === 'ordered'));
 const receivedRequests = computed(() => requests.value.filter((request) => request.status === 'received'));
@@ -51,25 +48,9 @@ const loadRequests = async () => {
     }
 
     try {
-        const [{ data }, inventoryResponse] = await Promise.all([
-            window.axios.get('/api/admin/part-requests'),
-            window.axios.get('/api/admin/inventory', { params: { all: 1, active_only: 1 } }),
-        ]);
+        const { data } = await window.axios.get('/api/admin/part-requests');
         checklist.value = data.checklist || [];
         requests.value = data.requests || [];
-        inventoryItems.value = inventoryResponse.data.items || [];
-        receiveDrafts.value = Object.fromEntries(
-            requests.value.map((request) => {
-                const match = inventoryItems.value.find((item) => item.name.trim().toLowerCase() === request.part_name.trim().toLowerCase());
-                return [request.id, match?.id || ''];
-            }),
-        );
-        receiveCategoryDrafts.value = Object.fromEntries(
-            requests.value.map((request) => {
-                const match = inventoryItems.value.find((item) => item.name.trim().toLowerCase() === request.part_name.trim().toLowerCase());
-                return [request.id, match?.category || ''];
-            }),
-        );
     } catch (error) {
         forbidden.value = error?.response?.status === 403;
         if (!forbidden.value) errorMessage.value = error?.response?.data?.message || 'Unable to load the parts checklist.';
@@ -172,14 +153,15 @@ const addPart = async () => {
 };
 
 const receiveRequest = async (request) => {
+    if (receiveId.value !== null) return;
+    if (!window.confirm('Have you already recorded the delivered parts in Inventory? Marking this order as received will not add stock.')) return;
+
     errorMessage.value = '';
     successMessage.value = '';
     receiveId.value = request.id;
     try {
-        const { data } = await window.axios.patch(`/api/admin/part-requests/${request.id}/receive`, {
-            spare_part_id: receiveDrafts.value[request.id],
-        });
-        successMessage.value = data.message || 'Parts received into inventory.';
+        const { data } = await window.axios.patch(`/api/admin/part-requests/${request.id}/receive`);
+        successMessage.value = data.message || 'Part request marked as received.';
         await loadRequests();
     } catch (error) {
         const firstError = error?.response?.data?.errors ? Object.values(error.response.data.errors)[0]?.[0] : null;
@@ -189,25 +171,6 @@ const receiveRequest = async (request) => {
     }
 };
 
-const inventoryCategories = computed(() => [...new Set(
-    inventoryItems.value
-        .map((item) => item.category?.trim())
-        .map((category) => category || '__uncategorized__'),
-)].sort((first, second) => first.localeCompare(second)));
-const categoryLabel = (category) => category === '__uncategorized__' ? 'No category' : category;
-const inventoryItemsByCategory = (request) => {
-    const category = receiveCategoryDrafts.value[request.id];
-    if (!category) return [];
-
-    return inventoryItems.value.filter((item) => (item.category?.trim() || '__uncategorized__') === category);
-};
-const setReceiveCategory = (request, category) => {
-    receiveCategoryDrafts.value[request.id] = category;
-    const selectedItem = inventoryItems.value.find((item) => String(item.id) === String(receiveDrafts.value[request.id]));
-    if (selectedItem?.category?.trim() !== category) {
-        receiveDrafts.value[request.id] = '';
-    }
-};
 const formatDate = (value) => value ? new Date(value).toLocaleDateString() : '—';
 const statusClass = (status) => status === 'received' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700';
 
@@ -260,6 +223,9 @@ onMounted(loadRequests);
         </div>
 
         <div v-else-if="activeTab === 'ordered'" class="overflow-x-auto p-4">
+          <p class="mb-4 rounded-lg border border-teal-100 bg-teal-50/70 px-4 py-3 text-sm leading-5 text-teal-900">
+            Before marking an order as received, record the actual delivered quantity in Inventory. This action only confirms delivery and does not change inventory stock.
+          </p>
           <table class="data-table min-w-[720px]">
             <thead><tr><th>Part</th><th>Quantity</th><th>Order date</th><th>Status</th><th>Action</th></tr></thead>
             <tbody>
@@ -267,16 +233,8 @@ onMounted(loadRequests);
                 <td class="font-semibold">{{ request.part_name }} <span v-if="request.category" class="text-xs font-medium text-slate-500">({{ request.category }})</span></td><td>{{ request.quantity }}</td><td>{{ formatDate(request.created_at) }}</td>
                 <td><span class="rounded-full px-3 py-1 text-xs font-bold capitalize" :class="statusClass(request.status)">{{ request.status }}</span></td>
                 <td>
-                  <div class="flex min-w-64 gap-2">
-                    <select :value="receiveCategoryDrafts[request.id]" class="rounded-lg border border-slate-300 px-2 py-2 text-sm" @change="setReceiveCategory(request, $event.target.value)">
-                      <option value="">Select category</option>
-                      <option v-for="category in inventoryCategories" :key="category" :value="category">{{ categoryLabel(category) }}</option>
-                    </select>
-                    <select v-model="receiveDrafts[request.id]" class="rounded-lg border border-slate-300 px-2 py-2 text-sm" :disabled="!receiveCategoryDrafts[request.id]">
-                      <option value="">Select inventory item</option>
-                      <option v-for="item in inventoryItemsByCategory(request)" :key="item.id" :value="item.id">{{ item.name }} · On hand {{ item.stock_quantity }}</option>
-                    </select>
-                    <button type="button" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50" :disabled="!receiveDrafts[request.id] || receiveId === request.id" @click="receiveRequest(request)">{{ receiveId === request.id ? 'Receiving...' : 'Receive' }}</button>
+                  <div class="flex min-w-24">
+                    <button type="button" class="rounded-lg bg-emerald-700 px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50" :disabled="receiveId !== null" @click="receiveRequest(request)">{{ receiveId === request.id ? 'Receiving...' : 'Receive' }}</button>
                   </div>
                 </td>
               </tr>

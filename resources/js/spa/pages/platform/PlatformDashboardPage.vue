@@ -127,6 +127,7 @@ const heroStats = computed(() => {
 
     return [
         { label: 'Total Shops', value: summary.total_shops, hint: 'Registered workspaces', icon: 'fa-store', tone: 'teal' },
+        { label: 'Active Shops', value: summary.active_shops, hint: 'Enabled workspaces', icon: 'fa-circle-check', tone: 'purple' },
         {
             label: 'Pending Subscription Requests',
             value: pendingSubscriptionCount.value === null ? '—' : pendingSubscriptionCount.value,
@@ -141,7 +142,6 @@ const heroStats = computed(() => {
             icon: 'fa-triangle-exclamation',
             tone: 'orange',
         },
-        { label: 'Active Shops', value: summary.active_shops, hint: 'Enabled workspaces', icon: 'fa-circle-check', tone: 'purple' },
     ];
 });
 
@@ -154,7 +154,6 @@ const overviewSections = computed(() => {
         { label: 'Expiring Soon', value: summary.trial_expiring_soon, hint: 'Ending within 7 days', tone: 'amber' },
         { label: 'Close-out', value: summary.expired_trials, hint: 'Expired, existing jobs only', tone: 'orange' },
         { label: 'Needs Setup', value: summary.no_access_date_shops, hint: 'New intake locked until coverage is recorded', tone: 'sky' },
-        { label: 'Inactive', value: summary.inactive_shops, hint: 'Workspaces disabled for sign-in', tone: 'rose' },
     ];
 });
 
@@ -544,7 +543,7 @@ onMounted(refresh);
         </div>
       </section>
 
-      <section v-if="!showShops && dashboard" aria-label="Platform access and billing" class="platform-dashboard-overview grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+      <section v-if="!showShops && dashboard" aria-label="Platform access and billing" class="platform-dashboard-overview grid grid-cols-1 gap-4 xl:grid-cols-[1.1fr_0.9fr] xl:items-start">
         <div class="platform-card">
           <div class="border-b border-slate-200 px-5 py-4">
             <h3 class="text-lg font-bold text-slate-950">Shop &amp; Subscription Overview</h3>
@@ -573,39 +572,17 @@ onMounted(refresh);
           </div>
         </div>
 
-        <div class="platform-card flex flex-col p-5 sm:p-6">
+        <div class="platform-card p-5 sm:p-6">
           <div>
             <p class="text-xs font-bold uppercase tracking-[0.14em] text-teal-700">Platform Billing</p>
-            <h3 class="mt-1 text-lg font-bold text-slate-950">Collected this month</h3>
+            <h3 class="mt-1 text-lg font-bold text-slate-950">Collected This Month</h3>
           </div>
           <p class="mt-3 break-words text-3xl font-bold leading-tight text-slate-950 sm:text-4xl">{{ formatCurrency(dashboard.summary.platform_collected_this_month) }}</p>
           <p class="mt-1 text-sm text-slate-500">From {{ dashboard.summary.platform_payments_this_month }} platform payment{{ dashboard.summary.platform_payments_this_month === 1 ? '' : 's' }} this month</p>
-          <div class="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-4">
-            <div class="rounded-xl bg-slate-50 p-3">
-              <p class="text-[11px] font-bold uppercase tracking-wide text-slate-500">Approved requests</p>
-              <p class="mt-1 font-bold text-slate-900">{{ formatCurrency(dashboard.summary.platform_approved_request_amount_this_month) }}</p>
-              <p class="mt-0.5 text-xs text-slate-500">{{ dashboard.summary.platform_approved_requests_this_month }} request{{ dashboard.summary.platform_approved_requests_this_month === 1 ? '' : 's' }}</p>
-            </div>
-            <div class="rounded-xl bg-amber-50 p-3">
-              <p class="text-[11px] font-bold uppercase tracking-wide text-amber-800">Difference vs requests</p>
-              <p class="mt-1 font-bold text-amber-900">{{ formatCurrency(dashboard.summary.platform_payment_difference_from_requests_this_month) }}</p>
-              <p class="mt-0.5 text-xs text-amber-800">{{ dashboard.summary.platform_additional_payment_records_this_month }} more payment record{{ dashboard.summary.platform_additional_payment_records_this_month === 1 ? '' : 's' }} than approvals</p>
-            </div>
-          </div>
-          <div class="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
-            <div>
-              <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Repair Receivables</p>
-              <p class="mt-1 text-lg font-bold text-slate-900">{{ formatCurrency(dashboard.summary.pending_payments) }}</p>
-              <p class="text-xs text-slate-500">Customer repair balances across shops</p>
-            </div>
-            <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-50 text-slate-600 ring-1 ring-slate-200" aria-hidden="true">
-              <i class="fas fa-arrow-trend-up"></i>
-            </span>
-          </div>
         </div>
       </section>
 
-      <section v-if="!showShops && dashboard" class="platform-card">
+      <section v-if="!showShops && dashboard" class="platform-dashboard-payments platform-card">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <div>
             <h3 class="text-lg font-bold text-slate-950">Payments Received This Month</h3>
@@ -660,27 +637,6 @@ onMounted(refresh);
         <p class="border-t border-slate-100 px-5 py-3 text-xs leading-5 text-slate-500">
           Approving a subscription request automatically records a payment. Any difference can include separately recorded payments or possible duplicates; verify the references before changing records.
         </p>
-      </section>
-
-      <section v-if="!showShops && dashboard" class="platform-dashboard-footprint platform-card">
-        <div class="border-b border-slate-200 px-5 py-4">
-          <h3 class="text-lg font-bold text-slate-950">Operations Footprint</h3>
-          <p class="mt-1 text-sm text-slate-500">Platform-wide usage across shops and their teams.</p>
-        </div>
-        <div class="grid grid-cols-2 divide-x divide-y divide-slate-100 sm:grid-cols-3 xl:grid-cols-3 xl:divide-y-0">
-          <div class="p-4 sm:p-5">
-            <p class="text-xs font-semibold text-slate-500">Inactive Shops</p>
-            <p class="mt-2 text-2xl font-bold tabular-nums text-slate-950">{{ dashboard.summary.inactive_shops }}</p>
-          </div>
-          <div class="p-4 sm:p-5">
-            <p class="text-xs font-semibold text-slate-500">Technicians</p>
-            <p class="mt-2 text-2xl font-bold tabular-nums text-slate-950">{{ dashboard.summary.technicians }}</p>
-          </div>
-          <div class="col-span-2 p-4 sm:col-span-1 sm:p-5">
-            <p class="text-xs font-semibold text-slate-500">Job Orders</p>
-            <p class="mt-2 text-2xl font-bold tabular-nums text-slate-950">{{ dashboard.summary.job_orders }}</p>
-          </div>
-        </div>
       </section>
 
       <section v-if="!showShops && dashboard" aria-label="Platform quick actions" class="platform-dashboard-actions space-y-3">
@@ -793,7 +749,7 @@ onMounted(refresh);
       <section v-if="!showShops && dashboard" class="platform-dashboard-activity platform-card">
         <div class="flex flex-col gap-2 border-b border-slate-200 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 class="text-lg font-bold text-slate-950">Recent Activity</h3>
+            <h3 class="text-lg font-bold text-slate-950">Subscription Notification Activity</h3>
             <p class="mt-1 text-sm text-slate-500">Platform subscription reminder notifications and delivery status.</p>
           </div>
           <span class="w-fit rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 ring-1 ring-slate-200">

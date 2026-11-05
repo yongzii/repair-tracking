@@ -35,6 +35,14 @@ const retryingNotificationId = ref(null);
 const recordingPayment = ref(false);
 const paymentIdempotencyKey = ref(null);
 const paymentIntentSignature = ref(null);
+const updatingStatus = ref(false);
+const markingPickedUp = ref(false);
+const releasingRto = ref(false);
+const recordingApproval = ref(false);
+const updatingWarranty = ref(false);
+const preparingRefunds = ref(false);
+const reconcilingRefund = ref(false);
+const issuingRefundId = ref(null);
 const activeAction = ref(null);
 
 const statusForm = ref({
@@ -46,11 +54,6 @@ const pickupForm = ref({
     picked_up_by: '',
     override_unpaid_balance: false,
     override_reason: '',
-});
-
-const costForm = ref({
-    parts_cost: '',
-    labor_cost: '',
 });
 
 const paymentForm = ref({
@@ -107,7 +110,6 @@ const actionTabs = computed(() => {
     return [
         ...tabs,
         { key: 'payment', label: 'Payment' },
-        { key: 'costs', label: 'Costs' },
         { key: 'approval', label: 'Approval' },
         { key: 'warranty', label: 'Warranty' },
         { key: 'assessment', label: 'Warranty Service' },
@@ -115,6 +117,7 @@ const actionTabs = computed(() => {
     ];
 });
 const activeActionLabel = computed(() => actionTabs.value.find((tab) => tab.key === activeAction.value)?.label || 'Job action');
+const statusLabel = (status) => formatStatus(status).replaceAll('_', ' ');
 
 const partForm = ref({
     spare_part_id: '',
@@ -196,37 +199,71 @@ const refundFormFor = (refundId) => {
     return refundForms[refundId];
 };
 
+const openAction = (action) => {
+    errorMessage.value = '';
+    activeAction.value = action;
+
+    if (action === 'status') {
+        statusForm.value = { status: jobOrder.value?.current_status || '', note: '' };
+    }
+
+    if (action === 'release' || action === 'release-rto') {
+        pickupForm.value = {
+            picked_up_by: '',
+            override_unpaid_balance: false,
+            override_reason: '',
+        };
+    }
+
+    if (action === 'approval') {
+        approvalForm.value.repair_approved_by_customer = defaultApprovalName();
+        approvalForm.value.repair_approval_notes = '';
+    }
+};
+
 const prepareRtoRefunds = async () => {
+    if (preparingRefunds.value) return;
     errorMessage.value = '';
     successMessage.value = '';
+    preparingRefunds.value = true;
     try {
         const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/prepare-rto-refunds`);
         successMessage.value = data.message || 'Refund obligations prepared.';
         await loadJobOrder();
+        activeAction.value = null;
     } catch (error) {
         errorMessage.value = error?.response?.data?.message || 'Failed to prepare refund obligations.';
+    } finally {
+        preparingRefunds.value = false;
     }
 };
 
 const reconcileLegacyRtoRefund = async () => {
+    if (reconcilingRefund.value) return;
     errorMessage.value = '';
     successMessage.value = '';
+    reconcilingRefund.value = true;
     try {
         const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/legacy-rto-refunds`, legacyRefundForm.value);
         successMessage.value = data.message || 'Legacy refund obligation recorded.';
         legacyRefundForm.value = { amount: '', reconciliation_reason: '' };
         await loadJobOrder();
+        activeAction.value = null;
     } catch (error) {
         errorMessage.value = error?.response?.data?.errors?.amount?.[0]
             || error?.response?.data?.errors?.reconciliation_reason?.[0]
             || error?.response?.data?.message
             || 'Failed to record legacy refund obligation.';
+    } finally {
+        reconcilingRefund.value = false;
     }
 };
 
 const issueRtoRefund = async (refund) => {
+    if (issuingRefundId.value) return;
     errorMessage.value = '';
     successMessage.value = '';
+    issuingRefundId.value = refund.id;
     try {
         const { data } = await window.axios.post(
             `/api/admin/job-orders/${props.params.id}/refunds/${refund.id}/issue`,
@@ -234,17 +271,22 @@ const issueRtoRefund = async (refund) => {
         );
         successMessage.value = data.message || 'Refund issued and recorded.';
         await loadJobOrder();
+        activeAction.value = null;
     } catch (error) {
         errorMessage.value = error?.response?.data?.errors?.reference_number?.[0]
             || error?.response?.data?.message
             || 'Failed to issue refund.';
+    } finally {
+        issuingRefundId.value = null;
     }
 };
 
 const releaseRto = async () => {
     if (!pickupForm.value.picked_up_by.trim()) return;
+    if (releasingRto.value) return;
     successMessage.value = '';
     errorMessage.value = '';
+    releasingRto.value = true;
 
     try {
         const { data } = await window.axios.post(
@@ -258,6 +300,8 @@ const releaseRto = async () => {
         pickupForm.value.override_reason = '';
     } catch (error) {
         errorMessage.value = error?.response?.data?.message || 'Failed to release RTO device.';
+    } finally {
+        releasingRto.value = false;
     }
 };
 
@@ -340,8 +384,6 @@ const loadJobOrder = async () => {
         notifications.value = data.notifications || [];
         warrantyAssessments.value = data.warrantyAssessments || [];
         inventoryParts.value = inventoryResponse.data.items || [];
-        costForm.value.parts_cost = jobOrder.value.parts_cost || 0;
-        costForm.value.labor_cost = jobOrder.value.labor_cost || 0;
         warrantyForm.value.warranty_days = Number(jobOrder.value.warranty_days || 0);
         warrantyForm.value.warranty_details = jobOrder.value.warranty_details || '';
         warrantyForm.value.service_performed = jobOrder.value.service_performed || '';
@@ -417,9 +459,16 @@ const deletePhoto = async (photo) => {
 
 const updateStatus = async () => {
     if (!statusForm.value.status) return;
+    if (updatingStatus.value) return;
     successMessage.value = '';
     errorMessage.value = '';
 
+    if (statusForm.value.status === jobOrder.value?.current_status) {
+        successMessage.value = `This job is already ${statusLabel(statusForm.value.status)}.`;
+        return;
+    }
+
+    updatingStatus.value = true;
     try {
         const { data } = await window.axios.post(
             `/api/admin/job-orders/${props.params.id}/update-status`,
@@ -427,17 +476,25 @@ const updateStatus = async () => {
         );
         successMessage.value = data.message || 'Status updated.';
         await loadJobOrder();
+        activeAction.value = null;
         statusForm.value.status = '';
         statusForm.value.note = '';
     } catch (error) {
-        errorMessage.value = error?.response?.data?.message || 'Failed to update status.';
+        const firstError = error?.response?.data?.errors
+            ? Object.values(error.response.data.errors)[0]?.[0]
+            : null;
+        errorMessage.value = firstError || error?.response?.data?.message || 'Failed to update status.';
+    } finally {
+        updatingStatus.value = false;
     }
 };
 
 const markPickedUp = async () => {
     if (!pickupForm.value.picked_up_by.trim()) return;
+    if (markingPickedUp.value) return;
     successMessage.value = '';
     errorMessage.value = '';
+    markingPickedUp.value = true;
 
     try {
         const { data } = await window.axios.post(
@@ -450,35 +507,33 @@ const markPickedUp = async () => {
         pickupForm.value.override_unpaid_balance = false;
         pickupForm.value.override_reason = '';
     } catch (error) {
-        errorMessage.value = error?.response?.data?.message || 'Failed to release device.';
+        const firstError = error?.response?.data?.errors
+            ? Object.values(error.response.data.errors)[0]?.[0]
+            : null;
+        errorMessage.value = firstError || error?.response?.data?.message || 'Failed to release device.';
+    } finally {
+        markingPickedUp.value = false;
     }
 };
 
 const recordRepairApproval = async () => {
+    if (recordingApproval.value) return;
     successMessage.value = '';
     errorMessage.value = '';
+    recordingApproval.value = true;
     try {
         const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/record-repair-approval`, approvalForm.value);
         successMessage.value = data.message || 'Customer repair approval recorded.';
         approvalForm.value.repair_approval_notes = '';
         await loadJobOrder();
+        activeAction.value = null;
     } catch (error) {
         const firstError = error?.response?.data?.errors
             ? Object.values(error.response.data.errors)[0]?.[0]
             : null;
         errorMessage.value = firstError || error?.response?.data?.message || 'Failed to record customer approval.';
-    }
-};
-
-const updateCosts = async () => {
-    successMessage.value = '';
-    errorMessage.value = '';
-    try {
-        const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/update-costs`, costForm.value);
-        successMessage.value = data.message || 'Costs updated.';
-        await loadJobOrder();
-    } catch (error) {
-        errorMessage.value = error?.response?.data?.message || 'Failed to update costs.';
+    } finally {
+        recordingApproval.value = false;
     }
 };
 
@@ -507,6 +562,7 @@ const recordPayment = async () => {
     paymentIdempotencyKey.value = null;
     paymentIntentSignature.value = null;
         await loadJobOrder();
+        activeAction.value = null;
     } catch (error) {
         errorMessage.value = error?.response?.data?.message || 'Failed to record payment.';
   } finally {
@@ -515,17 +571,22 @@ const recordPayment = async () => {
 };
 
 const updateWarranty = async () => {
+    if (updatingWarranty.value) return;
     successMessage.value = '';
     errorMessage.value = '';
+    updatingWarranty.value = true;
     try {
         const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/update-warranty`, warrantyForm.value);
         successMessage.value = data.message || 'Warranty details updated.';
         await loadJobOrder();
+        activeAction.value = null;
     } catch (error) {
         const firstError = error?.response?.data?.errors
             ? Object.values(error.response.data.errors)[0]?.[0]
             : null;
         errorMessage.value = firstError || error?.response?.data?.message || 'Failed to update warranty details.';
+    } finally {
+        updatingWarranty.value = false;
     }
 };
 
@@ -538,6 +599,7 @@ const issueWarrantyService = async () => {
         const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/issue-warranty-service`);
         successMessage.value = data.message || 'Warranty service job created.';
         await loadJobOrder();
+        activeAction.value = null;
     } catch (error) {
         const firstError = error?.response?.data?.errors
             ? Object.values(error.response.data.errors)[0]?.[0]
@@ -880,7 +942,7 @@ onMounted(loadJobOrder);
                 :key="tab.key"
                 type="button"
                 class="rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-200"
-                @click="activeAction = tab.key"
+                @click="openAction(tab.key)"
               >
                 {{ tab.label }}
               </button>
@@ -942,7 +1004,9 @@ onMounted(loadJobOrder);
             </div>
             <form class="space-y-3" @submit.prevent="releaseRto">
               <input v-model="pickupForm.picked_up_by" type="text" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Released to / claimed by" required />
-              <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg">Confirm RTO Release</button>
+              <button type="submit" :disabled="releasingRto" class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-semibold py-2 rounded-lg">
+                {{ releasingRto ? 'Releasing...' : 'Confirm RTO Release' }}
+              </button>
             </form>
           </div>
 
@@ -959,7 +1023,9 @@ onMounted(loadJobOrder);
                 <option value="RTO">RTO (Return to Owner)</option>
               </select>
               <textarea v-model="statusForm.note" rows="3" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Note (optional)"></textarea>
-              <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Save Status</button>
+              <button type="submit" :disabled="updatingStatus" class="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-semibold py-2 rounded-lg">
+                {{ updatingStatus ? 'Saving...' : 'Save Status' }}
+              </button>
             </form>
           </div>
 
@@ -988,16 +1054,9 @@ onMounted(loadJobOrder);
                 placeholder="Required override reason"
                 required
               ></textarea>
-              <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg">Confirm Release</button>
-            </form>
-          </div>
-
-          <div v-if="activeAction === 'costs'" class="card p-6">
-            <h4 class="text-lg font-semibold text-slate-900 mb-4">Update Costs</h4>
-            <form class="space-y-3" @submit.prevent="updateCosts">
-              <input v-model="costForm.parts_cost" type="number" min="0" step="0.01" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Parts cost" required />
-              <input v-model="costForm.labor_cost" type="number" min="0" step="0.01" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Labor cost" required />
-              <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Save Costs</button>
+              <button type="submit" :disabled="markingPickedUp" class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-semibold py-2 rounded-lg">
+                {{ markingPickedUp ? 'Releasing...' : 'Confirm Release' }}
+              </button>
             </form>
           </div>
 
@@ -1007,7 +1066,9 @@ onMounted(loadJobOrder);
             <form class="space-y-3" @submit.prevent="recordRepairApproval">
               <input v-model="approvalForm.repair_approved_by_customer" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Customer/authorized person name" required />
               <textarea v-model="approvalForm.repair_approval_notes" rows="3" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Approval method, approved estimate, or notes"></textarea>
-              <button type="submit" class="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-2 rounded-lg">Record Approval</button>
+              <button type="submit" :disabled="recordingApproval" class="w-full bg-teal-600 hover:bg-teal-700 disabled:bg-slate-400 text-white font-semibold py-2 rounded-lg">
+                {{ recordingApproval ? 'Saving...' : 'Record Approval' }}
+              </button>
             </form>
           </div>
 
@@ -1017,7 +1078,9 @@ onMounted(loadJobOrder);
               <input v-model.number="warrantyForm.warranty_days" type="number" min="0" max="3650" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Warranty days" required />
               <textarea v-model="warrantyForm.service_performed" rows="3" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Service performed"></textarea>
               <textarea v-model="warrantyForm.warranty_details" rows="3" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Warranty coverage details"></textarea>
-              <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 rounded-lg">Save Warranty</button>
+              <button type="submit" :disabled="updatingWarranty" class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-semibold py-2 rounded-lg">
+                {{ updatingWarranty ? 'Saving...' : 'Save Warranty' }}
+              </button>
             </form>
             <p class="mt-3 text-xs text-slate-500">Set to 0 if no warranty applies. Print the warranty certificate only after coverage is confirmed.</p>
             <p class="mt-2 text-xs text-slate-500">This warranty duration applies to this Job Order and is calculated from its pickup date. Shop Warranty Slip Terms only customize the printed document.</p>
@@ -1125,8 +1188,8 @@ onMounted(loadJobOrder);
               <h4 class="text-lg font-semibold text-slate-900">RTO Refunds</h4>
               <p class="mt-1 text-sm text-slate-600">Original repair costs and receipts remain unchanged. Record each actual refund separately.</p>
             </div>
-            <button type="button" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white" @click="prepareRtoRefunds">
-              Prepare missing receipt-based refunds
+            <button type="button" :disabled="preparingRefunds" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-400" @click="prepareRtoRefunds">
+              {{ preparingRefunds ? 'Preparing...' : 'Prepare missing receipt-based refunds' }}
             </button>
             <div v-if="refunds.length" class="space-y-3">
               <div v-for="refund in refunds" :key="refund.id" class="rounded-lg border border-slate-200 p-4">
@@ -1147,7 +1210,9 @@ onMounted(loadJobOrder);
                     <option value="CARD">Card</option>
                   </select>
                   <input v-model="refundFormFor(refund.id).reference_number" class="rounded-lg border border-slate-300 px-3 py-2" placeholder="Reference number (required except cash)" />
-                  <button type="submit" class="rounded-lg bg-emerald-600 px-3 py-2 font-semibold text-white">Record Issued Refund</button>
+                  <button type="submit" :disabled="issuingRefundId === refund.id" class="rounded-lg bg-emerald-600 px-3 py-2 font-semibold text-white disabled:bg-slate-400">
+                    {{ issuingRefundId === refund.id ? 'Recording...' : 'Record Issued Refund' }}
+                  </button>
                 </form>
               </div>
             </div>
@@ -1159,7 +1224,9 @@ onMounted(loadJobOrder);
               <form class="mt-3 space-y-3" @submit.prevent="reconcileLegacyRtoRefund">
                 <input v-model="legacyRefundForm.amount" type="number" min="0.01" :max="legacyRefundReconciliationAmount" step="0.01" class="w-full rounded-lg border border-amber-300 px-3 py-2" placeholder="Verified refund amount" required />
                 <textarea v-model="legacyRefundForm.reconciliation_reason" rows="3" minlength="10" class="w-full rounded-lg border border-amber-300 px-3 py-2" placeholder="Describe the original payment evidence and refund authorization" required></textarea>
-                <button type="submit" class="rounded-lg bg-amber-700 px-4 py-2 font-semibold text-white">Record Reconciled Refund Due</button>
+                <button type="submit" :disabled="reconcilingRefund" class="rounded-lg bg-amber-700 px-4 py-2 font-semibold text-white disabled:bg-slate-400">
+                  {{ reconcilingRefund ? 'Recording...' : 'Record Reconciled Refund Due' }}
+                </button>
               </form>
             </div>
           </div>

@@ -6,8 +6,10 @@ use App\Http\Controllers\Controller;
 use App\Models\JobOrder;
 use App\Models\JobOrderPayment;
 use App\Models\JobOrderRefund;
+use App\Models\SparePart;
 use App\Models\ServiceCategory;
 use App\Models\ServiceItem;
+use App\Models\Technician;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -34,13 +36,15 @@ class ReportsController extends Controller
 
         return response()->streamDownload(function () use ($report, $filters, $reportType) {
             $handle = fopen('php://output', 'w');
-            $appName = $this->sanitizeCsvText((string) config('app.name', 'Repair Service Management System'));
-            $includeOperations = in_array($reportType, ['operations', 'all'], true);
+            fwrite($handle, "\xEF\xBB\xBF");
+            $includeOperations = in_array($reportType, ['operations', 'inventory', 'all'], true);
+            $includeInventory = in_array($reportType, ['inventory', 'operations', 'all'], true);
             $includePayments = in_array($reportType, ['payments', 'all'], true);
 
-            fputcsv($handle, ["{$appName} " . ucfirst($reportType) . ' Reports']);
-            fputcsv($handle, ['Generated At', now()->toDateTimeString()]);
-            fputcsv($handle, ['Filters', sprintf('start=%s, end=%s, status=%s, service_type=%s, category=%s, service=%s, payment_method=%s, payment_type=%s', $filters['start_date'] ?? '-', $filters['end_date'] ?? '-', $filters['status_label'] ?? 'ALL', $filters['service_type_label'] ?? 'ALL', $filters['service_category_label'] ?? 'ALL', $filters['service_item_label'] ?? 'ALL', $filters['payment_method'] ?? 'ALL', $filters['payment_type'] ?? 'ALL')]);
+            fputcsv($handle, [$report['shop_name'], ucfirst($reportType) . ' Reports']);
+            fputcsv($handle, ['Generated At', now()->format('Y-m-d H:i:s')]);
+            fputcsv($handle, ['Date Range', ($filters['start_date'] ?: 'All dates') . ' to ' . ($filters['end_date'] ?: 'All dates')]);
+            fputcsv($handle, ['Filters', sprintf('Status: %s; Service type: %s; Category: %s; Service: %s; Payment method: %s; Payment type: %s', $filters['status_label'] ?? 'ALL', $filters['service_type_label'] ?? 'ALL', $filters['service_category_label'] ?? 'ALL', $filters['service_item_label'] ?? 'ALL', $filters['payment_method'] ?? 'ALL', $filters['payment_type'] ?? 'ALL')]);
             fputcsv($handle, []);
 
             if ($includeOperations) {
@@ -49,11 +53,119 @@ class ReportsController extends Controller
                 fputcsv($handle, ['Jobs Last Month', $report['lastMonth']]);
                 fputcsv($handle, ['Month Growth (%)', $report['monthGrowth']]);
                 fputcsv($handle, ['Completed Repairs', $report['totalCompleted']]);
+                fputcsv($handle, ['Completed Repairs Date Basis', 'Date basis: job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.']);
+                fputcsv($handle, ['RTO Outcomes', $report['totalRto']]);
                 fputcsv($handle, ['Pending Jobs', $report['totalPending']]);
                 fputcsv($handle, ['Avg Turnaround (days)', $report['avgTurnaround']]);
                 fputcsv($handle, ['Fastest (days)', $report['minTurnaround']]);
                 fputcsv($handle, ['Slowest (days)', $report['maxTurnaround']]);
                 fputcsv($handle, []);
+
+                fputcsv($handle, ['Job Order Sales & Capital Report']);
+                fputcsv($handle, ['Gross = original job order estimated price (total_cost). Capital = sum of stored historical job_order_parts.total_cost. Blank capital means no parts were recorded. Gross Less Capital is not verified net profit because operating expenses are excluded.']);
+                fputcsv($handle, ['Total Job Order Value (Gross)', $report['jobOrderSalesCapital']['summary']['total_gross']]);
+                fputcsv($handle, ['Total Recorded Parts Capital', $report['jobOrderSalesCapital']['summary']['total_capital']]);
+                fputcsv($handle, ['Gross Less Capital', $report['jobOrderSalesCapital']['summary']['gross_less_capital']]);
+                fputcsv($handle, ['Customer Name', 'Tracking Number', 'Device / Unit', 'Service', 'Gross', 'Capital', 'Payment Method', 'Technician']);
+                foreach ($report['jobOrderSalesCapital']['rows'] as $row) {
+                    fputcsv($handle, [
+                        $row['customer_name'],
+                        $row['tracking_number'],
+                        $row['unit'],
+                        $row['service'],
+                        $row['gross'],
+                        $row['capital'],
+                        $row['payment_method'],
+                        $row['technician'],
+                    ]);
+                }
+                fputcsv($handle, []);
+
+                fputcsv($handle, ['Technician Performance (Current Assignment)']);
+                fputcsv($handle, ['Results reflect the currently stored technician assignment; not historical assignment']);
+                fputcsv($handle, ['Successful jobs use pickup date (picked_up_at); RTO outcomes use job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.']);
+                fputcsv($handle, ['Technician', 'Successful Jobs', 'Avg Turnaround (days)', 'RTO', 'RTO Released']);
+                foreach ($report['technicianPerformance'] as $technician) {
+                    fputcsv($handle, [
+                        $technician['technician_name'],
+                        $technician['successful_jobs'],
+                        $technician['average_turnaround_days'],
+                        $technician['rto_jobs'],
+                        $technician['rto_released_jobs'],
+                    ]);
+                }
+                fputcsv($handle, []);
+
+                fputcsv($handle, ['Current Technician Workload']);
+                fputcsv($handle, ['Current snapshot; excludes picked-up and both RTO terminal statuses. Date filters do not apply.']);
+                fputcsv($handle, ['Technician', 'Currently Assigned Jobs']);
+                foreach ($report['currentTechnicianWorkload'] as $technician) {
+                    fputcsv($handle, [$technician['technician_name'], $technician['current_jobs']]);
+                }
+                fputcsv($handle, []);
+
+                if ($includeInventory) {
+                $inventory = $report['inventoryReport'];
+                fputcsv($handle, ['Inventory Reports']);
+                fputcsv($handle, ['Current Stock Snapshot', 'Current inventory; report date filters do not apply.']);
+                fputcsv($handle, ['Total Inventory Items', $inventory['summary']['total_items']]);
+                fputcsv($handle, ['Active Inventory Items', $inventory['summary']['active_items']]);
+                fputcsv($handle, ['Inactive Inventory Items', $inventory['summary']['inactive_items']]);
+                fputcsv($handle, ['Low Stock Items', $inventory['summary']['low_stock_items'], 'Includes inactive items; stock_quantity <= reorder_level.']);
+                fputcsv($handle, ['Estimated Current Inventory Value (PHP)', $inventory['summary']['estimated_current_inventory_value']]);
+                fputcsv($handle, ['Estimated value formula', 'Current stock_quantity × editable unit_cost; estimate only, not historical valuation or actual purchase cost.']);
+                fputcsv($handle, ['Total Current Stock Quantity by Unit']);
+                fputcsv($handle, ['Unit', 'Quantity']);
+                foreach ($inventory['summary']['stock_quantity_by_unit'] as $unitTotal) {
+                    fputcsv($handle, [$unitTotal['unit'], $unitTotal['quantity']]);
+                }
+                fputcsv($handle, ['Current Inventory Items']);
+                fputcsv($handle, ['Part Name', 'Part Number', 'Category', 'Unit', 'Current Stock', 'Reorder Level', 'Stock Status', 'Active Status', 'Unit Cost (PHP)', 'Estimated Item Value (PHP)']);
+                foreach ($inventory['items'] as $item) {
+                    fputcsv($handle, [
+                        $item['part_name'],
+                        $item['part_number'],
+                        $item['category'],
+                        $item['unit'],
+                        $item['stock_quantity'],
+                        $item['reorder_level'],
+                        $item['stock_status'],
+                        $item['active_status'],
+                        $item['unit_cost'],
+                        $item['estimated_item_value'],
+                    ]);
+                }
+                if ($inventory['items'] === []) {
+                    fputcsv($handle, ['No inventory items found for this shop.']);
+                }
+                fputcsv($handle, []);
+
+                fputcsv($handle, ['Stock Movement History']);
+                fputcsv($handle, ['Date basis', 'Movement created_at; applied report date range when provided, otherwise, all dates.']);
+                fputcsv($handle, ['Recorded Parts Issued to Repairs', $inventory['movement_summary']['repair_linked_out']['movement_count'], 'movement(s)', $inventory['movement_summary']['repair_linked_out']['quantity'], 'unit(s)']);
+                fputcsv($handle, ['Unlinked/Manual OUT', $inventory['movement_summary']['unlinked_manual_out']['movement_count'], 'movement(s)', $inventory['movement_summary']['unlinked_manual_out']['quantity'], 'unit(s)']);
+                fputcsv($handle, ['OUT with unavailable/cross-shop job reference', $inventory['movement_summary']['invalid_job_reference_out']['movement_count'], 'movement(s)', $inventory['movement_summary']['invalid_job_reference_out']['quantity'], 'unit(s)']);
+                fputcsv($handle, ['OUT records are recorded issues, not proof of actual consumption. IN movements may include corrections/reversals and are not treated as purchases; no net usage is calculated.']);
+                fputcsv($handle, ['Movement Date', 'Part Name', 'Part Number', 'Type', 'OUT Classification', 'Signed Quantity Change', 'Balance After', 'Related Job Order', 'Recorded By', 'Note']);
+                foreach ($inventory['movements'] as $movement) {
+                    fputcsv($handle, [
+                        $movement['movement_date'],
+                        $movement['part_name'],
+                        $movement['part_number'],
+                        $movement['type'],
+                        $movement['out_classification'],
+                        $movement['quantity_change'],
+                        $movement['balance_after'],
+                        $movement['job_order_reference'],
+                        $movement['recorded_by'],
+                        $movement['note'],
+                    ]);
+                }
+                if ($inventory['movements'] === []) {
+                    fputcsv($handle, ['No stock movements found for the applied date scope.']);
+                }
+                fputcsv($handle, []);
+                }
 
                 fputcsv($handle, ['Filtered Job Orders']);
                 fputcsv($handle, ['Date', 'Job Order', 'Customer', 'Phone', 'Device', 'Service Category', 'Service Needed', 'Status', 'Service Type', 'Technician', 'Estimated Completion', 'Total', 'Paid', 'Balance']);
@@ -125,9 +237,14 @@ class ReportsController extends Controller
                 fputcsv($handle, ['Gross Profit Margin (%)', $report['grossProfitMargin']]);
                 fputcsv($handle, []);
 
-                fputcsv($handle, ['Payment Collections']);
+                fputcsv($handle, ['Customer Collections']);
+                fputcsv($handle, ['Recorded customer collections are the sum of payment transaction amounts; they are not verified bank settlements.']);
+                fputcsv($handle, ['Payment collections and history use received_at. If received_at is blank, created_at is shown for display only.']);
                 fputcsv($handle, ['Total Payments Recorded', $report['paymentSummary']['total_amount']]);
                 fputcsv($handle, ['Payment Records', $report['paymentSummary']['total_records']]);
+                fputcsv($handle, ['Current Pending Customer Balances', $report['paymentSummary']['current_pending_balances']]);
+                fputcsv($handle, ['Jobs with Current Pending Balances', $report['paymentSummary']['current_pending_balance_jobs']]);
+                fputcsv($handle, ['Current balances use max(total_cost - amount_paid, 0), exclude RTO and RTO_RELEASED, and are independent of report dates.']);
                 fputcsv($handle, ['Partial Payments', $report['paymentSummary']['partial_payment_total']]);
                 fputcsv($handle, ['Held Partial Payments', $report['paymentSummary']['held_partial_payments']]);
                 fputcsv($handle, ['Applied Partial Payments', $report['paymentSummary']['applied_partial_payments']]);
@@ -135,9 +252,11 @@ class ReportsController extends Controller
                 fputcsv($handle, ['Pending Refund Obligations', $report['paymentSummary']['pending_refund_obligations']]);
                 fputcsv($handle, ['Refunds Issued', $report['paymentSummary']['issued_refunds']]);
                 fputcsv($handle, ['Net Cash Retained in Payment Date Range', $report['paymentSummary']['net_cash_retained']]);
+                fputcsv($handle, ['Pending means an obligation was recorded; issued means staff recorded the refund as issued and does not prove external settlement. Pending refunds are not subtracted from collections.']);
                 fputcsv($handle, []);
 
                 fputcsv($handle, ['RTO Refund Ledger']);
+                fputcsv($handle, ['Pending refunds are filtered by initiated_at; issued refunds are filtered by issued_at. Blank date filters include all applicable records.']);
                 fputcsv($handle, ['Job Order', 'Customer', 'Reason', 'Status', 'Amount', 'Method', 'Reference', 'Initiated', 'Issued']);
                 foreach ($report['refundRecords'] as $refund) {
                     fputcsv($handle, [
@@ -182,19 +301,21 @@ class ReportsController extends Controller
                 }
                 fputcsv($handle, []);
 
-                fputcsv($handle, ['Recent Payment Records']);
-                fputcsv($handle, ['Date', 'Job Order', 'Customer', 'Type', 'Method', 'Amount', 'Reference', 'Received By', 'Notes']);
+                fputcsv($handle, ['Payment Transaction History (Latest 30)']);
+                fputcsv($handle, ['The list is limited to the latest 30 records; summary totals include all matching transactions. Payment date uses received_at; created_at is a display-only fallback when received_at is blank.']);
+                fputcsv($handle, ['Payment Date', 'Date Basis', 'Job Order', 'Customer', 'Amount', 'Method', 'Type', 'Reference', 'Notes', 'Received By']);
                 foreach ($report['paymentRecords'] as $payment) {
                     fputcsv($handle, [
                         $payment['received_at_formatted'],
+                        $payment['payment_date_basis'],
                         $payment['job_order_number'],
                         $payment['customer_name'],
-                        $payment['payment_type'],
-                        $payment['payment_method'],
                         $payment['amount'],
+                        $payment['payment_method'],
+                        $payment['payment_type'],
                         $payment['reference_number'],
-                        $payment['received_by'],
                         $payment['notes'],
+                        $payment['received_by'],
                     ]);
                 }
             }
@@ -224,7 +345,7 @@ class ReportsController extends Controller
     {
         $type = $request->query('report_type', 'all');
 
-        return in_array($type, ['operations', 'payments', 'all'], true) ? $type : 'all';
+        return in_array($type, ['operations', 'inventory', 'payments', 'all'], true) ? $type : 'all';
     }
 
     private function sanitizeCsvValues(mixed $value): mixed
@@ -267,6 +388,7 @@ class ReportsController extends Controller
         $paymentTypeFilter = $request->query('payment_type');
 
         $baseQuery = JobOrder::query()->where('job_orders.shop_id', $shopId);
+        $comparisonQuery = JobOrder::query()->where('job_orders.shop_id', $shopId);
 
         if ($startDate) {
             $baseQuery->whereDate('job_orders.created_at', '>=', $startDate);
@@ -274,43 +396,58 @@ class ReportsController extends Controller
         if ($endDate) {
             $baseQuery->whereDate('job_orders.created_at', '<=', $endDate);
         }
-        if ($statusFilter === 'OPEN') {
-            $baseQuery->whereNotIn('job_orders.current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED']);
-        } elseif ($statusFilter) {
-            $baseQuery->where('job_orders.current_status', $statusFilter);
-        }
-        if ($serviceTypeFilter) {
-            $baseQuery->where('job_orders.service_type', $serviceTypeFilter);
-        }
-        if ($serviceCategoryFilter) {
-            $baseQuery->where('job_orders.service_category_id', $serviceCategoryFilter);
-        }
-        if ($serviceItemFilter) {
-            $baseQuery->where('job_orders.service_item_id', $serviceItemFilter);
-        }
+        $applyReportFilters = function ($query) use (
+            $statusFilter,
+            $serviceTypeFilter,
+            $serviceCategoryFilter,
+            $serviceItemFilter
+        ): void {
+            if ($statusFilter === 'OPEN') {
+                $query->whereNotIn('job_orders.current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED']);
+            } elseif ($statusFilter) {
+                $query->where('job_orders.current_status', $statusFilter);
+            }
+            if ($serviceTypeFilter) {
+                $query->where('job_orders.service_type', $serviceTypeFilter);
+            }
+            if ($serviceCategoryFilter) {
+                $query->where('job_orders.service_category_id', $serviceCategoryFilter);
+            }
+            if ($serviceItemFilter) {
+                $query->where('job_orders.service_item_id', $serviceItemFilter);
+            }
+        };
+        $applyReportFilters($baseQuery);
+        $applyReportFilters($comparisonQuery);
 
         if ($startDate && $endDate) {
             $rangeStart = Carbon::parse($startDate)->startOfDay();
             $rangeEnd = Carbon::parse($endDate)->endOfDay();
-            $days = $rangeStart->diffInDays($rangeEnd) + 1;
+            $calendarStart = Carbon::parse($startDate)->startOfDay();
+            $calendarEnd = Carbon::parse($endDate)->startOfDay();
+            $days = $calendarStart->diffInDays($calendarEnd) + 1;
 
             $thisMonth = (clone $baseQuery)->whereBetween('created_at', [$rangeStart, $rangeEnd])->count();
             $previousStart = (clone $rangeStart)->subDays($days);
             $previousEnd = (clone $rangeEnd)->subDays($days);
-            $lastMonth = (clone $baseQuery)->whereBetween('created_at', [$previousStart, $previousEnd])->count();
+            $lastMonth = (clone $comparisonQuery)->whereBetween('created_at', [$previousStart, $previousEnd])->count();
         } else {
-            $thisMonth = (clone $baseQuery)->whereYear('created_at', Carbon::now()->year)
-                ->whereMonth('created_at', Carbon::now()->month)
+            $currentPeriodStart = Carbon::now()->startOfMonth();
+            $currentPeriodEnd = Carbon::now()->endOfMonth();
+            $previousPeriodStart = $currentPeriodStart->copy()->subMonthNoOverflow()->startOfMonth();
+            $previousPeriodEnd = $previousPeriodStart->copy()->endOfMonth();
+
+            $thisMonth = (clone $baseQuery)->whereBetween('created_at', [$currentPeriodStart, $currentPeriodEnd])
                 ->count();
 
-            $lastMonth = (clone $baseQuery)->whereYear('created_at', Carbon::now()->year)
-                ->whereMonth('created_at', Carbon::now()->subMonth()->month)
+            $lastMonth = (clone $comparisonQuery)->whereBetween('created_at', [$previousPeriodStart, $previousPeriodEnd])
                 ->count();
         }
 
         $monthGrowth = $lastMonth > 0 ? round((($thisMonth - $lastMonth) / $lastMonth) * 100, 1) : 0;
 
-        $totalCompleted = (clone $baseQuery)->whereIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED'])->count();
+        $totalCompleted = (clone $baseQuery)->where('current_status', 'PICKED_UP')->count();
+        $totalRto = (clone $baseQuery)->whereIn('current_status', ['RTO', 'RTO_RELEASED'])->count();
         $totalPending = (clone $baseQuery)->whereNotIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED'])->count();
 
         $deviceBreakdown = (clone $baseQuery)->groupBy('device_type')
@@ -386,9 +523,10 @@ class ReportsController extends Controller
             ];
         }
 
-        $turnaroundStats = (clone $baseQuery)->whereIn('current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED'])
+        $turnaroundStats = (clone $baseQuery)->where('current_status', 'PICKED_UP')
+            ->whereNotNull('picked_up_at')
             ->get()
-            ->map(fn ($job) => $job->created_at->diffInDays($job->updated_at, true))
+            ->map(fn ($job) => $job->created_at->diffInDays($job->picked_up_at, true))
             ->filter(fn ($days) => $days !== null);
 
         $avgTurnaround = $turnaroundStats->count() > 0 ? round($turnaroundStats->avg(), 1) : 0;
@@ -415,13 +553,30 @@ class ReportsController extends Controller
         $partsCostTotal = round((float) (clone $baseQuery)->sum('parts_cost'), 2);
         $estimatedGrossProfit = round($totalRevenue - $partsCostTotal, 2);
         $grossProfitMargin = $totalRevenue > 0 ? round(($estimatedGrossProfit / $totalRevenue) * 100, 1) : 0;
+        $technicianAnalytics = $this->buildTechnicianAnalytics(
+            $shopId,
+            $startDate,
+            $endDate,
+            $serviceTypeFilter,
+            $serviceCategoryFilter,
+            $serviceItemFilter
+        );
         $filteredJobOrders = (clone $baseQuery)
-            ->with(['technician:id,name', 'serviceCategory:id,name', 'serviceItem:id,name'])
+            ->with([
+                'technician:id,name',
+                'serviceCategory:id,name',
+                'serviceItem:id,name',
+                'parts:id,job_order_id,total_cost',
+                'payments' => fn ($query) => $query
+                    ->where('shop_id', $shopId)
+                    ->select(['id', 'shop_id', 'job_order_id', 'payment_method']),
+            ])
             ->latest()
             ->get()
             ->map(fn (JobOrder $jobOrder) => $this->mapJobOrderRecord($jobOrder))
             ->values()
             ->all();
+        $jobOrderSalesCapital = $this->buildJobOrderSalesCapitalReport($baseQuery, $shopId);
 
         $paymentReport = $this->buildPaymentReport(
             shopId: $shopId,
@@ -430,8 +585,10 @@ class ReportsController extends Controller
             paymentMethodFilter: $paymentMethodFilter,
             paymentTypeFilter: $paymentTypeFilter
         );
+        $inventoryReport = $this->buildInventoryReport($shopId, $startDate, $endDate);
 
         return [
+            'shop_name' => $request->user()->loadMissing('shop')->shop?->name ?? config('app.name', 'Repair Service Management System'),
             'filters' => [
                 'start_date' => $startDate,
                 'end_date' => $endDate,
@@ -451,6 +608,7 @@ class ReportsController extends Controller
             'lastMonth' => $lastMonth,
             'monthGrowth' => $monthGrowth,
             'totalCompleted' => $totalCompleted,
+            'totalRto' => $totalRto,
             'totalPending' => $totalPending,
             'deviceBreakdown' => $deviceBreakdown,
             'serviceCategoryBreakdown' => $serviceCategoryBreakdown,
@@ -468,9 +626,344 @@ class ReportsController extends Controller
             'pendingReceivables' => $pendingReceivables,
             'estimatedGrossProfit' => $estimatedGrossProfit,
             'grossProfitMargin' => $grossProfitMargin,
+            'technicianPerformance' => $technicianAnalytics['performance'],
+            'currentTechnicianWorkload' => $technicianAnalytics['workload'],
+            'inventoryReport' => $inventoryReport,
             'filteredJobOrders' => $filteredJobOrders,
+            'jobOrderSalesCapital' => $jobOrderSalesCapital,
             ...$paymentReport,
         ];
+    }
+
+    private function buildJobOrderSalesCapitalReport($baseQuery, int $shopId): array
+    {
+        $jobs = (clone $baseQuery)
+            ->with([
+                'technician:id,name',
+                'serviceCategory:id,name',
+                'serviceItem:id,name',
+                'parts:id,job_order_id,total_cost',
+                'payments' => fn ($query) => $query
+                    ->where('shop_id', $shopId)
+                    ->select(['id', 'shop_id', 'job_order_id', 'payment_method']),
+            ])
+            ->latest('created_at')
+            ->latest('id')
+            ->get();
+
+        $rows = $jobs->map(function (JobOrder $jobOrder): array {
+            $partRows = $jobOrder->parts;
+            $capital = $partRows->isEmpty()
+                ? null
+                : round((float) $partRows->sum('total_cost'), 2);
+            $paymentMethods = $jobOrder->payments
+                ->map(fn (JobOrderPayment $payment) => $this->normalizedPaymentMethod($payment))
+                ->unique()
+                ->sort()
+                ->map(fn (string $method) => $this->formatPaymentMethodLabel($method))
+                ->values()
+                ->implode(' + ');
+
+            return [
+                'customer_name' => $jobOrder->customer_name,
+                'tracking_number' => $jobOrder->job_order_number,
+                'unit' => trim(collect([$jobOrder->brand, $jobOrder->model, $jobOrder->device_type])->filter()->implode(' ')),
+                'service' => $jobOrder->serviceItem?->name
+                    ?? $jobOrder->serviceCategory?->name
+                    ?? $jobOrder->device_type
+                    ?? 'Unspecified service',
+                'gross' => (float) $jobOrder->total_cost,
+                'capital' => $capital,
+                'payment_method' => $paymentMethods !== '' ? $paymentMethods : 'Unpaid',
+                'technician' => $jobOrder->technician?->name ?? 'Unassigned',
+            ];
+        })->values();
+
+        $totalGross = round((float) $rows->sum('gross'), 2);
+        $totalCapital = round((float) $rows->filter(fn (array $row) => $row['capital'] !== null)->sum('capital'), 2);
+
+        return [
+            'summary' => [
+                'total_gross' => $totalGross,
+                'total_capital' => $totalCapital,
+                'gross_less_capital' => round($totalGross - $totalCapital, 2),
+            ],
+            'rows' => $rows->all(),
+        ];
+    }
+
+    private function buildInventoryReport(int $shopId, ?string $startDate, ?string $endDate): array
+    {
+        $parts = SparePart::query()
+            ->where('shop_id', $shopId)
+            ->orderBy('name')
+            ->get([
+                'id',
+                'name',
+                'part_number',
+                'category',
+                'unit',
+                'stock_quantity',
+                'reorder_level',
+                'unit_cost',
+                'is_active',
+            ]);
+
+        $estimatedValueCents = 0;
+        $items = $parts->map(function (SparePart $part) use (&$estimatedValueCents): array {
+            $stockQuantity = (int) $part->stock_quantity;
+            $reorderLevel = (int) $part->reorder_level;
+            $unitCost = (float) $part->unit_cost;
+            $estimatedItemValue = round($stockQuantity * $unitCost, 2);
+            $estimatedValueCents += (int) round($estimatedItemValue * 100);
+
+            return [
+                'id' => $part->id,
+                'part_name' => $part->name,
+                'part_number' => $part->part_number,
+                'category' => $part->category,
+                'unit' => $part->unit ?: 'Unspecified',
+                'stock_quantity' => $stockQuantity,
+                'reorder_level' => $reorderLevel,
+                'stock_status' => $stockQuantity <= $reorderLevel ? 'Low Stock' : 'In Stock',
+                'is_low_stock' => $stockQuantity <= $reorderLevel,
+                'is_active' => (bool) $part->is_active,
+                'active_status' => $part->is_active ? 'Active' : 'Inactive',
+                'unit_cost' => $unitCost,
+                'estimated_item_value' => $estimatedItemValue,
+            ];
+        });
+
+        $stockQuantityByUnit = $items
+            ->groupBy('unit')
+            ->map(fn ($unitItems, string $unit) => [
+                'unit' => $unit,
+                'quantity' => $unitItems->sum('stock_quantity'),
+            ])
+            ->values()
+            ->all();
+
+        $movementsQuery = DB::table('stock_movements as movements')
+            ->join('spare_parts as parts', function ($join) use ($shopId): void {
+                $join->on('parts.id', '=', 'movements.spare_part_id')
+                    ->where('parts.shop_id', '=', $shopId);
+            })
+            ->leftJoin('job_orders as jobs', function ($join) use ($shopId): void {
+                $join->on('jobs.id', '=', 'movements.job_order_id')
+                    ->where('jobs.shop_id', '=', $shopId);
+            })
+            ->where('movements.shop_id', $shopId);
+
+        if ($startDate) {
+            $movementsQuery->whereDate('movements.created_at', '>=', $startDate);
+        }
+        if ($endDate) {
+            $movementsQuery->whereDate('movements.created_at', '<=', $endDate);
+        }
+
+        $movementRows = $movementsQuery
+            ->orderByDesc('movements.created_at')
+            ->orderByDesc('movements.id')
+            ->get([
+                'movements.id',
+                'movements.created_at',
+                'parts.name as part_name',
+                'parts.part_number',
+                'movements.type',
+                'movements.quantity_change',
+                'movements.balance_after',
+                'movements.job_order_id',
+                'jobs.id as valid_job_order_id',
+                'jobs.job_order_number',
+                'movements.created_by',
+                'movements.note',
+            ]);
+
+        $movements = $movementRows->map(function ($movement): array {
+            $validJobOrderId = $movement->valid_job_order_id !== null
+                ? (int) $movement->valid_job_order_id
+                : null;
+
+            return [
+                'id' => (int) $movement->id,
+                'movement_date' => $movement->created_at,
+                'part_name' => $movement->part_name,
+                'part_number' => $movement->part_number,
+                'type' => $movement->type,
+                'quantity_change' => (int) $movement->quantity_change,
+                'balance_after' => (int) $movement->balance_after,
+                'job_order_reference' => $validJobOrderId === null ? null : $movement->job_order_number,
+                'has_job_order_reference' => $validJobOrderId !== null,
+                'has_invalid_job_order_reference' => $movement->job_order_id !== null && $validJobOrderId === null,
+                'out_classification' => $movement->type !== 'OUT'
+                    ? '—'
+                    : ($validJobOrderId !== null
+                        ? 'Repair-linked'
+                        : ($movement->job_order_id === null ? 'Unlinked/manual' : 'Job reference unavailable')),
+                'recorded_by' => $movement->created_by,
+                'note' => $movement->note,
+            ];
+        });
+
+        $outMovements = $movementRows->where('type', 'OUT');
+        $repairLinkedOut = $outMovements->filter(fn ($movement) => $movement->valid_job_order_id !== null);
+        $unlinkedOut = $outMovements->filter(fn ($movement) => $movement->job_order_id === null);
+        $invalidJobReferenceOut = $outMovements->filter(fn ($movement) => (
+            $movement->job_order_id !== null && $movement->valid_job_order_id === null
+        ));
+
+        $summarizeOutMovements = fn ($outRows): array => [
+            'movement_count' => $outRows->count(),
+            'quantity' => $outRows->sum(fn ($movement) => abs((int) $movement->quantity_change)),
+        ];
+
+        return [
+            'summary' => [
+                'total_items' => $items->count(),
+                'active_items' => $items->where('is_active', true)->count(),
+                'inactive_items' => $items->where('is_active', false)->count(),
+                'low_stock_items' => $items->where('is_low_stock', true)->count(),
+                'stock_quantity_by_unit' => $stockQuantityByUnit,
+                'estimated_current_inventory_value' => $estimatedValueCents / 100,
+            ],
+            'items' => $items->values()->all(),
+            'movement_summary' => [
+                'movement_count' => $movements->count(),
+                'repair_linked_out' => $summarizeOutMovements($repairLinkedOut),
+                'unlinked_manual_out' => $summarizeOutMovements($unlinkedOut),
+                'invalid_job_reference_out' => $summarizeOutMovements($invalidJobReferenceOut),
+            ],
+            'movements' => $movements->values()->all(),
+        ];
+    }
+
+    private function buildTechnicianAnalytics(
+        int $shopId,
+        ?string $startDate,
+        ?string $endDate,
+        ?string $serviceTypeFilter,
+        ?string $serviceCategoryFilter,
+        ?string $serviceItemFilter
+    ): array {
+        $technicians = Technician::query()
+            ->where('shop_id', $shopId)
+            ->orderBy('name')
+            ->get(['id', 'name'])
+            ->map(fn (Technician $technician) => [
+                'technician_id' => $technician->id,
+                'technician_name' => $technician->name,
+                'successful_jobs' => 0,
+                'average_turnaround_days' => 0,
+                'rto_jobs' => 0,
+                'rto_released_jobs' => 0,
+                'current_jobs' => 0,
+            ])
+            ->keyBy('technician_id')
+            ->all();
+
+        if (empty($technicians)) {
+            return ['performance' => [], 'workload' => []];
+        }
+
+        $applyServiceFilters = function ($query) use (
+            $serviceTypeFilter,
+            $serviceCategoryFilter,
+            $serviceItemFilter
+        ): void {
+            if ($serviceTypeFilter) {
+                $query->where('job_orders.service_type', $serviceTypeFilter);
+            }
+            if ($serviceCategoryFilter) {
+                $query->where('job_orders.service_category_id', $serviceCategoryFilter);
+            }
+            if ($serviceItemFilter) {
+                $query->where('job_orders.service_item_id', $serviceItemFilter);
+            }
+        };
+        $assignedJobs = fn () => JobOrder::query()
+            ->join('technicians', 'technicians.id', '=', 'job_orders.technician_id')
+            ->where('job_orders.shop_id', $shopId)
+            ->where('technicians.shop_id', $shopId);
+
+        $successfulJobs = $assignedJobs()
+            ->where('job_orders.current_status', 'PICKED_UP');
+        $applyServiceFilters($successfulJobs);
+        if ($startDate) {
+            $successfulJobs->whereDate('job_orders.picked_up_at', '>=', $startDate);
+        }
+        if ($endDate) {
+            $successfulJobs->whereDate('job_orders.picked_up_at', '<=', $endDate);
+        }
+        $successStats = $successfulJobs
+            ->groupBy('technicians.id', 'technicians.name')
+            ->select(
+                'technicians.id as technician_id',
+                DB::raw('COUNT(*) as successful_jobs'),
+                DB::raw($this->turnaroundAverageExpression() . ' as average_turnaround_days')
+            )
+            ->get();
+
+        foreach ($successStats as $stats) {
+            $technicians[$stats->technician_id]['successful_jobs'] = (int) $stats->successful_jobs;
+            $technicians[$stats->technician_id]['average_turnaround_days'] = round((float) ($stats->average_turnaround_days ?? 0), 1);
+        }
+
+        $rtoJobs = $assignedJobs()
+            ->whereIn('job_orders.current_status', ['RTO', 'RTO_RELEASED']);
+        $applyServiceFilters($rtoJobs);
+        if ($startDate) {
+            $rtoJobs->whereDate('job_orders.created_at', '>=', $startDate);
+        }
+        if ($endDate) {
+            $rtoJobs->whereDate('job_orders.created_at', '<=', $endDate);
+        }
+        $rtoStats = $rtoJobs
+            ->groupBy('technicians.id', 'job_orders.current_status')
+            ->select('technicians.id as technician_id', 'job_orders.current_status', DB::raw('COUNT(*) as total'))
+            ->get();
+
+        foreach ($rtoStats as $stats) {
+            $key = $stats->current_status === 'RTO' ? 'rto_jobs' : 'rto_released_jobs';
+            $technicians[$stats->technician_id][$key] = (int) $stats->total;
+        }
+
+        $workload = $assignedJobs()
+            ->whereNotIn('job_orders.current_status', ['PICKED_UP', 'RTO', 'RTO_RELEASED']);
+        $applyServiceFilters($workload);
+        $workloadStats = $workload
+            ->groupBy('technicians.id')
+            ->select('technicians.id as technician_id', DB::raw('COUNT(*) as current_jobs'))
+            ->get();
+
+        foreach ($workloadStats as $stats) {
+            $technicians[$stats->technician_id]['current_jobs'] = (int) $stats->current_jobs;
+        }
+
+        return [
+            'performance' => array_values(array_map(fn (array $technician) => [
+                'technician_id' => $technician['technician_id'],
+                'technician_name' => $technician['technician_name'],
+                'successful_jobs' => $technician['successful_jobs'],
+                'average_turnaround_days' => $technician['average_turnaround_days'],
+                'rto_jobs' => $technician['rto_jobs'],
+                'rto_released_jobs' => $technician['rto_released_jobs'],
+            ], array_values($technicians))),
+            'workload' => array_values(array_map(fn (array $technician) => [
+                'technician_id' => $technician['technician_id'],
+                'technician_name' => $technician['technician_name'],
+                'current_jobs' => $technician['current_jobs'],
+            ], array_values($technicians))),
+        ];
+    }
+
+    private function turnaroundAverageExpression(): string
+    {
+        return match (DB::connection()->getDriverName()) {
+            'sqlite' => 'AVG(ABS(julianday(job_orders.picked_up_at) - julianday(job_orders.created_at)))',
+            'mysql', 'mariadb' => 'AVG(ABS(TIMESTAMPDIFF(SECOND, job_orders.created_at, job_orders.picked_up_at)) / 86400.0)',
+            'pgsql' => 'AVG(ABS(EXTRACT(EPOCH FROM (job_orders.picked_up_at - job_orders.created_at))) / 86400.0)',
+            default => throw new \RuntimeException('Technician turnaround reporting is not supported by this database driver.'),
+        };
     }
 
     private function buildPaymentReport(
@@ -480,9 +973,25 @@ class ReportsController extends Controller
         ?string $paymentMethodFilter,
         ?string $paymentTypeFilter
     ): array {
+        $sameShopJobOrder = fn ($query) => $query
+            ->withTrashed()
+            ->where('job_orders.shop_id', $shopId);
+        $jobOrderColumns = [
+            'id',
+            'shop_id',
+            'job_order_number',
+            'customer_name',
+            'current_status',
+            'total_cost',
+            'amount_paid',
+            'picked_up_at',
+        ];
         $payments = JobOrderPayment::query()
             ->where('shop_id', $shopId)
-            ->with('jobOrder:id,job_order_number,customer_name,current_status,total_cost,amount_paid,picked_up_at');
+            ->whereHas('jobOrder', $sameShopJobOrder)
+            ->with([
+                'jobOrder' => fn ($query) => $sameShopJobOrder($query)->select($jobOrderColumns),
+            ]);
 
         if ($startDate) {
             $payments->whereDate('received_at', '>=', $startDate);
@@ -502,8 +1011,16 @@ class ReportsController extends Controller
         $allPayments = (clone $payments)->get();
         $partialPayments = $allPayments->filter(fn (JobOrderPayment $payment) => $this->normalizedPaymentType($payment) === 'PARTIAL_PAYMENT');
 
+        $currentPendingJobs = JobOrder::query()
+            ->where('shop_id', $shopId)
+            ->whereNotIn('current_status', ['RTO', 'RTO_RELEASED'])
+            ->whereRaw('total_cost > amount_paid');
+        $currentPendingBalanceJobs = (clone $currentPendingJobs)->count();
+        $currentPendingBalances = round((float) (clone $currentPendingJobs)
+            ->sum(DB::raw('CASE WHEN total_cost > amount_paid THEN total_cost - amount_paid ELSE 0 END')), 2);
+
         $paymentMethodBreakdown = $allPayments
-            ->groupBy(fn (JobOrderPayment $payment) => $payment->payment_method ?: 'UNSPECIFIED')
+            ->groupBy(fn (JobOrderPayment $payment) => $this->normalizedPaymentMethod($payment))
             ->map(fn ($items, $method) => [
                 'payment_method' => $method,
                 'records' => $items->count(),
@@ -540,23 +1057,63 @@ class ReportsController extends Controller
             ->filter(fn (JobOrderPayment $payment) => in_array($payment->jobOrder?->current_status, ['RTO', 'RTO_RELEASED'], true))
             ->sum('amount'), 2);
 
-        $refunds = JobOrderRefund::query()
+        $refundJobOrder = fn ($query) => $query
+            ->withTrashed()
+            ->where('job_orders.shop_id', $shopId);
+        $refundJobOrderColumns = ['id', 'shop_id', 'job_order_number', 'customer_name'];
+        $pendingRefunds = JobOrderRefund::query()
             ->where('shop_id', $shopId)
-            ->with('jobOrder:id,job_order_number,customer_name')
+            ->whereHas('jobOrder', $refundJobOrder)
+            ->where('status', JobOrderRefund::STATUS_PENDING)
             ->when($startDate, fn ($query) => $query->whereDate('initiated_at', '>=', $startDate))
             ->when($endDate, fn ($query) => $query->whereDate('initiated_at', '<=', $endDate));
-        $pendingRefunds = (clone $refunds)->where('status', JobOrderRefund::STATUS_PENDING);
         $issuedRefunds = JobOrderRefund::query()
             ->where('shop_id', $shopId)
+            ->whereHas('jobOrder', $refundJobOrder)
             ->where('status', JobOrderRefund::STATUS_ISSUED)
             ->when($startDate, fn ($query) => $query->whereDate('issued_at', '>=', $startDate))
             ->when($endDate, fn ($query) => $query->whereDate('issued_at', '<=', $endDate));
+        $pendingRefundTotal = round((float) (clone $pendingRefunds)->sum('amount'), 2);
         $issuedRefundTotal = round((float) (clone $issuedRefunds)->sum('amount'), 2);
+        $refundRecords = (clone $pendingRefunds)
+            ->with([
+                'jobOrder' => fn ($query) => $refundJobOrder($query)->select($refundJobOrderColumns),
+            ])
+            ->latest('initiated_at')
+            ->get()
+            ->concat((clone $issuedRefunds)
+                ->with([
+                    'jobOrder' => fn ($query) => $refundJobOrder($query)->select($refundJobOrderColumns),
+                ])
+                ->latest('issued_at')
+                ->get())
+            ->sortByDesc(fn (JobOrderRefund $refund) => (
+                $refund->status === JobOrderRefund::STATUS_ISSUED
+                    ? $refund->issued_at
+                    : $refund->initiated_at
+            )?->getTimestamp() ?? 0)
+            ->take(30)
+            ->map(fn (JobOrderRefund $refund) => [
+                'id' => $refund->id,
+                'job_order_number' => $refund->jobOrder?->job_order_number,
+                'customer_name' => $refund->jobOrder?->customer_name,
+                'amount' => (float) $refund->amount,
+                'status' => $refund->status,
+                'reason' => $refund->reason,
+                'refund_method' => $refund->refund_method,
+                'reference_number' => $refund->reference_number,
+                'initiated_at' => $refund->initiated_at?->format('M d, Y h:i A'),
+                'issued_at' => $refund->issued_at?->format('M d, Y h:i A'),
+            ])
+            ->values()
+            ->all();
 
         return [
             'paymentSummary' => [
                 'total_records' => $allPayments->count(),
                 'total_amount' => round((float) $allPayments->sum('amount'), 2),
+                'current_pending_balances' => $currentPendingBalances,
+                'current_pending_balance_jobs' => $currentPendingBalanceJobs,
                 'partial_payment_total' => $partialPaymentTotal,
                 'held_partial_payments' => $heldPartialPayments,
                 'applied_partial_payments' => $appliedPartialPayments,
@@ -565,7 +1122,7 @@ class ReportsController extends Controller
                 'held_down_payments' => $heldPartialPayments,
                 'applied_down_payments' => $appliedPartialPayments,
                 'review_down_payments' => $reviewPartialPayments,
-                'pending_refund_obligations' => round((float) $pendingRefunds->sum('amount'), 2),
+                'pending_refund_obligations' => $pendingRefundTotal,
                 'issued_refunds' => $issuedRefundTotal,
                 'net_cash_retained' => round((float) $allPayments->sum('amount') - $issuedRefundTotal, 2),
             ],
@@ -581,24 +1138,7 @@ class ReportsController extends Controller
                 ->map(fn (JobOrderPayment $payment) => $this->mapPaymentRecord($payment))
                 ->values()
                 ->all(),
-            'refundRecords' => (clone $refunds)
-                ->latest('initiated_at')
-                ->take(30)
-                ->get()
-                ->map(fn (JobOrderRefund $refund) => [
-                    'id' => $refund->id,
-                    'job_order_number' => $refund->jobOrder?->job_order_number,
-                    'customer_name' => $refund->jobOrder?->customer_name,
-                    'amount' => (float) $refund->amount,
-                    'status' => $refund->status,
-                    'reason' => $refund->reason,
-                    'refund_method' => $refund->refund_method,
-                    'reference_number' => $refund->reference_number,
-                    'initiated_at' => $refund->initiated_at?->format('M d, Y h:i A'),
-                    'issued_at' => $refund->issued_at?->format('M d, Y h:i A'),
-                ])
-                ->values()
-                ->all(),
+            'refundRecords' => $refundRecords,
         ];
     }
 
@@ -623,12 +1163,14 @@ class ReportsController extends Controller
             'job_status' => $status,
             'amount' => (float) $payment->amount,
             'payment_type' => $this->normalizedPaymentType($payment),
-            'payment_method' => $payment->payment_method ?: 'UNSPECIFIED',
+            'payment_method' => $this->normalizedPaymentMethod($payment),
             'reference_number' => $payment->reference_number,
             'notes' => $payment->notes,
             'received_by' => $payment->received_by,
             'received_at' => $payment->received_at,
             'received_at_formatted' => $payment->received_at?->format('M d, Y h:i A') ?? $payment->created_at?->format('M d, Y h:i A'),
+            'payment_date_basis' => $payment->received_at ? 'received_at' : 'created_at (display fallback)',
+            'received_at_is_fallback' => $payment->received_at === null,
             'partial_payment_state' => $partialPaymentState,
             'down_payment_state' => $partialPaymentState,
         ];
@@ -663,16 +1205,44 @@ class ReportsController extends Controller
             'total_cost' => (float) $jobOrder->total_cost,
             'amount_paid' => (float) $jobOrder->amount_paid,
             'balance' => (float) $jobOrder->balance,
-            'refunds_pending' => round((float) $jobOrder->refunds()->where('status', JobOrderRefund::STATUS_PENDING)->sum('amount'), 2),
-            'refunds_issued' => round((float) $jobOrder->refunds()->where('status', JobOrderRefund::STATUS_ISSUED)->sum('amount'), 2),
+            'refunds_pending' => round((float) $jobOrder->refunds()
+                ->where('shop_id', $jobOrder->shop_id)
+                ->where('status', JobOrderRefund::STATUS_PENDING)
+                ->sum('amount'), 2),
+            'refunds_issued' => round((float) $jobOrder->refunds()
+                ->where('shop_id', $jobOrder->shop_id)
+                ->where('status', JobOrderRefund::STATUS_ISSUED)
+                ->sum('amount'), 2),
         ];
     }
 
     private function normalizedPaymentType(JobOrderPayment $payment): string
     {
-        return $payment->payment_type === 'DOWN_PAYMENT'
-            ? 'PARTIAL_PAYMENT'
-            : ($payment->payment_type ?: 'UNSPECIFIED');
+        if ($payment->payment_type === 'DOWN_PAYMENT') {
+            return 'PARTIAL_PAYMENT';
+        }
+
+        return is_string($payment->payment_type) && trim($payment->payment_type) !== ''
+            ? $payment->payment_type
+            : 'UNSPECIFIED';
+    }
+
+    private function normalizedPaymentMethod(JobOrderPayment $payment): string
+    {
+        return is_string($payment->payment_method) && trim($payment->payment_method) !== ''
+            ? $payment->payment_method
+            : 'UNSPECIFIED';
+    }
+
+    private function formatPaymentMethodLabel(string $method): string
+    {
+        return match ($method) {
+            'CASH' => 'Cash',
+            'GCASH' => 'GCash',
+            'BANK_TRANSFER' => 'Bank Transfer',
+            'CARD' => 'Card',
+            default => ucwords(strtolower(str_replace('_', ' ', $method))),
+        };
     }
 
     private function formatStatusLabel(?string $status): ?string

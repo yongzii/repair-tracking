@@ -5,6 +5,20 @@ const state = reactive({
     search: window.location.search,
     fullPath: `${window.location.pathname}${window.location.search}`,
 });
+let adminSidebarScrollTop = 0;
+
+export const captureAdminSidebarScroll = () => {
+    const sidebarNav = document.querySelector('[data-admin-sidebar-nav]');
+    if (sidebarNav) {
+        adminSidebarScrollTop = sidebarNav.scrollTop;
+    }
+};
+
+export const consumeAdminSidebarScroll = () => {
+    const scrollTop = adminSidebarScrollTop;
+    adminSidebarScrollTop = 0;
+    return scrollTop;
+};
 
 const syncFromLocation = () => {
     state.path = window.location.pathname;
@@ -12,7 +26,12 @@ const syncFromLocation = () => {
     state.fullPath = `${window.location.pathname}${window.location.search}`;
 };
 
-window.addEventListener('popstate', syncFromLocation);
+const handlePopstate = () => {
+    captureAdminSidebarScroll();
+    syncFromLocation();
+};
+
+window.addEventListener('popstate', handlePopstate);
 
 export const navigate = (to, options = {}) => {
     const { replace = false } = options;
@@ -24,6 +43,9 @@ export const navigate = (to, options = {}) => {
     }
 
     const nextPath = `${url.pathname}${url.search}`;
+    if (!url.pathname.startsWith('/admin')) {
+        adminSidebarScrollTop = 0;
+    }
 
     if (replace) {
         window.history.replaceState({}, '', nextPath);

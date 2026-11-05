@@ -12,6 +12,7 @@ const actionSuccess = ref('');
 const actionError = ref('');
 const retryingJobId = ref(null);
 const deletingJobId = ref(null);
+const retryConfirmationJobId = ref(null);
 const actionInProgress = computed(() => retryingJobId.value !== null || deletingJobId.value !== null);
 
 const loadFailedJobs = async (page = 1) => {
@@ -44,7 +45,20 @@ const loadFailedJobs = async (page = 1) => {
 };
 
 const retryJob = async (id) => {
-    if (actionInProgress.value) return;
+    if (actionInProgress.value || retryConfirmationJobId.value !== null) return;
+
+    retryConfirmationJobId.value = id;
+};
+
+const cancelRetry = () => {
+    if (!actionInProgress.value) {
+        retryConfirmationJobId.value = null;
+    }
+};
+
+const confirmRetry = async () => {
+    const id = retryConfirmationJobId.value;
+    if (id === null || actionInProgress.value) return;
 
     actionSuccess.value = '';
     actionError.value = '';
@@ -52,14 +66,13 @@ const retryJob = async (id) => {
 
     try {
         await window.axios.post(`/api/platform/failed-jobs/${id}/retry`);
-        actionSuccess.value = `Failed job #${id} was queued for retry.`;
+        actionSuccess.value = 'Failed job successfully dispatched for retry.';
         await loadFailedJobs();
     } catch (error) {
-        actionError.value = error?.response?.status === 403
-            ? 'You do not have access to this action.'
-            : 'Unable to retry this failed job. Please try again.';
+        actionError.value = error?.response?.data?.message || 'Unable to retry this failed job. Please try again.';
     } finally {
         retryingJobId.value = null;
+        retryConfirmationJobId.value = null;
     }
 };
 
@@ -76,9 +89,7 @@ const deleteJob = async (id) => {
         actionSuccess.value = `Failed job #${id} was deleted.`;
         await loadFailedJobs();
     } catch (error) {
-        actionError.value = error?.response?.status === 403
-            ? 'You do not have access to this action.'
-            : 'Unable to delete this failed job. Please try again.';
+        actionError.value = error?.response?.data?.message || 'Unable to delete this failed job. Please try again.';
     } finally {
         deletingJobId.value = null;
     }
@@ -176,6 +187,35 @@ onMounted(loadFailedJobs);
           <button type="button" class="btn-soft px-3 py-2 text-sm" :disabled="failedJobs.current_page >= failedJobs.last_page || actionInProgress" @click="loadFailedJobs(failedJobs.current_page + 1)">Next</button>
         </div>
       </footer>
+    </div>
+
+    <div v-if="retryConfirmationJobId !== null" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/50 p-4" @click.self="cancelRetry">
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="retry-confirmation-title"
+        aria-describedby="retry-confirmation-message"
+        class="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl sm:p-6"
+      >
+        <h2 id="retry-confirmation-title" class="text-lg font-bold text-slate-950">Retry Failed Job?</h2>
+        <p id="retry-confirmation-message" class="mt-2 text-sm leading-6 text-slate-600">
+          This will dispatch the selected failed job back to its queue for processing. Do you want to continue?
+        </p>
+        <div class="mt-5 flex justify-end gap-3">
+          <button
+            type="button"
+            class="min-h-10 rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="actionInProgress"
+            @click="cancelRetry"
+          >Cancel</button>
+          <button
+            type="button"
+            class="min-h-10 rounded-lg bg-teal-700 px-4 py-2 text-sm font-bold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="actionInProgress"
+            @click="confirmRetry"
+          >{{ actionInProgress ? 'Retrying...' : 'Retry Job' }}</button>
+        </div>
+      </section>
     </div>
   </PlatformLayout>
 </template>

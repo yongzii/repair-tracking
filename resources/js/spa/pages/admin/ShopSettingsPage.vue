@@ -66,13 +66,13 @@ const notificationEvents = [
 ];
 
 const businessDays = [
-    { key: 'monday', label: 'Mon' },
-    { key: 'tuesday', label: 'Tue' },
-    { key: 'wednesday', label: 'Wed' },
-    { key: 'thursday', label: 'Thu' },
-    { key: 'friday', label: 'Fri' },
-    { key: 'saturday', label: 'Sat' },
-    { key: 'sunday', label: 'Sun' },
+    { key: 'monday', label: 'Monday' },
+    { key: 'tuesday', label: 'Tuesday' },
+    { key: 'wednesday', label: 'Wednesday' },
+    { key: 'thursday', label: 'Thursday' },
+    { key: 'friday', label: 'Friday' },
+    { key: 'saturday', label: 'Saturday' },
+    { key: 'sunday', label: 'Sunday' },
 ];
 
 const trackingUrl = computed(() => shop.value?.public_tracking_url || '');
@@ -86,17 +86,8 @@ const formatCurrency = (amount) => `PHP ${Number(amount || 0).toLocaleString(und
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
 })}`;
-const onBusinessHoursToggle = () => {
-    if (form.business_hours_configured && !Object.keys(form.business_hours).length) {
-        Object.assign(form.business_hours, Object.fromEntries(
-            businessDays.map((day) => [day.key, {
-                label: day.label,
-                open: false,
-                open_time: '',
-                close_time: '',
-            }])
-        ));
-    }
+const onBusinessDayToggle = () => {
+    form.business_hours_configured = true;
 };
 const publicLinks = computed(() => [
     {
@@ -213,7 +204,7 @@ const loadShop = async () => {
             phone: data.shop.phone || '',
             address: data.shop.address || '',
             description: data.shop.description || '',
-            business_hours: data.shop.business_hours_configured ? normalizeBusinessHours(data.shop.business_hours) : {},
+            business_hours: normalizeBusinessHours(data.shop.business_hours),
             business_hours_configured: Boolean(data.shop.business_hours_configured),
             claim_terms: data.shop.claim_terms || '',
             warranty_terms: data.shop.warranty_terms || '',
@@ -616,25 +607,22 @@ onMounted(loadShop);
                   <h4 class="font-bold text-slate-950">Business Hours</h4>
                   <p class="text-xs text-slate-500">Shown in customer pages.</p>
                 </div>
-                <label class="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                  <input v-model="form.business_hours_configured" type="checkbox" class="rounded border-slate-300 text-teal-600 focus:ring-teal-500" @change="onBusinessHoursToggle" />
-                  Set business hours
-                </label>
               </div>
-              <p v-if="!form.business_hours_configured" class="rounded-lg bg-white p-3 text-sm text-slate-600">Business hours are not configured. Enable this option to publish the shop's schedule.</p>
-              <template v-else>
-                <p class="mb-3 text-xs text-slate-500">Select each open day and enter its hours. Days left unchecked will be shown as closed.</p>
-                <div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
-                  <div v-for="day in businessDays" :key="day.key" class="grid grid-cols-[74px_1fr_1fr] items-center gap-2 rounded-lg border border-slate-200 bg-white p-2">
-                    <label class="flex items-center gap-2 text-xs font-bold text-slate-800">
-                      <input v-model="form.business_hours[day.key].open" type="checkbox" class="rounded border-slate-300 text-teal-600 focus:ring-teal-500" />
-                      {{ day.label }}
-                    </label>
-                    <input v-model="form.business_hours[day.key].open_time" type="time" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs disabled:bg-slate-100 disabled:text-slate-400" :disabled="!form.business_hours[day.key].open" :required="form.business_hours[day.key].open" />
-                    <input v-model="form.business_hours[day.key].close_time" type="time" class="w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs disabled:bg-slate-100 disabled:text-slate-400" :disabled="!form.business_hours[day.key].open" :required="form.business_hours[day.key].open" />
+              <p class="mb-3 text-xs text-slate-500">Check each day the shop is open, then edit its opening and closing times directly.</p>
+              <div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                <div v-for="day in businessDays" :key="day.key" class="grid grid-cols-1 items-center gap-2 rounded-lg border border-slate-200 bg-white p-3 sm:grid-cols-[minmax(130px,1fr)_minmax(0,1.5fr)]">
+                  <label class="flex items-center gap-2 text-sm font-bold text-slate-800">
+                    <input v-model="form.business_hours[day.key].open" type="checkbox" class="rounded border-slate-300 text-teal-600 focus:ring-teal-500" @change="onBusinessDayToggle" />
+                    {{ day.label }}
+                  </label>
+                  <div v-if="form.business_hours[day.key].open" class="flex items-center gap-2">
+                    <input v-model="form.business_hours[day.key].open_time" type="time" class="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm" :required="form.business_hours[day.key].open" :aria-label="`${day.label} opening time`" />
+                    <span class="text-sm text-slate-400" aria-hidden="true">–</span>
+                    <input v-model="form.business_hours[day.key].close_time" type="time" class="min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm" :required="form.business_hours[day.key].open" :aria-label="`${day.label} closing time`" />
                   </div>
+                  <span v-else class="text-sm text-slate-500">Closed</span>
                 </div>
-              </template>
+              </div>
             </section>
 
             <label class="space-y-1.5">

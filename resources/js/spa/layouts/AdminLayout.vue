@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { adminRoles, authState, ensureRoles, logout } from '../composables/auth';
-import { useNavigation, navigate } from '../navigation';
+import { consumeAdminSidebarScroll, useNavigation, navigate } from '../navigation';
 import AppLink from '../components/AppLink.vue';
 import ChangePasswordButton from '../components/ChangePasswordButton.vue';
 import { appConfig } from '../config';
@@ -16,7 +16,10 @@ const props = defineProps({
 const { location } = useNavigation();
 const mobileNavOpen = ref(false);
 const isMobile = ref(false);
+const sidebarCollapsed = ref(false);
 const drawer = ref(null);
+const sidebarNav = ref(null);
+const sidebarScrollBeforeToggle = ref(null);
 const menuButton = ref(null);
 const pendingCustomerRequests = ref(null);
 const overdueJobs = ref(null);
@@ -39,6 +42,7 @@ const isSectionActive = (path) => {
 };
 
 const user = computed(() => authState.user);
+const isDesktopCollapsed = computed(() => sidebarCollapsed.value && !isMobile.value);
 const isAdmin = computed(() => adminRoles.includes(user.value?.role));
 const canViewInventory = computed(() => [...adminRoles, 'staff'].includes(user.value?.role));
 const shopName = computed(() => user.value?.shop?.name || appConfig.name);
@@ -69,6 +73,7 @@ const subscriptionPlans = computed(() => subscriptionSettings.value?.plans || []
 const subscriptionMethods = computed(() => subscriptionSettings.value?.payment_methods || []);
 const selectedPlan = computed(() => subscriptionPlans.value.find((plan) => plan.key === subscriptionForm.value.plan_key));
 const selectedMethod = computed(() => subscriptionMethods.value.find((method) => method.key === subscriptionForm.value.payment_method_key));
+const sidebarPreferenceKey = 'repairsync.admin.sidebar.collapsed';
 let mobileMediaQuery;
 let previousBodyOverflow = null;
 let previousModalBodyOverflow = null;
@@ -106,6 +111,19 @@ const formatCurrency = (value) => {
 const onLogout = async () => {
     await logout();
     navigate('/login', { replace: true });
+};
+
+const toggleSidebar = () => {
+    sidebarScrollBeforeToggle.value = sidebarNav.value?.scrollTop || 0;
+    sidebarCollapsed.value = !sidebarCollapsed.value;
+    window.localStorage.setItem(sidebarPreferenceKey, sidebarCollapsed.value ? '1' : '0');
+    nextTick(() => {
+        requestAnimationFrame(() => {
+            if (sidebarNav.value && sidebarScrollBeforeToggle.value !== null) {
+                sidebarNav.value.scrollTop = sidebarScrollBeforeToggle.value;
+            }
+        });
+    });
 };
 
 const syncViewport = () => {
@@ -203,12 +221,23 @@ watch(showSubscribeModal, async (open) => {
 });
 
 onMounted(() => {
+    sidebarCollapsed.value = window.localStorage.getItem(sidebarPreferenceKey) === '1';
     mobileMediaQuery = window.matchMedia('(max-width: 1023px)');
     syncViewport();
     mobileMediaQuery.addEventListener('change', syncViewport);
     loadAlerts();
     alertsRefreshInterval = window.setInterval(loadAlerts, 60_000);
     window.addEventListener('focus', loadAlerts);
+    const scrollTop = consumeAdminSidebarScroll();
+    if (scrollTop > 0) {
+        nextTick(() => {
+            requestAnimationFrame(() => {
+                if (sidebarNav.value) {
+                    sidebarNav.value.scrollTop = scrollTop;
+                }
+            });
+        });
+    }
 });
 
 onBeforeUnmount(() => {
@@ -313,8 +342,8 @@ const submitSubscriptionRequest = async () => {
     <aside
       ref="drawer"
       id="admin-navigation"
-      class="sidebar app-scrollbar fixed inset-y-0 left-0 z-50 flex h-[100dvh] min-h-0 w-72 shrink-0 flex-col overflow-hidden transition-transform duration-200 lg:sticky lg:h-screen lg:min-h-screen lg:z-auto lg:translate-x-0"
-      :class="mobileNavOpen ? 'translate-x-0' : '-translate-x-full'"
+      class="sidebar app-scrollbar fixed inset-y-0 left-0 z-50 flex h-[100dvh] min-h-0 w-72 shrink-0 flex-col overflow-hidden transition-[transform,width] duration-200 lg:sticky lg:h-screen lg:min-h-screen lg:z-auto lg:translate-x-0"
+      :class="[mobileNavOpen ? 'translate-x-0' : '-translate-x-full', isDesktopCollapsed ? 'lg:w-20' : 'lg:w-72']"
       :role="isMobile ? 'dialog' : undefined"
       :aria-label="isMobile ? 'Shop administration navigation' : undefined"
       :aria-modal="isMobile && mobileNavOpen ? 'true' : undefined"
@@ -323,31 +352,43 @@ const submitSubscriptionRequest = async () => {
       @keydown="onDrawerKeydown"
     >
       <div class="border-b border-white/10 p-5">
-        <AppLink to="/admin" class="flex items-start gap-3">
+        <div class="flex items-start gap-3" :class="isDesktopCollapsed ? 'lg:justify-center' : ''">
+        <AppLink to="/admin" class="flex min-w-0 items-start gap-3" :class="isDesktopCollapsed ? 'lg:justify-center' : ''" title="Dashboard">
           <span class="mt-1 flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white text-sm font-bold text-slate-950">
             <img v-if="shopLogo" :src="shopLogo" alt="Shop logo" class="h-full w-full object-contain p-1.5" />
             <span v-else>{{ (shopName || 'RS').slice(0, 2).toUpperCase() }}</span>
           </span>
-          <span class="min-w-0">
+          <span v-if="!isDesktopCollapsed" class="min-w-0">
             <span class="block truncate text-xl font-semibold sidebar-title text-white">{{ shopName }}</span>
             <span class="mt-1 block text-sm text-slate-300">{{ appConfig.tagline }}</span>
           </span>
         </AppLink>
-        <p v-if="shopSlug" class="mt-4 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold uppercase tracking-[0.15em] text-teal-200">Shop Code: {{ shopSlug }}</p>
+        </div>
+        <p v-if="shopSlug && !isDesktopCollapsed" class="mt-4 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold uppercase tracking-[0.15em] text-teal-200">Shop Code: {{ shopSlug }}</p>
         <p v-if="isPreviewMode" class="mt-3 rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-100">Preview Mode</p>
+        <button
+          type="button"
+          class="mt-4 hidden w-full items-center justify-center rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/10 lg:flex"
+          :aria-label="isDesktopCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+          :title="isDesktopCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+          @click="toggleSidebar"
+        >
+          <i :class="isDesktopCollapsed ? 'fas fa-chevron-right' : 'fas fa-chevron-left'" aria-hidden="true"></i>
+          <span v-if="!isDesktopCollapsed" class="ml-2">Collapse menu</span>
+        </button>
       </div>
 
-      <nav class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto overscroll-contain pb-6" @click="mobileNavOpen = false">
-        <AppLink to="/admin" class="nav-link" :class="isExactActive('/admin') ? 'nav-link-active' : ''">
+      <nav ref="sidebarNav" data-admin-sidebar-nav class="app-scrollbar mt-5 flex-1 space-y-1 overflow-y-auto overscroll-contain pb-6" @click="mobileNavOpen = false">
+        <AppLink to="/admin" class="nav-link" :class="[isExactActive('/admin') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="Dashboard">
           <i class="fas fa-chart-line w-5"></i>
-          <span>Dashboard</span>
+          <span v-if="!isDesktopCollapsed">Dashboard</span>
         </AppLink>
 
-        <AppLink to="/admin/job-orders" class="nav-link" :class="isSectionActive('/admin/job-orders') ? 'nav-link-active' : ''">
+        <AppLink to="/admin/job-orders" class="nav-link" :class="[isSectionActive('/admin/job-orders') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="Job Orders">
           <i class="fas fa-briefcase w-5"></i>
-          <span>Job Orders</span>
+          <span v-if="!isDesktopCollapsed">Job Orders</span>
           <span
-            v-if="overdueJobs"
+            v-if="overdueJobs && !isDesktopCollapsed"
             class="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-amber-400 px-2 py-0.5 text-xs font-bold text-amber-950"
             :aria-label="`${overdueJobs} overdue jobs`"
             title="Overdue jobs"
@@ -360,14 +401,14 @@ const submitSubscriptionRequest = async () => {
           >!</span>
         </AppLink>
 
-        <AppLink to="/admin/part-requests" class="nav-link" :class="isSectionActive('/admin/part-requests') ? 'nav-link-active' : ''">
+        <AppLink to="/admin/part-requests" class="nav-link" :class="[isSectionActive('/admin/part-requests') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="For Order">
           <i class="fas fa-screwdriver-wrench w-5"></i>
-          <span>For Order</span>
+          <span v-if="!isDesktopCollapsed">For Order</span>
         </AppLink>
 
-        <AppLink to="/admin/appointments" class="nav-link" :class="isSectionActive('/admin/appointments') ? 'nav-link-active' : ''">
+        <AppLink to="/admin/appointments" class="nav-link" :class="[isSectionActive('/admin/appointments') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="Customer Requests">
           <i class="fas fa-calendar-check w-5"></i>
-          <span>Customer Requests</span>
+          <span v-if="!isDesktopCollapsed">Customer Requests</span>
           <span
             v-if="pendingCustomerRequests"
             class="ml-auto inline-flex min-w-6 items-center justify-center rounded-full bg-rose-500 px-2 py-0.5 text-xs font-bold text-white"
@@ -382,44 +423,44 @@ const submitSubscriptionRequest = async () => {
           >!</span>
         </AppLink>
 
-        <AppLink v-if="isAdmin" to="/admin/reports" class="nav-link" :class="isSectionActive('/admin/reports') ? 'nav-link-active' : ''">
-          <i class="fas fa-file-chart-bar w-5"></i>
-          <span>Reports</span>
+        <AppLink v-if="isAdmin" to="/admin/reports" class="nav-link" :class="[isSectionActive('/admin/reports') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="Reports">
+          <i class="fas fa-chart-bar w-5"></i>
+          <span v-if="!isDesktopCollapsed">Reports</span>
         </AppLink>
 
-        <AppLink v-if="canViewInventory" to="/admin/inventory" class="nav-link" :class="isSectionActive('/admin/inventory') ? 'nav-link-active' : ''">
+        <AppLink v-if="canViewInventory" to="/admin/inventory" class="nav-link" :class="[isSectionActive('/admin/inventory') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="Inventory">
           <i class="fas fa-boxes-stacked w-5"></i>
-          <span>Inventory</span>
+          <span v-if="!isDesktopCollapsed">Inventory</span>
         </AppLink>
 
-        <AppLink v-if="isAdmin" to="/admin/technicians" class="nav-link" :class="isSectionActive('/admin/technicians') ? 'nav-link-active' : ''">
+        <AppLink v-if="isAdmin" to="/admin/technicians" class="nav-link" :class="[isSectionActive('/admin/technicians') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="Technicians">
           <i class="fas fa-users w-5"></i>
-          <span>Technicians</span>
+          <span v-if="!isDesktopCollapsed">Technicians</span>
         </AppLink>
 
-        <AppLink v-if="isAdmin" to="/admin/users" class="nav-link" :class="isSectionActive('/admin/users') ? 'nav-link-active' : ''">
+        <AppLink v-if="isAdmin" to="/admin/users" class="nav-link" :class="[isSectionActive('/admin/users') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="User Management">
           <i class="fas fa-user-shield w-5"></i>
-          <span>User Management</span>
+          <span v-if="!isDesktopCollapsed">User Management</span>
         </AppLink>
 
-        <AppLink v-if="isAdmin" to="/admin/audit-logs" class="nav-link" :class="isSectionActive('/admin/audit-logs') ? 'nav-link-active' : ''">
+        <AppLink v-if="isAdmin" to="/admin/audit-logs" class="nav-link" :class="[isSectionActive('/admin/audit-logs') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="Audit Logs">
           <i class="fas fa-clipboard-list w-5"></i>
-          <span>Audit Logs</span>
+          <span v-if="!isDesktopCollapsed">Audit Logs</span>
         </AppLink>
 
-        <AppLink v-if="isAdmin" to="/admin/settings/shop" class="nav-link" :class="isSectionActive('/admin/settings/shop') ? 'nav-link-active' : ''">
+        <AppLink v-if="isAdmin" to="/admin/settings/shop" class="nav-link" :class="[isSectionActive('/admin/settings/shop') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="Shop Settings">
           <i class="fas fa-store w-5"></i>
-          <span>Shop Settings</span>
+          <span v-if="!isDesktopCollapsed">Shop Settings</span>
         </AppLink>
 
-        <AppLink :to="trackingPath" class="nav-link" :class="isSectionActive('/track') || isSectionActive('/shops') ? 'nav-link-active' : ''">
+        <AppLink :to="trackingPath" class="nav-link" :class="[isSectionActive('/track') || isSectionActive('/shops') ? 'nav-link-active' : '', isDesktopCollapsed ? 'lg:justify-center lg:px-2' : '']" title="Customer Tracking">
           <i class="fas fa-eye w-5"></i>
-          <span>Customer Tracking</span>
+          <span v-if="!isDesktopCollapsed">Customer Tracking</span>
         </AppLink>
       </nav>
 
       <div class="mt-auto border-t border-white/10 bg-black/20 p-5">
-        <div class="mb-4 rounded-xl border border-white/10 bg-white/5 p-3" v-if="user">
+        <div v-if="user && !isDesktopCollapsed" class="mb-4 rounded-xl border border-white/10 bg-white/5 p-3">
           <p class="text-xs text-slate-300">Logged in as</p>
           <p class="mt-1 truncate text-sm font-bold text-white">{{ user.name }}</p>
           <p class="truncate text-xs text-slate-300">{{ user.email }}</p>
@@ -427,9 +468,9 @@ const submitSubscriptionRequest = async () => {
           <p v-if="user.shop?.name" class="mt-2 truncate text-xs text-slate-300">{{ user.shop.name }}</p>
           <ChangePasswordButton />
         </div>
-        <button type="button" class="flex w-full items-center justify-center rounded-lg bg-white/10 py-2 font-bold text-white hover:bg-white/20" @click="onLogout">
-          <i class="fas fa-sign-out-alt mr-2"></i>
-          Logout
+        <button type="button" class="flex w-full items-center justify-center rounded-lg bg-white/10 py-2 font-bold text-white hover:bg-white/20" title="Logout" aria-label="Logout" @click="onLogout">
+          <i class="fas fa-sign-out-alt" :class="isDesktopCollapsed ? '' : 'mr-2'"></i>
+          <span v-if="!isDesktopCollapsed">Logout</span>
         </button>
       </div>
     </aside>

@@ -22,7 +22,6 @@ const loadingTechnicians = ref(false);
 const filterOptions = ref({
     statuses: [],
     priorities: [],
-    paymentStatuses: [],
     serviceTypes: [],
     serviceCatalog: [],
 });
@@ -38,10 +37,8 @@ const activeFilterCount = computed(() => [
     filters.search.trim(),
     filters.status,
     filters.priority,
-    filters.payment_status,
     filters.service_type,
     filters.service_category_id,
-    filters.service_item_id,
     filters.technician_id,
     filters.received_from,
     filters.received_to,
@@ -75,10 +72,8 @@ const filters = reactive({
     search: '',
     status: '',
     priority: '',
-    payment_status: '',
     service_type: '',
     service_category_id: '',
-    service_item_id: '',
     technician_id: '',
     received_from: '',
     received_to: '',
@@ -119,10 +114,8 @@ const syncFiltersFromLocation = () => {
     filters.search = params.get('search') || '';
     filters.status = params.get('status') || '';
     filters.priority = params.get('priority') || '';
-    filters.payment_status = params.get('payment_status') || '';
     filters.service_type = params.get('service_type') || '';
     filters.service_category_id = params.get('service_category_id') || '';
-    filters.service_item_id = params.get('service_item_id') || '';
     filters.technician_id = params.get('technician_id') || '';
     filters.received_from = params.get('received_from') || '';
     filters.received_to = params.get('received_to') || '';
@@ -150,10 +143,8 @@ const loadJobOrders = async () => {
                 search: filters.search || undefined,
                 status: filters.status || undefined,
                 priority: filters.priority || undefined,
-                payment_status: filters.payment_status || undefined,
                 service_type: filters.service_type || undefined,
                 service_category_id: filters.service_category_id || undefined,
-                service_item_id: filters.service_item_id || undefined,
                 technician_id: filters.technician_id || undefined,
                 received_from: filters.received_from || undefined,
                 received_to: filters.received_to || undefined,
@@ -209,15 +200,6 @@ const selectedCategoryServices = computed(() => {
     return category?.services || [];
 });
 
-const filterServiceOptions = computed(() => {
-    const category = filterOptions.value.serviceCatalog.find((item) => String(item.id) === String(filters.service_category_id));
-    if (category) return category.services || [];
-
-    return filterOptions.value.serviceCatalog
-        .flatMap((item) => item.services || [])
-        .filter((service, index, services) => services.findIndex((candidate) => candidate.id === service.id) === index);
-});
-
 const buildFilterQuery = (includePage = false) => {
     const params = new URLSearchParams();
 
@@ -225,10 +207,8 @@ const buildFilterQuery = (includePage = false) => {
     if (filters.search.trim()) params.set('search', filters.search.trim());
     if (filters.status) params.set('status', filters.status);
     if (filters.priority) params.set('priority', filters.priority);
-    if (filters.payment_status) params.set('payment_status', filters.payment_status);
     if (filters.service_type) params.set('service_type', filters.service_type);
     if (filters.service_category_id) params.set('service_category_id', filters.service_category_id);
-    if (filters.service_item_id) params.set('service_item_id', filters.service_item_id);
     if (filters.technician_id) params.set('technician_id', filters.technician_id);
     if (filters.received_from) params.set('received_from', filters.received_from);
     if (filters.received_to) params.set('received_to', filters.received_to);
@@ -248,10 +228,8 @@ const clearFilters = () => {
     filters.search = '';
     filters.status = '';
     filters.priority = '';
-    filters.payment_status = '';
     filters.service_type = '';
     filters.service_category_id = '';
-    filters.service_item_id = '';
     filters.technician_id = '';
     filters.received_from = '';
     filters.received_to = '';
@@ -277,7 +255,6 @@ const loadMeta = async () => {
         filterOptions.value = {
             statuses: data.statuses || [],
             priorities: data.priorities || [],
-            paymentStatuses: data.paymentStatuses || [],
             serviceTypes: data.serviceTypes || [],
             serviceCatalog: data.serviceCatalog || [],
         };
@@ -400,16 +377,6 @@ watch(
     }
 );
 
-watch(
-    () => filters.service_category_id,
-    () => {
-        if (!filters.service_item_id) return;
-        const stillAvailable = filterServiceOptions.value.some((service) => String(service.id) === String(filters.service_item_id));
-        if (!stillAvailable) {
-            filters.service_item_id = '';
-        }
-    }
-);
 </script>
 
 <template>
@@ -459,8 +426,8 @@ watch(
 
       <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <form class="space-y-4" @submit.prevent="applyFilters">
-          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(280px,2fr)_repeat(4,minmax(160px,1fr))]">
-            <div>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div class="xl:col-span-2">
               <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Search</label>
               <input v-model="filters.search" class="h-12 w-full rounded-lg border border-slate-300 px-4 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-4 focus:ring-teal-100" placeholder="Job #, customer, phone, device..." />
             </div>
@@ -479,13 +446,6 @@ watch(
               </select>
             </div>
             <div>
-              <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Payment</label>
-              <select v-model="filters.payment_status" class="h-12 w-full rounded-lg border border-slate-300 px-4 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100">
-                <option value="">All payment states</option>
-                <option v-for="status in filterOptions.paymentStatuses" :key="status" :value="status">{{ status }}</option>
-              </select>
-            </div>
-            <div>
               <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Service Type</label>
               <select v-model="filters.service_type" class="h-12 w-full rounded-lg border border-slate-300 px-4 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100">
                 <option value="">All service types</option>
@@ -494,19 +454,12 @@ watch(
             </div>
           </div>
 
-          <div class="grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 md:grid-cols-2 xl:grid-cols-[repeat(5,minmax(150px,1fr))] xl:items-end">
+          <div class="grid grid-cols-1 gap-3 border-t border-slate-100 pt-4 md:grid-cols-2 xl:grid-cols-5 xl:items-end">
             <div>
               <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Category</label>
               <select v-model="filters.service_category_id" class="h-12 w-full rounded-lg border border-slate-300 px-4 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100">
                 <option value="">All categories</option>
                 <option v-for="category in filterOptions.serviceCatalog" :key="category.id" :value="String(category.id)">{{ category.name }}</option>
-              </select>
-            </div>
-            <div>
-              <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Service</label>
-              <select v-model="filters.service_item_id" class="h-12 w-full rounded-lg border border-slate-300 px-4 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100">
-                <option value="">All services</option>
-                <option v-for="service in filterServiceOptions" :key="service.id" :value="String(service.id)">{{ service.name }}</option>
               </select>
             </div>
             <div>
@@ -524,11 +477,11 @@ watch(
               <label class="mb-2 block text-xs font-bold uppercase text-slate-400">Received To</label>
               <input v-model="filters.received_to" type="date" class="h-12 w-full rounded-lg border border-slate-300 px-4 text-slate-900 outline-none transition focus:border-teal-500 focus:ring-4 focus:ring-teal-100" />
             </div>
-            <label class="flex h-12 items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-600 md:col-span-2 xl:col-span-2">
+            <label class="flex h-12 items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-slate-600">
               <input v-model="filters.overdue_only" type="checkbox" class="rounded border-slate-300 text-teal-600 focus:ring-teal-500" />
               Show overdue repairs only
             </label>
-            <div class="flex flex-wrap items-center gap-3 md:col-span-2 xl:col-span-3 xl:justify-end">
+            <div class="flex flex-wrap items-center gap-3 md:col-span-2 xl:col-span-5 xl:justify-end">
               <span v-if="activeFilterCount" class="inline-flex h-8 items-center rounded-full bg-teal-50 px-3 text-xs font-bold text-teal-700 ring-1 ring-teal-200">{{ activeFilterCount }} active filter{{ activeFilterCount > 1 ? 's' : '' }}</span>
               <button type="button" class="h-12 rounded-lg border border-slate-300 px-5 font-bold text-slate-700 hover:bg-slate-100" @click="clearFilters">Clear</button>
               <button type="submit" class="h-12 rounded-lg bg-slate-950 px-6 font-bold text-white hover:bg-slate-800">Apply Filters</button>

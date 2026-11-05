@@ -3,12 +3,17 @@
 namespace Tests\Feature;
 
 use App\Models\JobOrder;
+use App\Models\PartRequest;
 use App\Models\JobOrderPayment;
+use App\Models\SparePart;
 use App\Models\ServiceCategory;
 use App\Models\ServiceItem;
 use App\Models\Shop;
 use App\Models\StatusHistory;
+use App\Models\StockMovement;
+use App\Models\Technician;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
@@ -480,6 +485,540 @@ class JobOrderSafetyTest extends TestCase
             ->assertJsonPath('filteredJobOrders.0.service_type_label', 'Under Warranty');
     }
 
+    public function test_reports_count_picked_up_repairs_separately_from_rto_and_use_pickup_time_for_turnaround(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+
+        $this->createReportJobOrder($shop, 'PICKED_UP', '2025-02-01 09:00:00', '2025-02-04 09:00:00', '2025-02-20 09:00:00');
+        $this->createReportJobOrder($shop, 'PICKED_UP', '2025-02-10 09:00:00', '2025-02-15 09:00:00', '2025-03-20 09:00:00');
+        $this->createReportJobOrder($shop, 'PICKED_UP', '2025-02-12 09:00:00', null, '2025-03-25 09:00:00');
+        $this->createReportJobOrder($shop, 'RTO', '2025-02-01 09:00:00', '2025-02-20 09:00:00', '2025-03-30 09:00:00');
+        $this->createReportJobOrder($shop, 'RTO_RELEASED', '2025-02-01 09:00:00', '2025-02-25 09:00:00', '2025-03-31 09:00:00');
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/reports')
+            ->assertOk()
+            ->assertJsonPath('totalCompleted', 3)
+            ->assertJsonPath('totalRto', 2)
+            ->assertJsonPath('avgTurnaround', 4)
+            ->assertJsonPath('minTurnaround', 3)
+            ->assertJsonPath('maxTurnaround', 5);
+    }
+
+    public function test_technician_performance_uses_current_assignment_pickup_period_and_shop_scoping(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $otherShop = Shop::create([
+            'name' => 'Other Report Shop',
+            'slug' => 'other-report-shop-' . $shop->id,
+            'trial_ends_at' => now()->addDays(30),
+            'is_active' => true,
+        ]);
+        $technician = Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'Current Assignment Tech',
+            'email' => 'current-assignment-' . $shop->id . '@example.test',
+            'is_active' => true,
+        ]);
+        $secondTechnician = Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'Second Tech',
+            'email' => 'second-tech-' . $shop->id . '@example.test',
+            'is_active' => true,
+        ]);
+        $nullPickupTechnician = Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'Null Pickup Tech',
+            'email' => 'null-pickup-tech-' . $shop->id . '@example.test',
+            'is_active' => true,
+        ]);
+        $otherShopTechnician = Technician::create([
+            'shop_id' => $otherShop->id,
+            'name' => 'Other Shop Tech',
+            'email' => 'other-shop-tech-' . $otherShop->id . '@example.test',
+            'is_active' => true,
+        ]);
+
+        $pickedUpInRange = $this->createReportJobOrder(
+            $shop,
+            'PICKED_UP',
+            '2025-03-01 09:00:00',
+            '2025-03-11 09:00:00',
+            '2025-05-01 09:00:00'
+        );
+        $pickedUpInRange->update(['technician_id' => $technician->id]);
+        $nullPickup = $this->createReportJobOrder($shop, 'PICKED_UP', '2025-03-14 09:00:00');
+        $nullPickup->update(['technician_id' => $nullPickupTechnician->id]);
+        $pickedUpOutsideRange = $this->createReportJobOrder(
+            $shop,
+            'PICKED_UP',
+            '2025-03-12 09:00:00',
+            '2025-03-21 09:00:00'
+        );
+        $pickedUpOutsideRange->update(['technician_id' => $technician->id]);
+        $warrantyCompletion = $this->createReportJobOrder(
+            $shop,
+            'PICKED_UP',
+            '2025-03-12 09:00:00',
+            '2025-03-15 09:00:00',
+            null,
+            'WARRANTY_SERVICE'
+        );
+        $warrantyCompletion->update(['technician_id' => $technician->id]);
+
+        $rto = $this->createReportJobOrder($shop, 'RTO', '2025-03-12 09:00:00');
+        $rto->update(['technician_id' => $technician->id]);
+        $rtoReleased = $this->createReportJobOrder(
+            $shop,
+            'RTO_RELEASED',
+            '2025-03-14 09:00:00',
+            '2025-03-15 09:00:00'
+        );
+        $rtoReleased->update(['technician_id' => $technician->id]);
+        $deletedCompletion = $this->createReportJobOrder(
+            $shop,
+            'PICKED_UP',
+            '2025-03-01 09:00:00',
+            '2025-03-12 09:00:00'
+        );
+        $deletedCompletion->update(['technician_id' => $technician->id]);
+        $deletedCompletion->delete();
+        $deletedWorkload = $this->createReportJobOrder($shop, 'IN_PROGRESS', '2024-01-01 09:00:00');
+        $deletedWorkload->update(['technician_id' => $technician->id]);
+        $deletedWorkload->delete();
+
+        $secondCompletion = $this->createReportJobOrder(
+            $shop,
+            'PICKED_UP',
+            '2025-03-09 09:00:00',
+            '2025-03-11 09:00:00'
+        );
+        $secondCompletion->update(['technician_id' => $secondTechnician->id]);
+        $this->createReportJobOrder(
+            $shop,
+            'PICKED_UP',
+            '2025-03-09 09:00:00',
+            '2025-03-11 09:00:00'
+        );
+        $crossShopAssignment = $this->createReportJobOrder(
+            $shop,
+            'PICKED_UP',
+            '2025-03-09 09:00:00',
+            '2025-03-11 09:00:00'
+        );
+        $crossShopAssignment->update(['technician_id' => $otherShopTechnician->id]);
+
+        foreach ([
+            ['IN_PROGRESS', '2024-01-01 09:00:00'],
+            ['WAITING_PARTS', '2025-03-25 09:00:00'],
+            ['PICKED_UP', '2024-01-01 09:00:00'],
+            ['RTO', '2024-01-01 09:00:00'],
+            ['RTO_RELEASED', '2024-01-01 09:00:00'],
+        ] as [$status, $createdAt]) {
+            $workloadJob = $this->createReportJobOrder(
+                $shop,
+                $status,
+                $createdAt,
+                $status === 'PICKED_UP' ? '2024-01-02 09:00:00' : null
+            );
+            $workloadJob->update(['technician_id' => $technician->id]);
+        }
+        $secondWorkloadJob = $this->createReportJobOrder($shop, 'IN_PROGRESS', '2024-01-01 09:00:00');
+        $secondWorkloadJob->update(['technician_id' => $secondTechnician->id]);
+
+        $response = $this->actingAs($admin)
+            ->getJson('/api/admin/reports?start_date=2025-03-10&end_date=2025-03-20&service_type=STANDARD')
+            ->assertOk()
+            ->assertJsonPath('technicianPerformance.0.technician_name', 'Current Assignment Tech')
+            ->assertJsonPath('technicianPerformance.0.successful_jobs', 1)
+            ->assertJsonPath('technicianPerformance.0.average_turnaround_days', 10)
+            ->assertJsonPath('technicianPerformance.0.rto_jobs', 1)
+            ->assertJsonPath('technicianPerformance.0.rto_released_jobs', 1)
+            ->assertJsonPath('technicianPerformance.1.technician_name', 'Null Pickup Tech')
+            ->assertJsonPath('technicianPerformance.1.successful_jobs', 0)
+            ->assertJsonPath('technicianPerformance.2.technician_name', 'Second Tech')
+            ->assertJsonPath('technicianPerformance.2.successful_jobs', 1)
+            ->assertJsonPath('technicianPerformance.2.average_turnaround_days', 2);
+
+        $performance = collect($response->json('technicianPerformance'));
+        $this->assertCount(3, $performance);
+        $this->assertSame(2, $response->json('currentTechnicianWorkload.0.current_jobs'));
+        $this->assertSame(0, $response->json('currentTechnicianWorkload.1.current_jobs'));
+        $this->assertSame(1, $response->json('currentTechnicianWorkload.2.current_jobs'));
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/reports')
+            ->assertOk()
+            ->assertJsonPath('technicianPerformance.1.successful_jobs', 1)
+            ->assertJsonPath('technicianPerformance.1.average_turnaround_days', 0);
+
+        $csv = $this->actingAs($admin)
+            ->get('/api/admin/reports/export/csv?report_type=operations&start_date=2025-03-10&end_date=2025-03-20&service_type=STANDARD')
+            ->assertOk()
+            ->streamedContent();
+        $this->assertStringContainsString('Technician Performance (Current Assignment)', $csv);
+        $this->assertStringContainsString('Current Technician Workload', $csv);
+        $this->assertStringContainsString('Completed Repairs Date Basis', $csv);
+        $this->assertStringContainsString('RTO Outcomes', $csv);
+
+        $this->actingAs($admin)
+            ->get('/api/admin/reports/export/pdf?report_type=operations&start_date=2025-03-10&end_date=2025-03-20&service_type=STANDARD')
+            ->assertOk()
+            ->assertSee('Technician Performance (Current Assignment)')
+            ->assertSee('Current Technician Workload')
+            ->assertSee('currently stored technician assignment')
+            ->assertSee('Date basis: job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.')
+            ->assertSee('Successful jobs use pickup date (picked_up_at); RTO outcomes use job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.');
+    }
+
+    public function test_technician_successful_jobs_use_inclusive_pickup_date_boundaries(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $technician = Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'Pickup Boundary Tech',
+            'email' => 'pickup-boundary-' . $shop->id . '@example.test',
+            'is_active' => true,
+        ]);
+
+        foreach ([
+            ['2025-03-01 09:00:00', '2025-04-09 09:00:00'],
+            ['2025-03-02 09:00:00', '2025-04-10 09:00:00'],
+            ['2025-03-03 09:00:00', '2025-04-12 09:00:00'],
+            ['2025-03-04 09:00:00', '2025-04-13 09:00:00'],
+        ] as [$createdAt, $pickedUpAt]) {
+            $jobOrder = $this->createReportJobOrder($shop, 'PICKED_UP', $createdAt, $pickedUpAt);
+            $jobOrder->update(['technician_id' => $technician->id]);
+        }
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/reports?start_date=2025-04-10&end_date=2025-04-12')
+            ->assertOk()
+            ->assertJsonPath('technicianPerformance.0.successful_jobs', 2)
+            ->assertJsonPath('technicianPerformance.0.average_turnaround_days', 39.5);
+    }
+
+    public function test_technician_rto_counts_use_job_creation_date_not_status_event_date(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $technician = Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'RTO Date Tech',
+            'email' => 'rto-date-' . $shop->id . '@example.test',
+            'is_active' => true,
+        ]);
+
+        foreach ([
+            ['RTO', '2025-04-10 09:00:00', '2025-04-20 09:00:00'],
+            ['RTO', '2025-04-09 09:00:00', '2025-04-11 09:00:00'],
+            ['RTO_RELEASED', '2025-04-12 09:00:00', '2025-04-08 09:00:00'],
+            ['RTO_RELEASED', '2025-04-08 09:00:00', '2025-04-11 09:00:00'],
+        ] as [$status, $createdAt, $eventAt]) {
+            $jobOrder = $this->createReportJobOrder($shop, $status, $createdAt);
+            $jobOrder->update(['technician_id' => $technician->id]);
+
+            $history = StatusHistory::create([
+                'shop_id' => $shop->id,
+                'job_order_id' => $jobOrder->id,
+                'status' => $status,
+                'note' => 'RTO date semantics test.',
+            ]);
+            $history->forceFill(['created_at' => Carbon::parse($eventAt)])->saveQuietly();
+        }
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/reports?start_date=2025-04-10&end_date=2025-04-12')
+            ->assertOk()
+            ->assertJsonPath('technicianPerformance.0.rto_jobs', 1)
+            ->assertJsonPath('technicianPerformance.0.rto_released_jobs', 1);
+    }
+
+    public function test_technician_workload_ignores_dates_and_honors_service_and_terminal_filters(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $technician = Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'Workload Filter Tech',
+            'email' => 'workload-filter-' . $shop->id . '@example.test',
+            'is_active' => true,
+        ]);
+
+        foreach ([
+            ['IN_PROGRESS', '2020-01-01 09:00:00', 'STANDARD'],
+            ['WAITING_PARTS', '2025-04-11 09:00:00', 'STANDARD'],
+            ['IN_PROGRESS', '2025-04-11 09:00:00', 'WARRANTY_SERVICE'],
+            ['PICKED_UP', '2025-04-11 09:00:00', 'STANDARD'],
+            ['RTO', '2025-04-11 09:00:00', 'STANDARD'],
+            ['RTO_RELEASED', '2025-04-11 09:00:00', 'STANDARD'],
+        ] as [$status, $createdAt, $serviceType]) {
+            $jobOrder = $this->createReportJobOrder($shop, $status, $createdAt, null, null, $serviceType);
+            $jobOrder->update(['technician_id' => $technician->id]);
+        }
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/reports?start_date=2025-04-10&end_date=2025-04-12&service_type=STANDARD')
+            ->assertOk()
+            ->assertJsonPath('currentTechnicianWorkload.0.current_jobs', 2);
+    }
+
+    public function test_technician_analytics_return_empty_and_zeroed_data_with_pdf_empty_states(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+
+        $emptyReport = $this->actingAs($admin)
+            ->getJson('/api/admin/reports')
+            ->assertOk();
+        $this->assertSame([], $emptyReport->json('technicianPerformance'));
+        $this->assertSame([], $emptyReport->json('currentTechnicianWorkload'));
+
+        $this->actingAs($admin)
+            ->get('/api/admin/reports/export/pdf?report_type=operations')
+            ->assertOk()
+            ->assertSee('No technician records are available for this shop.');
+
+        Technician::create([
+            'shop_id' => $shop->id,
+            'name' => 'No Matching Jobs Tech',
+            'email' => 'no-matching-jobs-' . $shop->id . '@example.test',
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/reports?service_type=WARRANTY_SERVICE')
+            ->assertOk()
+            ->assertJsonPath('technicianPerformance.0.successful_jobs', 0)
+            ->assertJsonPath('technicianPerformance.0.average_turnaround_days', 0)
+            ->assertJsonPath('technicianPerformance.0.rto_jobs', 0)
+            ->assertJsonPath('technicianPerformance.0.rto_released_jobs', 0)
+            ->assertJsonPath('currentTechnicianWorkload.0.current_jobs', 0);
+
+        $this->actingAs($admin)
+            ->get('/api/admin/reports/export/pdf?report_type=operations&service_type=WARRANTY_SERVICE')
+            ->assertOk()
+            ->assertSee('No assigned jobs match the selected services and reporting period.')
+            ->assertSee('No non-terminal assigned jobs match the selected services.');
+    }
+
+    public function test_unfiltered_operations_exports_explain_all_date_scope_and_metric_bases(): void
+    {
+        [, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+
+        $csv = $this->actingAs($admin)
+            ->get('/api/admin/reports/export/csv?report_type=operations')
+            ->assertOk()
+            ->streamedContent();
+
+        $this->assertStringContainsString(
+            'Date basis: job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.',
+            $csv,
+        );
+        $this->assertStringContainsString(
+            'Successful jobs use pickup date (picked_up_at); RTO outcomes use job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.',
+            $csv,
+        );
+        $this->assertStringContainsString(
+            'Current snapshot; excludes picked-up and both RTO terminal statuses. Date filters do not apply.',
+            $csv,
+        );
+
+        $pdf = $this->actingAs($admin)
+            ->get('/api/admin/reports/export/pdf?report_type=operations')
+            ->assertOk();
+
+        $pdf->assertSee('Date basis: job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.');
+        $pdf->assertSee('Successful jobs use pickup date (picked_up_at); RTO outcomes use job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.');
+        $pdf->assertSee('Current snapshot; excludes picked-up and both RTO terminal statuses. Date filters do not apply.');
+    }
+
+    public function test_inventory_snapshot_uses_current_stock_and_existing_low_stock_rule(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $this->createInventoryPart($shop->id, 'Inactive Boundary Part', 3, 3, 10, false, 'pcs');
+        $this->createInventoryPart($shop->id, 'Active Low Part', 2, 3, 25, true, 'pcs');
+        $this->createInventoryPart($shop->id, 'Active In-Stock Part', 6, 5, 2, true, 'box');
+
+        $response = $this->actingAs($admin)
+            ->getJson('/api/admin/reports?start_date=2030-01-01&end_date=2030-01-31')
+            ->assertOk();
+
+        $response
+            ->assertJsonPath('inventoryReport.summary.total_items', 3)
+            ->assertJsonPath('inventoryReport.summary.active_items', 2)
+            ->assertJsonPath('inventoryReport.summary.inactive_items', 1)
+            ->assertJsonPath('inventoryReport.summary.low_stock_items', 2)
+            ->assertJsonPath('inventoryReport.summary.estimated_current_inventory_value', 92);
+
+        $stockByUnit = collect($response->json('inventoryReport.summary.stock_quantity_by_unit'))->keyBy('unit');
+        $this->assertSame(5, $stockByUnit['pcs']['quantity']);
+        $this->assertSame(6, $stockByUnit['box']['quantity']);
+
+        $items = collect($response->json('inventoryReport.items'))->keyBy('part_name');
+        $this->assertSame('Low Stock', $items['Inactive Boundary Part']['stock_status']);
+        $this->assertSame('Inactive', $items['Inactive Boundary Part']['active_status']);
+        $this->assertEquals(30, $items['Inactive Boundary Part']['estimated_item_value']);
+        $this->assertSame('In Stock', $items['Active In-Stock Part']['stock_status']);
+    }
+
+    public function test_inventory_movement_history_is_shop_scoped_date_filtered_and_classifies_recorded_out_issues(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        [$otherShop] = $this->createShopUser(User::ROLE_STAFF);
+        $part = $this->createInventoryPart($shop->id, 'Movement Part', 20, 2, 4);
+        $foreignPart = $this->createInventoryPart($otherShop->id, 'Foreign Part', 10, 2, 8);
+
+        $repairJob = $this->createReportJobOrder($shop, 'IN_PROGRESS', '2025-04-01 09:00:00');
+        $deletedJob = $this->createReportJobOrder($shop, 'IN_PROGRESS', '2025-04-02 09:00:00');
+        $deletedJob->delete();
+        $foreignJob = $this->createReportJobOrder($otherShop, 'IN_PROGRESS', '2025-04-03 09:00:00');
+
+        $beforeRange = $this->createInventoryMovement($shop->id, $part->id, 'IN', 5, 20, null, 'Initial delivery', '2025-04-09 08:00:00');
+        $repairOut = $this->createInventoryMovement($shop->id, $part->id, 'OUT', -3, 17, $repairJob->id, 'Issued for repair', '2025-04-10 09:00:00');
+        $manualOut = $this->createInventoryMovement($shop->id, $part->id, 'OUT', -2, 15, null, 'Manual deduction', '2025-04-11 10:00:00');
+        $reversal = $this->createInventoryMovement($shop->id, $part->id, 'IN', 1, 16, $repairJob->id, 'Correction reversal', '2025-04-12 08:00:00');
+        $adjustment = $this->createInventoryMovement($shop->id, $part->id, 'ADJUSTMENT', -2, 14, null, 'Cycle count adjustment', '2025-04-12 08:30:00');
+        $deletedJobOut = $this->createInventoryMovement($shop->id, $part->id, 'OUT', -1, 15, $deletedJob->id, 'Issued to retained soft-deleted job', '2025-04-12 09:00:00');
+        $foreignJobOut = $this->createInventoryMovement($shop->id, $part->id, 'OUT', -4, 11, $foreignJob->id, 'Invalid cross-shop job reference', '2025-04-13 09:00:00');
+        $foreignShopMovement = $this->createInventoryMovement($otherShop->id, $part->id, 'OUT', -6, 5, $repairJob->id, 'Foreign shop movement', '2025-04-11 11:00:00');
+        $foreignPartMovement = $this->createInventoryMovement($shop->id, $foreignPart->id, 'OUT', -7, 3, $repairJob->id, 'Foreign part movement', '2025-04-11 12:00:00');
+
+        $filtered = $this->actingAs($admin)
+            ->getJson('/api/admin/reports?start_date=2025-04-10&end_date=2025-04-12')
+            ->assertOk()
+            ->assertJsonPath('inventoryReport.movement_summary.movement_count', 5)
+            ->assertJsonPath('inventoryReport.movement_summary.repair_linked_out.movement_count', 2)
+            ->assertJsonPath('inventoryReport.movement_summary.repair_linked_out.quantity', 4)
+            ->assertJsonPath('inventoryReport.movement_summary.unlinked_manual_out.movement_count', 1)
+            ->assertJsonPath('inventoryReport.movement_summary.unlinked_manual_out.quantity', 2);
+
+        $this->assertSame(
+            ['Movement Part'],
+            collect($filtered->json('inventoryReport.items'))->pluck('part_name')->all(),
+        );
+        $filteredMovements = collect($filtered->json('inventoryReport.movements'))->keyBy('id');
+        $this->assertSame(-3, $filteredMovements[$repairOut->id]['quantity_change']);
+        $this->assertSame(17, $filteredMovements[$repairOut->id]['balance_after']);
+        $this->assertSame('Issued for repair', $filteredMovements[$repairOut->id]['note']);
+        $this->assertSame('Inventory Test User', $filteredMovements[$repairOut->id]['recorded_by']);
+        $this->assertSame($repairJob->job_order_number, $filteredMovements[$repairOut->id]['job_order_reference']);
+        $this->assertSame(1, $filteredMovements[$reversal->id]['quantity_change']);
+        $this->assertSame('IN', $filteredMovements[$reversal->id]['type']);
+        $this->assertSame(-2, $filteredMovements[$adjustment->id]['quantity_change']);
+        $this->assertSame('ADJUSTMENT', $filteredMovements[$adjustment->id]['type']);
+        $this->assertSame('Unlinked/manual', $filteredMovements[$manualOut->id]['out_classification']);
+        $this->assertSame($deletedJob->job_order_number, $filteredMovements[$deletedJobOut->id]['job_order_reference']);
+        $this->assertArrayNotHasKey($beforeRange->id, $filteredMovements->all());
+        $this->assertArrayNotHasKey($foreignJobOut->id, $filteredMovements->all());
+        $this->assertArrayNotHasKey($foreignShopMovement->id, $filteredMovements->all());
+        $this->assertArrayNotHasKey($foreignPartMovement->id, $filteredMovements->all());
+
+        $allDates = $this->actingAs($admin)
+            ->getJson('/api/admin/reports')
+            ->assertOk()
+            ->assertJsonPath('inventoryReport.movement_summary.movement_count', 7)
+            ->assertJsonPath('inventoryReport.movement_summary.repair_linked_out.movement_count', 2)
+            ->assertJsonPath('inventoryReport.movement_summary.repair_linked_out.quantity', 4)
+            ->assertJsonPath('inventoryReport.movement_summary.unlinked_manual_out.movement_count', 1)
+            ->assertJsonPath('inventoryReport.movement_summary.invalid_job_reference_out.movement_count', 1);
+        $allMovements = collect($allDates->json('inventoryReport.movements'))->keyBy('id');
+        $this->assertNull($allMovements[$foreignJobOut->id]['job_order_reference']);
+        $this->assertSame('Job reference unavailable', $allMovements[$foreignJobOut->id]['out_classification']);
+    }
+
+    public function test_general_part_request_receiving_is_not_an_inventory_movement_without_a_stock_record(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $part = $this->createInventoryPart($shop->id, 'Requested Battery', 0, 2, 100);
+        $request = PartRequest::create([
+            'shop_id' => $shop->id,
+            'inventory_spare_part_id' => $part->id,
+            'part_name' => 'Requested Battery',
+            'quantity' => 3,
+            'status' => PartRequest::STATUS_ORDERED,
+        ]);
+
+        $this->actingAs($admin)
+            ->patchJson("/api/admin/part-requests/{$request->id}/receive")
+            ->assertOk()
+            ->assertJsonPath('request.status', PartRequest::STATUS_RECEIVED);
+
+        $this->assertSame(0, (int) $part->fresh()->stock_quantity);
+        $this->assertSame([], $this->getJson('/api/admin/reports')->assertOk()->json('inventoryReport.movements'));
+
+        $actualReceipt = $this->createInventoryMovement(
+            $shop->id,
+            $part->id,
+            'IN',
+            3,
+            3,
+            null,
+            'Separately recorded physical stock receipt',
+            '2025-04-15 09:00:00',
+        );
+        $this->getJson('/api/admin/reports')
+            ->assertOk()
+            ->assertJsonPath('inventoryReport.movement_summary.movement_count', 1)
+            ->assertJsonPath('inventoryReport.movements.0.id', $actualReceipt->id)
+            ->assertJsonPath('inventoryReport.movements.0.type', 'IN');
+    }
+
+    public function test_inventory_exports_show_clear_empty_states(): void
+    {
+        [, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+
+        $csv = $this->actingAs($admin)
+            ->get('/api/admin/reports/export/csv?report_type=operations')
+            ->assertOk()
+            ->streamedContent();
+        $this->assertStringContainsString('No inventory items found for this shop.', $csv);
+        $this->assertStringContainsString('No stock movements found for the applied date scope.', $csv);
+        $this->assertStringContainsString('Estimated Current Inventory Value (PHP)', $csv);
+
+        $this->actingAs($admin)
+            ->get('/api/admin/reports/export/pdf?report_type=operations')
+            ->assertOk()
+            ->assertSee('No inventory items found for this shop.')
+            ->assertSee('No stock movements found for the applied date scope.')
+            ->assertSee('Estimated Current Inventory Value');
+    }
+
+    public function test_custom_report_comparison_uses_the_preceding_equal_length_period_and_preserves_service_filter(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+
+        $this->createReportJobOrder($shop, 'RECEIVED', '2025-04-10 09:00:00');
+        $this->createReportJobOrder($shop, 'RECEIVED', '2025-04-12 09:00:00');
+        $this->createReportJobOrder($shop, 'RECEIVED', '2025-04-06 09:00:00');
+        $this->createReportJobOrder($shop, 'RECEIVED', '2025-04-06 11:00:00');
+        $this->createReportJobOrder($shop, 'RECEIVED', '2025-04-07 09:00:00');
+        $this->createReportJobOrder($shop, 'RECEIVED', '2025-04-09 09:00:00');
+        $this->createReportJobOrder($shop, 'RECEIVED', '2025-04-08 09:00:00', null, null, 'WARRANTY_SERVICE');
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/reports?start_date=2025-04-10&end_date=2025-04-12&service_type=STANDARD')
+            ->assertOk()
+            ->assertJsonPath('thisMonth', 2)
+            ->assertJsonPath('lastMonth', 2);
+    }
+
+    public function test_january_report_compares_with_december_of_the_previous_year(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $this->travelTo(Carbon::parse('2025-01-15 12:00:00'));
+
+        $this->createReportJobOrder($shop, 'RECEIVED', '2025-01-05 09:00:00');
+        $this->createReportJobOrder($shop, 'RECEIVED', '2024-12-05 09:00:00');
+        $this->createReportJobOrder($shop, 'RECEIVED', '2024-12-20 09:00:00');
+        $this->createReportJobOrder($shop, 'RECEIVED', '2023-12-15 09:00:00');
+
+        $this->actingAs($admin)
+            ->getJson('/api/admin/reports')
+            ->assertOk()
+            ->assertJsonPath('thisMonth', 1)
+            ->assertJsonPath('lastMonth', 2);
+
+        $this->travelBack();
+    }
+
     public function test_reports_can_filter_and_summarize_service_catalog(): void
     {
         [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
@@ -578,6 +1117,52 @@ class JobOrderSafetyTest extends TestCase
         $this->assertStringNotContainsString('Operations Summary', $csv);
     }
 
+    private function createInventoryPart(
+        int $shopId,
+        string $name,
+        int $stock,
+        int $reorderLevel,
+        float $unitCost,
+        bool $active = true,
+        string $unit = 'pcs',
+    ): SparePart {
+        return SparePart::create([
+            'shop_id' => $shopId,
+            'name' => $name,
+            'category' => 'Test Parts',
+            'unit' => $unit,
+            'stock_quantity' => $stock,
+            'reorder_level' => $reorderLevel,
+            'unit_cost' => $unitCost,
+            'is_active' => $active,
+        ]);
+    }
+
+    private function createInventoryMovement(
+        int $shopId,
+        int $sparePartId,
+        string $type,
+        int $quantityChange,
+        int $balanceAfter,
+        ?int $jobOrderId,
+        string $note,
+        string $createdAt,
+    ): StockMovement {
+        $movement = StockMovement::create([
+            'shop_id' => $shopId,
+            'spare_part_id' => $sparePartId,
+            'job_order_id' => $jobOrderId,
+            'type' => $type,
+            'quantity_change' => $quantityChange,
+            'balance_after' => $balanceAfter,
+            'note' => $note,
+            'created_by' => 'Inventory Test User',
+        ]);
+        $movement->forceFill(['created_at' => Carbon::parse($createdAt)])->saveQuietly();
+
+        return $movement->fresh();
+    }
+
     private function createShopUser(string $role): array
     {
         $shop = Shop::create([
@@ -611,5 +1196,33 @@ class JobOrderSafetyTest extends TestCase
             'total_cost' => 1000,
             'amount_paid' => 0,
         ]);
+    }
+
+    private function createReportJobOrder(
+        Shop $shop,
+        string $status,
+        string $createdAt,
+        ?string $pickedUpAt = null,
+        ?string $updatedAt = null,
+        string $serviceType = 'STANDARD',
+    ): JobOrder {
+        $jobOrder = JobOrder::create([
+            'shop_id' => $shop->id,
+            'job_order_number' => 'TEST-REPORT-' . strtoupper(bin2hex(random_bytes(5))),
+            'customer_name' => 'Report Customer',
+            'customer_phone' => '09000000000',
+            'device_type' => 'Phone',
+            'problem_description' => 'Report metric test.',
+            'service_type' => $serviceType,
+            'current_status' => $status,
+        ]);
+
+        $jobOrder->forceFill([
+            'created_at' => Carbon::parse($createdAt),
+            'updated_at' => Carbon::parse($updatedAt ?? $createdAt),
+            'picked_up_at' => $pickedUpAt ? Carbon::parse($pickedUpAt) : null,
+        ])->saveQuietly();
+
+        return $jobOrder;
     }
 }

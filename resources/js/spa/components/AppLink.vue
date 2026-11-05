@@ -1,5 +1,5 @@
 <script setup>
-import { navigate } from '../navigation';
+import { captureAdminSidebarScroll, navigate } from '../navigation';
 
 const props = defineProps({
     to: {
@@ -14,6 +14,7 @@ const onClick = (event) => {
     if (event.button !== 0) return;
 
     event.preventDefault();
+    captureAdminSidebarScroll();
     navigate(props.to);
 };
 </script>
