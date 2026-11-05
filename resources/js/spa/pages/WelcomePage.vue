@@ -9,6 +9,7 @@ const mobileMenuOpen = ref(false);
 const canOpenPortal = computed(() => [...platformRoles, ...adminRoles, 'staff'].includes(authState.user?.role));
 const technicianPortal = computed(() => authState.user?.role === 'technician');
 const portalPath = computed(() => authState.user?.role === 'platform_admin' ? '/platform' : '/admin');
+const landingDescription = 'RepairSync Cloud brings repairs, technicians, inventory, payments, and customers together in one simple workspace.';
 
 const serviceSteps = ['Received', 'Diagnosing', 'In progress', 'Ready for pickup'];
 const workflowCards = [
@@ -118,7 +119,7 @@ const closeMobileMenu = () => {
             Run your repair shop <span class="landing-gradient-text">in sync.</span>
           </h1>
           <p class="mt-6 max-w-xl text-base leading-7 text-slate-300 sm:text-lg sm:leading-8">
-            {{ appConfig.name }} brings repairs, technicians, inventory, payments, and customers together in one simple workspace.
+            {{ landingDescription }}
           </p>
           <div class="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
             <AppLink to="/get-started" class="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-orange-500 px-6 text-sm font-bold text-white shadow-lg shadow-orange-500/20 transition hover:-translate-y-0.5 hover:bg-orange-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
@@ -445,19 +446,26 @@ const closeMobileMenu = () => {
       </div>
     </section>
 
-    <footer class="bg-slate-950 px-5 py-7 text-slate-400 sm:px-8 lg:px-10">
-      <div class="mx-auto flex max-w-7xl flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-        <AppLink to="/" class="flex items-center gap-2.5">
-          <span class="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-300 text-[10px] font-black text-slate-950">RS</span>
-          <span class="text-xs font-bold text-white">RepairSync</span>
-          <span class="text-xs text-slate-500">· {{ appConfig.tagline || 'Service Management' }}</span>
-        </AppLink>
-        <nav aria-label="Footer navigation" class="flex flex-wrap gap-x-5 gap-y-2 text-xs font-medium">
-          <AppLink to="/get-started" class="hover:text-white">Get started</AppLink>
-          <AppLink to="/track" class="hover:text-white">Track Repair</AppLink>
-          <AppLink to="/consultation" class="hover:text-white">Consultation</AppLink>
-          <AppLink to="/login" class="hover:text-white">Login</AppLink>
-        </nav>
+    <footer class="bg-[#061a2b] px-5 py-6 text-slate-300 sm:px-8 sm:py-7 lg:px-10">
+      <div class="mx-auto max-w-7xl">
+        <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <AppLink to="/" class="flex w-fit max-w-full items-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300">
+            <img src="/images/repairsync-cloud-logo.png" alt="RepairSync Cloud" class="landing-brand-logo" />
+          </AppLink>
+
+          <nav aria-label="Footer navigation" class="min-w-0 md:max-w-xl">
+            <div class="grid grid-cols-2 gap-1 sm:flex sm:flex-wrap sm:gap-2">
+              <AppLink to="/get-started" class="inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300">Get Started</AppLink>
+              <AppLink to="/track" class="inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300">Track Repair</AppLink>
+              <AppLink to="/consultation" class="inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300">Consultation</AppLink>
+              <AppLink to="/login" class="inline-flex min-h-11 items-center rounded-lg px-3 text-sm font-medium text-slate-300 transition hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300">Login</AppLink>
+            </div>
+          </nav>
+        </div>
+
+        <div class="mt-4 border-t border-white/10 pt-4 text-xs text-slate-400">
+          <p>© 2026 RepairSync Cloud. All rights reserved.</p>
+        </div>
       </div>
     </footer>
   </main>
