@@ -86,6 +86,7 @@ const submit = async () => {
               v-model="form.password"
               type="password"
               placeholder="Enter your password"
+              autocomplete="current-password"
               required
             />
           </div>
