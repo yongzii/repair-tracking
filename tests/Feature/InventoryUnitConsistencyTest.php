@@ -140,6 +140,49 @@ class InventoryUnitConsistencyTest extends TestCase
         $this->assertSame('pcs', $response->json('inventoryReport.items.0.unit'));
     }
 
+    public function test_inventory_search_matches_name_code_category_and_specifications_with_shop_isolation(): void
+    {
+        [$shop, $admin] = $this->createShopUser();
+        $part = SparePart::create([
+            'shop_id' => $shop->id,
+            'name' => 'Flex Cable Assembly',
+            'part_number' => 'FLEX-4821',
+            'category' => 'Display Parts',
+            'unit' => 'pcs',
+            'stock_quantity' => 6,
+            'reorder_level' => 1,
+            'unit_cost' => 0,
+            'description' => 'Brand Acme compatible with Model X200 AMOLED specification',
+            'is_active' => true,
+        ]);
+        [$otherShop] = $this->createShopUser();
+        SparePart::create([
+            'shop_id' => $otherShop->id,
+            'name' => 'Other Shop Flex Cable',
+            'part_number' => 'OTHER-FLEX-4821',
+            'category' => 'Display Parts',
+            'unit' => 'pcs',
+            'stock_quantity' => 8,
+            'reorder_level' => 1,
+            'unit_cost' => 0,
+            'description' => 'Brand Acme compatible with Model X200 AMOLED specification',
+            'is_active' => true,
+        ]);
+
+        foreach (['Flex Cable', 'FLEX-4821', 'Display Parts', 'Acme', 'Model X200', 'AMOLED specification'] as $term) {
+            $response = $this->actingAs($admin)
+                ->getJson('/api/admin/inventory?' . http_build_query([
+                    'search' => $term,
+                    'active_only' => 1,
+                    'per_page' => 10,
+                ]))
+                ->assertOk()
+                ->assertJsonCount(1, 'items.data');
+
+            $this->assertSame($part->id, $response->json('items.data.0.id'));
+        }
+    }
+
     private function createShopUser(): array
     {
         $shop = Shop::create([

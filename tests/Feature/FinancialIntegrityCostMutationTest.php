@@ -325,6 +325,49 @@ class FinancialIntegrityCostMutationTest extends TestCase
         $this->assertFinancialState($jobOrder, 1000, 200, 'PARTIAL');
     }
 
+    public function test_custom_used_part_does_not_deduct_inventory_stock(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $jobOrder = $this->createJobOrder($shop, 0, 0, 'PENDING');
+        $sparePart = $this->createSparePart($shop, 100, 5);
+
+        $response = $this->actingAs($admin)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/parts", [
+                'part_name' => 'Unregistered custom part',
+                'quantity' => 2,
+            ])
+            ->assertCreated();
+
+        $this->assertDatabaseHas('job_order_parts', [
+            'id' => $response->json('part.id'),
+            'job_order_id' => $jobOrder->id,
+            'spare_part_id' => null,
+            'part_name' => 'Unregistered custom part',
+            'quantity' => 2,
+        ]);
+        $this->assertSame(5, $sparePart->fresh()->stock_quantity);
+        $this->assertSame(0, StockMovement::where('job_order_id', $jobOrder->id)->count());
+    }
+
+    public function test_used_part_with_insufficient_inventory_stock_is_rejected_without_mutation(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $jobOrder = $this->createJobOrder($shop, 0, 0, 'PENDING');
+        $sparePart = $this->createSparePart($shop, 100, 1);
+
+        $this->actingAs($admin)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/parts", [
+                'spare_part_id' => $sparePart->id,
+                'quantity' => 2,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('quantity');
+
+        $this->assertSame(1, $sparePart->fresh()->stock_quantity);
+        $this->assertSame(0, StockMovement::where('job_order_id', $jobOrder->id)->count());
+        $this->assertSame(0, $jobOrder->parts()->count());
+    }
+
     public function test_staff_and_admin_cannot_add_used_parts_after_repair_completion_or_release(): void
     {
         foreach ([User::ROLE_ADMIN, User::ROLE_STAFF] as $role) {

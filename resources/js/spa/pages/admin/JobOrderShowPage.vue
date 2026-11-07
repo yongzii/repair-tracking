@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import AdminLayout from '../../layouts/AdminLayout.vue';
 import AppLink from '../../components/AppLink.vue';
 import { adminRoles, authState, ensureRoles } from '../../composables/auth';
@@ -20,7 +20,13 @@ const successMessage = ref('');
 const jobOrder = ref(null);
 const statusHistories = ref([]);
 const parts = ref([]);
-const inventoryParts = ref([]);
+const inventorySearch = ref('');
+const inventoryResults = ref([]);
+const inventorySearchOpen = ref(false);
+const inventorySearchLoading = ref(false);
+const inventorySearchError = ref('');
+const activeInventoryResultIndex = ref(-1);
+const partEntryMode = ref('inventory');
 const payments = ref([]);
 const refunds = ref([]);
 const legacyRefundReconciliationAmount = ref(0);
@@ -128,6 +134,8 @@ const partForm = ref({
     quantity: 1,
     notes: '',
 });
+let inventorySearchTimer = null;
+let inventorySearchRequestId = 0;
 
 const balance = computed(() => {
     if (!jobOrder.value) return 0;
@@ -173,10 +181,7 @@ const warrantyServiceBlockReason = computed(() => {
     return '';
 });
 
-const selectedSparePart = computed(() => {
-    if (!partForm.value.spare_part_id) return null;
-    return inventoryParts.value.find((item) => Number(item.id) === Number(partForm.value.spare_part_id)) || null;
-});
+const selectedSparePart = ref(null);
 
 const formatCurrency = (value) => {
     const amount = Number(value || 0);
@@ -356,10 +361,7 @@ const loadJobOrder = async () => {
 
     try {
         loading.value = true;
-        const [jobOrderResponse, inventoryResponse] = await Promise.all([
-            window.axios.get(`/api/admin/job-orders/${props.params.id}`),
-            window.axios.get('/api/admin/inventory', { params: { all: 1, active_only: 1 } }),
-        ]);
+        const jobOrderResponse = await window.axios.get(`/api/admin/job-orders/${props.params.id}`);
 
         const data = jobOrderResponse.data;
         jobOrder.value = data.jobOrder;
@@ -375,7 +377,6 @@ const loadJobOrder = async () => {
         notifications.value = data.notifications || [];
         warrantyAssessments.value = data.warrantyAssessments || [];
         warrantyEligibility.value = data.warrantyEligibility || null;
-        inventoryParts.value = inventoryResponse.data.items || [];
         warrantyForm.value.warranty_days = Number(jobOrder.value.warranty_days || 0);
         warrantyForm.value.warranty_details = jobOrder.value.warranty_details || '';
         warrantyForm.value.service_performed = jobOrder.value.service_performed || '';
@@ -648,9 +649,123 @@ const retryNotification = async (notification) => {
     }
 };
 
+const searchInventoryParts = async (query, requestId) => {
+    try {
+        inventorySearchLoading.value = true;
+        const { data } = await window.axios.get('/api/admin/inventory', {
+            params: { search: query, active_only: 1, per_page: 10 },
+        });
+        if (requestId === inventorySearchRequestId) {
+            inventoryResults.value = data.items?.data || [];
+            activeInventoryResultIndex.value = -1;
+        }
+    } catch (error) {
+        if (requestId === inventorySearchRequestId) {
+            inventorySearchError.value = error?.response?.data?.message || 'Unable to search inventory.';
+            inventoryResults.value = [];
+        }
+    } finally {
+        if (requestId === inventorySearchRequestId) {
+            inventorySearchLoading.value = false;
+        }
+    }
+};
+
+const scheduleInventorySearch = () => {
+    inventorySearchOpen.value = true;
+    inventorySearchError.value = '';
+    inventoryResults.value = [];
+    activeInventoryResultIndex.value = -1;
+    window.clearTimeout(inventorySearchTimer);
+    const requestId = ++inventorySearchRequestId;
+    const query = inventorySearch.value.trim();
+
+    if (!query) {
+        inventorySearchLoading.value = false;
+        return;
+    }
+
+    clearInventorySelection();
+    inventorySearchTimer = window.setTimeout(() => searchInventoryParts(query, requestId), 250);
+};
+
+const selectInventoryPart = (item) => {
+    if (item.stock_quantity <= 0) return;
+    selectedSparePart.value = item;
+    partForm.value.spare_part_id = String(item.id);
+    partForm.value.part_name = item.name;
+    inventorySearch.value = '';
+    inventorySearchOpen.value = false;
+    inventoryResults.value = [];
+    inventorySearchError.value = '';
+};
+
+const clearInventorySelection = () => {
+    const selectedPartName = selectedSparePart.value?.name;
+    selectedSparePart.value = null;
+    partForm.value.spare_part_id = '';
+    if (!selectedPartName || partForm.value.part_name === selectedPartName) {
+        partForm.value.part_name = '';
+    }
+};
+
+const useCustomPart = () => {
+    selectedSparePart.value = null;
+    partForm.value.spare_part_id = '';
+    partForm.value.part_name = '';
+    partEntryMode.value = 'custom';
+    inventorySearch.value = '';
+    inventorySearchOpen.value = false;
+    inventoryResults.value = [];
+    inventorySearchError.value = '';
+};
+
+const useInventoryPart = () => {
+    partForm.value.part_name = '';
+    partForm.value.spare_part_id = '';
+    selectedSparePart.value = null;
+    partEntryMode.value = 'inventory';
+};
+
+const onInventorySearchKeydown = (event) => {
+    if (event.key === 'ArrowDown' && inventorySearchOpen.value && inventoryResults.value.length) {
+        event.preventDefault();
+        let nextIndex = activeInventoryResultIndex.value + 1;
+        while (nextIndex < inventoryResults.value.length && inventoryResults.value[nextIndex].stock_quantity <= 0) {
+            nextIndex += 1;
+        }
+        activeInventoryResultIndex.value = nextIndex < inventoryResults.value.length ? nextIndex : -1;
+    } else if (event.key === 'ArrowUp' && inventorySearchOpen.value && inventoryResults.value.length) {
+        event.preventDefault();
+        let nextIndex = activeInventoryResultIndex.value < 0
+            ? inventoryResults.value.length - 1
+            : activeInventoryResultIndex.value - 1;
+        while (nextIndex >= 0 && inventoryResults.value[nextIndex].stock_quantity <= 0) {
+            nextIndex -= 1;
+        }
+        activeInventoryResultIndex.value = nextIndex;
+    } else if (event.key === 'Enter' && inventorySearchOpen.value) {
+        event.preventDefault();
+        if (activeInventoryResultIndex.value >= 0) {
+            selectInventoryPart(inventoryResults.value[activeInventoryResultIndex.value]);
+        }
+    } else if (event.key === 'Escape') {
+        inventorySearchOpen.value = false;
+    }
+};
+
 const addPart = async () => {
     successMessage.value = '';
     errorMessage.value = '';
+    if (!Number.isInteger(Number(partForm.value.quantity)) || Number(partForm.value.quantity) <= 0) {
+        errorMessage.value = 'Quantity must be greater than zero.';
+        return;
+    }
+    if (selectedSparePart.value && Number(partForm.value.quantity) > selectedSparePart.value.stock_quantity) {
+        errorMessage.value = `Only ${selectedSparePart.value.stock_quantity} ${selectedSparePart.value.unit || 'pcs'} available.`;
+        return;
+    }
+
     try {
         const payload = {
             part_name: partForm.value.part_name,
@@ -661,6 +776,9 @@ const addPart = async () => {
         const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/parts`, payload);
         successMessage.value = data.message || 'Part added.';
         partForm.value = { spare_part_id: '', part_name: '', quantity: 1, notes: '' };
+        selectedSparePart.value = null;
+        partEntryMode.value = 'inventory';
+        inventorySearch.value = '';
         await loadJobOrder();
     } catch (error) {
         const firstError = error?.response?.data?.errors
@@ -668,11 +786,6 @@ const addPart = async () => {
             : null;
         errorMessage.value = firstError || error?.response?.data?.message || 'Failed to add part.';
     }
-};
-
-const onSparePartChange = () => {
-    if (!selectedSparePart.value) return;
-    partForm.value.part_name = selectedSparePart.value.name;
 };
 
 const deletePart = async (partId) => {
@@ -689,6 +802,10 @@ const deletePart = async (partId) => {
 };
 
 onMounted(loadJobOrder);
+onBeforeUnmount(() => {
+    window.clearTimeout(inventorySearchTimer);
+    inventorySearchRequestId += 1;
+});
 </script>
 
 <template>
@@ -893,21 +1010,86 @@ onMounted(loadJobOrder);
             <p v-else class="text-sm text-slate-500 mb-4">No parts recorded yet.</p>
 
             <form v-if="!arePartsLocked" class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="addPart">
-              <select v-model="partForm.spare_part_id" class="md:col-span-2 px-4 py-2 border border-slate-300 rounded-lg" @change="onSparePartChange">
-                <option value="">Custom part (no inventory deduction)</option>
-                <option
-                  v-for="item in inventoryParts"
-                  :key="item.id"
-                  :value="String(item.id)"
-                  :disabled="item.stock_quantity <= 0"
+              <div v-if="partEntryMode === 'inventory'" class="relative md:col-span-4">
+                <label for="used-part-inventory-search" class="mb-1 block text-sm font-semibold text-slate-700">Search inventory</label>
+                <input
+                  id="used-part-inventory-search"
+                  v-model="inventorySearch"
+                  type="search"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-controls="used-part-inventory-results"
+                  :aria-expanded="inventorySearchOpen"
+                  :aria-activedescendant="activeInventoryResultIndex >= 0 ? `used-part-result-${inventoryResults[activeInventoryResultIndex]?.id}` : undefined"
+                  class="w-full rounded-lg border border-slate-300 px-4 py-2"
+                  placeholder="Search by part name, item code, category, or specifications"
+                  autocomplete="off"
+                  @input="scheduleInventorySearch"
+                  @focus="inventorySearchOpen = true"
+                  @keydown="onInventorySearchKeydown"
+                />
+                <div
+                  v-if="inventorySearchOpen"
+                  id="used-part-inventory-results"
+                  role="listbox"
+                  class="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white p-1 shadow-xl"
                 >
-                  {{ item.name }} · Stock {{ item.stock_quantity }} {{ item.unit || 'pcs' }}
-                </option>
-              </select>
-              <input v-model.number="partForm.quantity" type="number" min="1" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Qty" required />
-              <input v-model="partForm.part_name" class="md:col-span-4 px-4 py-2 border border-slate-300 rounded-lg" placeholder="Part name (required for custom part)" :readonly="Boolean(selectedSparePart)" :required="!selectedSparePart" />
+                  <p v-if="inventorySearchLoading" class="px-3 py-3 text-sm text-slate-500">Searching inventory...</p>
+                  <p v-else-if="inventorySearchError" class="px-3 py-3 text-sm text-rose-700">{{ inventorySearchError }}</p>
+                  <p v-else-if="!inventorySearch.trim()" class="px-3 py-3 text-sm text-slate-500">Type to search this shop's inventory.</p>
+                  <p v-else-if="!inventoryResults.length" class="px-3 py-3 text-sm text-slate-500">No matching inventory parts found.</p>
+                  <button
+                    v-for="(item, index) in inventoryResults"
+                    :id="`used-part-result-${item.id}`"
+                    :key="item.id"
+                    type="button"
+                    role="option"
+                    :aria-selected="activeInventoryResultIndex === index"
+                    :disabled="item.stock_quantity <= 0"
+                    class="block w-full rounded-md px-3 py-2 text-left hover:bg-teal-50 focus:bg-teal-50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    :class="activeInventoryResultIndex === index ? 'bg-teal-50' : ''"
+                    @mousedown.prevent
+                    @mouseenter="activeInventoryResultIndex = index"
+                    @click="selectInventoryPart(item)"
+                  >
+                    <span class="flex flex-wrap items-center justify-between gap-2">
+                      <span class="font-semibold text-slate-900">{{ item.name }}</span>
+                      <span class="text-xs font-semibold text-slate-600">Stock: {{ item.stock_quantity }} {{ item.unit || 'pcs' }}</span>
+                    </span>
+                    <span class="mt-1 block text-xs text-slate-500">
+                      <span v-if="item.category">{{ item.category }}</span>
+                      <span v-if="item.part_number">{{ item.category ? ' · ' : '' }}Code: {{ item.part_number }}</span>
+                    </span>
+                    <span v-if="item.description" class="mt-1 block line-clamp-2 text-xs text-slate-600">{{ item.description }}</span>
+                  </button>
+                </div>
+                <div v-if="selectedSparePart" class="mt-2 flex flex-wrap items-start justify-between gap-3 rounded-lg border border-teal-200 bg-teal-50 p-3">
+                  <div>
+                    <p class="font-semibold text-slate-900">{{ selectedSparePart.name }}</p>
+                    <p class="mt-1 text-sm text-slate-700">Available: {{ selectedSparePart.stock_quantity }} {{ selectedSparePart.unit || 'pcs' }}</p>
+                    <p v-if="selectedSparePart.category || selectedSparePart.part_number" class="text-xs text-slate-600">
+                      {{ selectedSparePart.category || '' }}{{ selectedSparePart.category && selectedSparePart.part_number ? ' · ' : '' }}{{ selectedSparePart.part_number ? `Code: ${selectedSparePart.part_number}` : '' }}
+                    </p>
+                    <p v-if="selectedSparePart.description" class="mt-1 text-xs text-slate-600">{{ selectedSparePart.description }}</p>
+                  </div>
+                  <button type="button" class="text-sm font-semibold text-teal-800 hover:text-teal-950" @click="clearInventorySelection">Clear selection</button>
+                </div>
+                <button type="button" class="mt-2 text-sm font-semibold text-teal-800 hover:text-teal-950" @click="useCustomPart">
+                  Use custom part (no inventory deduction)
+                </button>
+              </div>
+              <div v-else class="md:col-span-3">
+                <label for="used-custom-part-name" class="mb-1 block text-sm font-semibold text-slate-700">Custom part</label>
+                <input id="used-custom-part-name" v-model="partForm.part_name" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="Part name" required />
+                <button type="button" class="mt-2 text-sm font-semibold text-teal-800 hover:text-teal-950" @click="useInventoryPart">Select from inventory instead</button>
+                <p class="mt-1 text-xs text-slate-500">Custom parts do not deduct inventory stock.</p>
+              </div>
+              <label class="block">
+                <span class="mb-1 block text-sm font-semibold text-slate-700">Quantity</span>
+                <input v-model.number="partForm.quantity" type="number" min="1" :max="selectedSparePart?.stock_quantity || undefined" step="1" class="w-full rounded-lg border border-slate-300 px-4 py-2" placeholder="Qty" required />
+              </label>
               <input v-model="partForm.notes" class="md:col-span-3 px-4 py-2 border border-slate-300 rounded-lg" placeholder="Notes (optional)" />
-              <button type="submit" class="md:col-span-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Add Part</button>
+              <button type="submit" class="md:col-span-1 rounded-lg bg-slate-900 py-2 font-semibold text-white hover:bg-slate-800">Add Part</button>
             </form>
             <p v-if="arePartsLocked" class="text-sm text-slate-500">Parts can no longer be changed because the repair is completed or released.</p>
             <p v-else class="mt-3 text-xs text-slate-500">Selecting an inventory part deducts the selected quantity from inventory.</p>
