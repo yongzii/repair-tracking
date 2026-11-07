@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\JobOrderPartOrder;
+use App\Models\PartRequest;
 use App\Models\SparePart;
 use App\Models\StockMovement;
 use App\Models\User;
@@ -80,40 +82,50 @@ class InventoryController extends Controller
             'is_active' => 'boolean',
         ]);
 
-        $part = SparePart::create([
-            'shop_id' => $shopId,
-            'name' => $validated['name'],
-            'part_number' => $validated['part_number'] ?? null,
-            'category' => $validated['category'] ?? null,
-            'unit' => 'pcs',
-            'stock_quantity' => $validated['stock_quantity'],
-            'reorder_level' => $validated['reorder_level'],
-            'unit_cost' => $validated['unit_cost'],
-            'description' => $validated['description'] ?? null,
-            'is_active' => $validated['is_active'] ?? true,
-        ]);
-
-        if ($part->stock_quantity > 0) {
-            StockMovement::create([
+        $part = DB::transaction(function () use ($request, $shopId, $validated) {
+            $part = SparePart::create([
                 'shop_id' => $shopId,
-                'spare_part_id' => $part->id,
-                'type' => 'IN',
-                'quantity_change' => $part->stock_quantity,
-                'balance_after' => $part->stock_quantity,
-                'note' => 'Initial stock entry',
-                'created_by' => $request->user()?->name,
+                'name' => $validated['name'],
+                'part_number' => $validated['part_number'] ?? null,
+                'category' => $validated['category'] ?? null,
+                'unit' => 'pcs',
+                'stock_quantity' => $validated['stock_quantity'],
+                'reorder_level' => $validated['reorder_level'],
+                'unit_cost' => $validated['unit_cost'],
+                'description' => $validated['description'] ?? null,
+                'is_active' => $validated['is_active'] ?? true,
             ]);
-        }
 
-        AuditLogger::log(
-            request: $request,
-            user: $request->user(),
-            action: 'inventory.created',
-            module: 'inventory',
-            record: $part,
-            description: "Created spare part {$part->name}.",
-            newValues: $part->only(['name', 'part_number', 'category', 'unit', 'stock_quantity', 'reorder_level', 'unit_cost', 'is_active'])
-        );
+            if ($part->stock_quantity > 0) {
+                StockMovement::create([
+                    'shop_id' => $shopId,
+                    'spare_part_id' => $part->id,
+                    'type' => 'IN',
+                    'quantity_change' => $part->stock_quantity,
+                    'balance_after' => $part->stock_quantity,
+                    'note' => 'Initial stock entry',
+                    'created_by' => $request->user()?->name,
+                ]);
+            }
+
+            AuditLogger::log(
+                request: $request,
+                user: $request->user(),
+                action: 'inventory.created',
+                module: 'inventory',
+                record: $part,
+                description: "Created spare part {$part->name}.",
+                newValues: array_merge(
+                    $part->only(['name', 'part_number', 'category', 'unit', 'stock_quantity', 'reorder_level', 'unit_cost', 'description', 'is_active']),
+                    [
+                        'stock_quantity_before' => 0,
+                        'stock_quantity_change' => (int) $part->stock_quantity,
+                    ]
+                )
+            );
+
+            return $part;
+        });
 
         return response()->json([
             'message' => 'Spare part created successfully.',
@@ -139,10 +151,9 @@ class InventoryController extends Controller
 
     public function update(Request $request, SparePart $sparePart)
     {
-        $this->authorizeAdmin($request);
+        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
         $this->ensureSameShop($request, $sparePart);
         $shopId = $this->currentShopId($request);
-        $before = $sparePart->only(['name', 'part_number', 'category', 'unit', 'stock_quantity', 'reorder_level', 'unit_cost', 'is_active']);
 
         $validated = $request->validate([
             'name' => 'required|string|max:150',
@@ -161,14 +172,23 @@ class InventoryController extends Controller
             'unit_cost' => 'required|numeric|min:0',
             'description' => 'nullable|string|max:255',
             'is_active' => 'boolean',
+            'stock_note' => 'nullable|string|max:255',
         ]);
 
-        DB::transaction(function () use ($request, $sparePart, $validated) {
+        $part = DB::transaction(function () use ($request, $user, $sparePart, $shopId, $validated) {
             $part = SparePart::query()
-                ->where('shop_id', $sparePart->shop_id)
+                ->where('shop_id', $shopId)
                 ->lockForUpdate()
                 ->findOrFail($sparePart->id);
+            $before = $part->only(['name', 'part_number', 'category', 'unit', 'stock_quantity', 'reorder_level', 'unit_cost', 'description', 'is_active']);
             $oldStock = (int) $part->stock_quantity;
+            $newStock = (int) $validated['stock_quantity'];
+
+            if ($newStock !== $oldStock && trim((string) ($validated['stock_note'] ?? '')) === '') {
+                throw ValidationException::withMessages([
+                    'stock_note' => 'A reason is required when changing the stock quantity.',
+                ]);
+            }
 
             $part->update([
                 'name' => $validated['name'],
@@ -178,11 +198,10 @@ class InventoryController extends Controller
                 'stock_quantity' => $validated['stock_quantity'],
                 'reorder_level' => $validated['reorder_level'],
                 'unit_cost' => $validated['unit_cost'],
-                'description' => $validated['description'] ?? null,
+                'description' => array_key_exists('description', $validated) ? $validated['description'] : $part->description,
                 'is_active' => $validated['is_active'] ?? $part->is_active,
             ]);
 
-            $newStock = (int) $part->stock_quantity;
             if ($newStock !== $oldStock) {
                 StockMovement::create([
                     'shop_id' => $part->shop_id,
@@ -190,26 +209,33 @@ class InventoryController extends Controller
                     'type' => 'ADJUSTMENT',
                     'quantity_change' => $newStock - $oldStock,
                     'balance_after' => $newStock,
-                    'note' => 'Stock updated from inventory form',
-                    'created_by' => $request->user()?->name,
+                    'note' => trim($validated['stock_note']),
+                    'created_by' => $user->name,
                 ]);
             }
-        });
 
-        AuditLogger::log(
-            request: $request,
-            user: $request->user(),
-            action: 'inventory.updated',
-            module: 'inventory',
-            record: $sparePart,
-            description: "Updated spare part {$sparePart->fresh()->name}.",
-            oldValues: $before,
-            newValues: $sparePart->fresh()->only(['name', 'part_number', 'category', 'unit', 'stock_quantity', 'reorder_level', 'unit_cost', 'is_active'])
-        );
+            $after = $part->only(['name', 'part_number', 'category', 'unit', 'stock_quantity', 'reorder_level', 'unit_cost', 'description', 'is_active']);
+            AuditLogger::log(
+                request: $request,
+                user: $user,
+                action: 'inventory.updated',
+                module: 'inventory',
+                record: $part,
+                description: "Updated spare part {$part->name}.",
+                oldValues: $before,
+                newValues: array_merge($after, [
+                    'stock_quantity_before' => $oldStock,
+                    'stock_quantity_change' => $newStock - $oldStock,
+                    'stock_change_reason' => $newStock !== $oldStock ? trim($validated['stock_note']) : null,
+                ])
+            );
+
+            return $part;
+        });
 
         return response()->json([
             'message' => 'Spare part updated successfully.',
-            'item' => $this->formatPart($sparePart->fresh()),
+            'item' => $this->formatPart($part),
         ]);
     }
 
@@ -217,25 +243,26 @@ class InventoryController extends Controller
     {
         $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
         $this->ensureSameShop($request, $sparePart);
-        $before = $sparePart->only(['stock_quantity', 'reorder_level', 'is_active']);
-
         $validated = $request->validate([
             'action' => 'required|in:in,out,set',
             'quantity' => 'required|integer|min:0',
-            'note' => 'nullable|string|max:255',
+            'note' => 'required_if:action,out,set|nullable|string|max:255',
         ]);
 
-        if ($user->role === User::ROLE_STAFF && $validated['action'] !== 'in') {
-            abort(403, 'Staff accounts can only add stock to inventory items.');
+        if (in_array($validated['action'], ['in', 'out'], true) && (int) $validated['quantity'] < 1) {
+            throw ValidationException::withMessages([
+                'quantity' => 'The quantity must be greater than zero.',
+            ]);
         }
 
-        DB::transaction(function () use ($request, $sparePart, $validated) {
+        $part = DB::transaction(function () use ($request, $user, $sparePart, $validated) {
             $part = SparePart::query()
-                ->where('shop_id', $sparePart->shop_id)
+                ->where('shop_id', $user->shop_id)
                 ->lockForUpdate()
                 ->findOrFail($sparePart->id);
             $current = (int) $part->stock_quantity;
             $quantity = (int) $validated['quantity'];
+            $note = trim((string) ($validated['note'] ?? ''));
 
             $type = 'ADJUSTMENT';
             $delta = 0;
@@ -260,62 +287,97 @@ class InventoryController extends Controller
                 $next = $quantity;
             }
 
-            if ($delta === 0) {
-                return;
+            if ($delta !== 0) {
+                $part->update(['stock_quantity' => $next]);
+
+                StockMovement::create([
+                    'shop_id' => $part->shop_id,
+                    'spare_part_id' => $part->id,
+                    'type' => $type,
+                    'quantity_change' => $delta,
+                    'balance_after' => $next,
+                    'note' => $note !== '' ? $note : 'Manual stock adjustment',
+                    'created_by' => $user->name,
+                ]);
             }
 
-            $part->update(['stock_quantity' => $next]);
+            $action = match ($validated['action']) {
+                'in' => 'inventory.restocked',
+                'out' => 'inventory.deducted',
+                default => 'inventory.quantity_set',
+            };
+            $description = match ($validated['action']) {
+                'in' => "Restocked {$part->name} by {$quantity}.",
+                'out' => "Deducted {$quantity} from {$part->name}.",
+                default => "Set {$part->name} stock to {$quantity}.",
+            };
 
-            StockMovement::create([
-                'shop_id' => $part->shop_id,
-                'spare_part_id' => $part->id,
-                'type' => $type,
-                'quantity_change' => $delta,
-                'balance_after' => $next,
-                'note' => $validated['note'] ?? 'Manual stock adjustment',
-                'created_by' => $request->user()?->name,
-            ]);
+            AuditLogger::log(
+                request: $request,
+                user: $user,
+                action: $action,
+                module: 'inventory',
+                record: $part,
+                description: $note !== '' ? "{$description} Reason: {$note}" : $description,
+                oldValues: ['stock_quantity' => $current],
+                newValues: [
+                    'stock_quantity' => $next,
+                    'stock_quantity_change' => $delta,
+                    'quantity_added' => $validated['action'] === 'in' ? $quantity : null,
+                    'quantity_deducted' => $validated['action'] === 'out' ? $quantity : null,
+                    'quantity_set_to' => $validated['action'] === 'set' ? $quantity : null,
+                    'reason' => $note !== '' ? $note : null,
+                ]
+            );
+
+            return $part;
         });
-
-        AuditLogger::log(
-            request: $request,
-            user: $request->user(),
-            action: 'inventory.adjusted',
-            module: 'inventory',
-            record: $sparePart,
-            description: "Adjusted stock for {$sparePart->fresh()->name}.",
-            oldValues: $before,
-            newValues: $sparePart->fresh()->only(['stock_quantity', 'reorder_level', 'is_active'])
-        );
 
         return response()->json([
             'message' => 'Stock updated successfully.',
-            'item' => $this->formatPart($sparePart->fresh()),
+            'item' => $this->formatPart($part),
         ]);
     }
 
     public function destroy(Request $request, SparePart $sparePart)
     {
-        $this->authorizeAdmin($request);
+        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
         $this->ensureSameShop($request, $sparePart);
 
-        if ($sparePart->jobOrderParts()->exists()) {
+        $deleted = DB::transaction(function () use ($request, $user, $sparePart) {
+            $part = SparePart::query()
+                ->where('shop_id', $user->shop_id)
+                ->lockForUpdate()
+                ->findOrFail($sparePart->id);
+
+            if ((int) $part->stock_quantity !== 0
+                || $part->jobOrderParts()->exists()
+                || $part->stockMovements()->exists()
+                || JobOrderPartOrder::query()->where('inventory_spare_part_id', $part->id)->exists()
+                || PartRequest::query()->where('inventory_spare_part_id', $part->id)->exists()) {
+                return false;
+            }
+
+            $before = $part->only(['name', 'part_number', 'category', 'unit', 'stock_quantity', 'reorder_level', 'unit_cost', 'description', 'is_active']);
+            AuditLogger::log(
+                request: $request,
+                user: $user,
+                action: 'inventory.deleted',
+                module: 'inventory',
+                record: $part,
+                description: "Deleted spare part {$part->name}.",
+                oldValues: $before
+            );
+            $part->delete();
+
+            return true;
+        });
+
+        if (!$deleted) {
             return response()->json([
-                'message' => 'Cannot delete spare part that is already used in job orders.',
+                'message' => 'Cannot delete spare parts with remaining stock or historical records. Deactivate the item instead.',
             ], 422);
         }
-
-        $before = $sparePart->only(['name', 'part_number', 'category', 'unit', 'stock_quantity', 'reorder_level', 'unit_cost', 'is_active']);
-        $sparePart->delete();
-
-        AuditLogger::log(
-            request: $request,
-            user: $request->user(),
-            action: 'inventory.deleted',
-            module: 'inventory',
-            description: "Deleted spare part {$before['name']}.",
-            oldValues: $before
-        );
 
         return response()->json([
             'message' => 'Spare part deleted successfully.',
@@ -356,8 +418,4 @@ class InventoryController extends Controller
         ];
     }
 
-    private function authorizeAdmin(Request $request): void
-    {
-        $this->authorizeRoles($request, User::adminRoles());
-    }
 }

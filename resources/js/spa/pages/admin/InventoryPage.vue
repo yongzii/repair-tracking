@@ -14,7 +14,6 @@ const summary = ref({
     active_parts: 0,
     low_stock_parts: 0,
 });
-const isAdmin = computed(() => adminRoles.includes(authState.user?.role));
 const canWriteInventory = computed(() => [...adminRoles, 'staff'].includes(authState.user?.role));
 const filters = reactive({
     search: '',
@@ -33,11 +32,13 @@ const createForm = reactive({
 });
 
 const editingId = ref(null);
+const originalStockQuantity = ref(null);
 const editForm = reactive({
     name: '',
     part_number: '',
     category: '',
     stock_quantity: '',
+    stock_note: '',
     reorder_level: '',
     unit_cost: '',
     is_active: true,
@@ -63,6 +64,10 @@ const activeFilters = computed(() => ({
     active_only: filters.active_only ? 1 : 0,
     low_stock: filters.low_stock ? 1 : 0,
 }));
+const stockQuantityChanging = computed(() => (
+    editingId.value !== null
+    && Number(editForm.stock_quantity) !== originalStockQuantity.value
+));
 
 const loadInventory = async () => {
     const auth = await ensureRoles(['admin', 'staff']);
@@ -121,11 +126,13 @@ const createPart = async () => {
 
 const startEdit = (item) => {
     editingId.value = item.id;
+    originalStockQuantity.value = Number(item.stock_quantity);
     Object.assign(editForm, {
         name: item.name,
         part_number: item.part_number || '',
         category: item.category || '',
         stock_quantity: item.stock_quantity,
+        stock_note: '',
         reorder_level: item.reorder_level,
         unit_cost: Number(item.unit_cost || 0),
         is_active: item.is_active,
@@ -134,6 +141,7 @@ const startEdit = (item) => {
 
 const cancelEdit = () => {
     editingId.value = null;
+    originalStockQuantity.value = null;
 };
 
 const saveEdit = async (partId) => {
@@ -144,10 +152,12 @@ const saveEdit = async (partId) => {
             ...editForm,
             part_number: editForm.part_number || null,
             category: editForm.category || null,
+            stock_note: editForm.stock_note || null,
         };
         const { data } = await window.axios.put(`/api/admin/inventory/${partId}`, payload);
         successMessage.value = data.message || 'Spare part updated.';
         editingId.value = null;
+        originalStockQuantity.value = null;
         await loadInventory();
     } catch (error) {
         const firstError = error?.response?.data?.errors
@@ -325,17 +335,13 @@ onMounted(loadInventory);
                   </span>
                 </td>
                 <td class="px-4 py-3">
-                  <div v-if="isAdmin" class="flex flex-wrap items-center gap-2">
+                  <div v-if="canWriteInventory" class="flex flex-wrap items-center gap-2">
                     <button type="button" class="rounded-lg border border-teal-200 px-3 py-1.5 text-xs font-bold text-teal-700 hover:bg-teal-50" @click="openForOrder(item)">+ For Order</button>
                     <button type="button" class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700" @click="startEdit(item)">Edit</button>
                     <button type="button" class="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50" @click="openAdjust(item, 'in')">+Stock</button>
                     <button type="button" class="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-bold text-amber-700 hover:bg-amber-50" @click="openAdjust(item, 'out')">-Stock</button>
                     <button type="button" class="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-50" @click="openAdjust(item, 'set')">Set</button>
                     <button type="button" class="rounded-lg border border-rose-200 px-3 py-1.5 text-xs font-bold text-rose-600 hover:bg-rose-50" @click="deletePart(item.id)">Delete</button>
-                  </div>
-                  <div v-else-if="canWriteInventory" class="flex flex-wrap items-center gap-2">
-                    <button type="button" class="rounded-lg border border-teal-200 px-3 py-1.5 text-xs font-bold text-teal-700 hover:bg-teal-50" @click="openForOrder(item)">+ For Order</button>
-                    <button type="button" class="rounded-lg border border-emerald-200 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-50" @click="openAdjust(item, 'in')">+Stock</button>
                   </div>
                   <span v-else class="text-sm text-slate-500">Read-only</span>
                 </td>
@@ -348,13 +354,14 @@ onMounted(loadInventory);
         </div>
       </div>
 
-      <div v-if="isAdmin && editingId" class="card p-6">
+      <div v-if="canWriteInventory && editingId" class="card p-6">
         <h3 class="text-lg font-semibold text-slate-900 mb-4">Edit Spare Part</h3>
         <form class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3" @submit.prevent="saveEdit(editingId)">
           <input v-model="editForm.name" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Part name" required />
           <input v-model="editForm.part_number" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Item code (optional)" />
           <input v-model="editForm.category" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Category" />
           <input v-model.number="editForm.stock_quantity" type="number" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Stock" required />
+          <input v-model="editForm.stock_note" class="px-4 py-2 border border-slate-300 rounded-lg" :placeholder="stockQuantityChanging ? 'Reason required for stock change' : 'Reason if changing stock quantity'" :required="stockQuantityChanging" />
           <input v-model.number="editForm.reorder_level" type="number" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Reorder level" required />
           <label class="inline-flex w-fit items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700">
             <input v-model="editForm.is_active" type="checkbox" />
@@ -371,16 +378,13 @@ onMounted(loadInventory);
         <div class="bg-white w-full max-w-md rounded-xl p-6">
           <h3 class="text-lg font-semibold text-slate-900 mb-4">Adjust Stock: {{ adjustModal.partName }}</h3>
           <form class="space-y-3" @submit.prevent="submitAdjust">
-            <select v-if="isAdmin" v-model="adjustModal.action" class="w-full px-4 py-2 border border-slate-300 rounded-lg">
+            <select v-model="adjustModal.action" class="w-full px-4 py-2 border border-slate-300 rounded-lg">
               <option value="in">Add Stock</option>
               <option value="out">Deduct Stock</option>
               <option value="set">Set Exact Stock</option>
             </select>
-            <div v-else class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-800">
-              Staff can add stock only.
-            </div>
-            <input v-model.number="adjustModal.quantity" type="number" min="0" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Quantity" required />
-            <input v-model="adjustModal.note" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Note (optional)" />
+            <input v-model.number="adjustModal.quantity" type="number" :min="adjustModal.action === 'set' ? 0 : 1" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Quantity" required />
+            <input v-model="adjustModal.note" class="w-full px-4 py-2 border border-slate-300 rounded-lg" :placeholder="adjustModal.action === 'in' ? 'Note (optional)' : 'Reason (required)'" :required="adjustModal.action !== 'in'" />
             <div class="flex gap-3 pt-2">
               <button type="submit" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Apply</button>
               <button type="button" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 rounded-lg" @click="adjustModal.open = false">Cancel</button>
@@ -405,9 +409,6 @@ onMounted(loadInventory);
         </div>
       </div>
 
-      <div v-if="!isAdmin" class="card border border-blue-200 bg-blue-50 p-4 text-blue-900">
-        Staff can add new inventory items and restock existing ones here. Editing item details, deducting stock, setting exact stock, and deleting inventory remain admin-only.
-      </div>
     </div>
   </AdminLayout>
 </template>
