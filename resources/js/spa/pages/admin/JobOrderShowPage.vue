@@ -86,6 +86,8 @@ const photoForm = ref({
 
 const canOverridePickup = computed(() => adminRoles.includes(authState.user?.role));
 const isRtoStatus = computed(() => ['RTO', 'RTO_RELEASED'].includes(jobOrder.value?.current_status));
+const arePartsLocked = computed(() => ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED']
+    .includes(jobOrder.value?.current_status));
 const pendingRefundTotal = computed(() => refunds.value
     .filter((refund) => refund.status === 'PENDING')
     .reduce((total, refund) => total + Number(refund.amount), 0));
@@ -884,13 +886,13 @@ onMounted(loadJobOrder);
                 </div>
                 <div class="flex items-center gap-3">
                   <span v-if="part.job_order_part_order_id" class="text-sm font-semibold text-slate-800">{{ formatCurrency(part.total_cost) }}</span>
-                  <button v-if="!isRtoStatus" type="button" class="text-rose-600 font-semibold" @click="deletePart(part.id)">Delete</button>
+                  <button v-if="part.job_order_part_order_id ? !isRtoStatus : !arePartsLocked" type="button" class="text-rose-600 font-semibold" @click="deletePart(part.id)">Delete</button>
                 </div>
               </div>
             </div>
             <p v-else class="text-sm text-slate-500 mb-4">No parts recorded yet.</p>
 
-            <form v-if="!isRtoStatus" class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="addPart">
+            <form v-if="!arePartsLocked" class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="addPart">
               <select v-model="partForm.spare_part_id" class="md:col-span-2 px-4 py-2 border border-slate-300 rounded-lg" @change="onSparePartChange">
                 <option value="">Custom part (no inventory deduction)</option>
                 <option
@@ -907,8 +909,8 @@ onMounted(loadJobOrder);
               <input v-model="partForm.notes" class="md:col-span-3 px-4 py-2 border border-slate-300 rounded-lg" placeholder="Notes (optional)" />
               <button type="submit" class="md:col-span-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Add Part</button>
             </form>
-            <p v-if="!isRtoStatus" class="mt-3 text-xs text-slate-500">Selecting an inventory part deducts the selected quantity from inventory.</p>
-            <p v-else class="text-sm text-slate-500">Parts are locked after an RTO decision.</p>
+            <p v-if="arePartsLocked" class="text-sm text-slate-500">Parts can no longer be changed because the repair is completed or released.</p>
+            <p v-else class="mt-3 text-xs text-slate-500">Selecting an inventory part deducts the selected quantity from inventory.</p>
           </div>
 
         </div>

@@ -325,6 +325,97 @@ class FinancialIntegrityCostMutationTest extends TestCase
         $this->assertFinancialState($jobOrder, 1000, 200, 'PARTIAL');
     }
 
+    public function test_staff_and_admin_cannot_add_used_parts_after_repair_completion_or_release(): void
+    {
+        foreach ([User::ROLE_ADMIN, User::ROLE_STAFF] as $role) {
+            foreach (['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'] as $status) {
+                [$shop, $user] = $this->createShopUser($role);
+                $jobOrder = $this->createJobOrder($shop, 0, 0, 'PENDING', $status);
+                $sparePart = $this->createSparePart($shop, 100, 5);
+                $movementCount = StockMovement::where('job_order_id', $jobOrder->id)->count();
+
+                $this->actingAs($user)
+                    ->postJson("/api/admin/job-orders/{$jobOrder->id}/parts", [
+                        'spare_part_id' => $sparePart->id,
+                        'quantity' => 1,
+                    ])
+                    ->assertUnprocessable()
+                    ->assertJsonValidationErrors('job_order');
+
+                $this->assertSame(5, $sparePart->fresh()->stock_quantity);
+                $this->assertSame($movementCount, StockMovement::where('job_order_id', $jobOrder->id)->count());
+                $this->assertDatabaseMissing('job_order_parts', ['job_order_id' => $jobOrder->id]);
+            }
+        }
+    }
+
+    public function test_staff_and_admin_cannot_update_used_parts_after_repair_completion_or_release(): void
+    {
+        foreach ([User::ROLE_ADMIN, User::ROLE_STAFF] as $role) {
+            foreach (['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'] as $status) {
+                [$shop, $user] = $this->createShopUser($role);
+                $jobOrder = $this->createJobOrder($shop, 0, 0, 'PENDING', $status);
+                $sparePart = $this->createSparePart($shop, 100, 5);
+                $part = JobOrderPart::create([
+                    'shop_id' => $shop->id,
+                    'job_order_id' => $jobOrder->id,
+                    'spare_part_id' => $sparePart->id,
+                    'part_name' => $sparePart->name,
+                    'quantity' => 1,
+                    'unit_cost' => 0,
+                    'total_cost' => 0,
+                ]);
+                $originalPart = $part->only(['spare_part_id', 'part_name', 'quantity', 'unit_cost', 'total_cost']);
+                $movementCount = StockMovement::where('job_order_id', $jobOrder->id)->count();
+
+                $this->actingAs($user)
+                    ->putJson("/api/admin/job-orders/{$jobOrder->id}/parts/{$part->id}", [
+                        'spare_part_id' => $sparePart->id,
+                        'quantity' => 2,
+                    ])
+                    ->assertUnprocessable()
+                    ->assertJsonValidationErrors('job_order');
+
+                $this->assertSame($originalPart, $part->fresh()->only(array_keys($originalPart)));
+                $this->assertSame(5, $sparePart->fresh()->stock_quantity);
+                $this->assertSame($movementCount, StockMovement::where('job_order_id', $jobOrder->id)->count());
+                $this->assertDatabaseHas('job_order_parts', ['id' => $part->id]);
+            }
+        }
+    }
+
+    public function test_staff_and_admin_cannot_remove_used_parts_after_repair_completion_or_release(): void
+    {
+        foreach ([User::ROLE_ADMIN, User::ROLE_STAFF] as $role) {
+            foreach (['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'] as $status) {
+                [$shop, $user] = $this->createShopUser($role);
+                $jobOrder = $this->createJobOrder($shop, 0, 0, 'PENDING', $status);
+                $sparePart = $this->createSparePart($shop, 100, 5);
+                $part = JobOrderPart::create([
+                    'shop_id' => $shop->id,
+                    'job_order_id' => $jobOrder->id,
+                    'spare_part_id' => $sparePart->id,
+                    'part_name' => $sparePart->name,
+                    'quantity' => 1,
+                    'unit_cost' => 0,
+                    'total_cost' => 0,
+                ]);
+                $originalPart = $part->only(['spare_part_id', 'part_name', 'quantity', 'unit_cost', 'total_cost']);
+                $movementCount = StockMovement::where('job_order_id', $jobOrder->id)->count();
+
+                $this->actingAs($user)
+                    ->deleteJson("/api/admin/job-orders/{$jobOrder->id}/parts/{$part->id}")
+                    ->assertUnprocessable()
+                    ->assertJsonValidationErrors('job_order');
+
+                $this->assertSame($originalPart, $part->fresh()->only(array_keys($originalPart)));
+                $this->assertSame(5, $sparePart->fresh()->stock_quantity);
+                $this->assertSame($movementCount, StockMovement::where('job_order_id', $jobOrder->id)->count());
+                $this->assertDatabaseHas('job_order_parts', ['id' => $part->id]);
+            }
+        }
+    }
+
     private function updateCosts(User $user, JobOrder $jobOrder, int $partsCost, int $laborCost)
     {
         return $this->actingAs($user)->postJson("/api/admin/job-orders/{$jobOrder->id}/update-costs", [

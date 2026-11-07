@@ -1688,7 +1688,7 @@ class JobOrderController extends Controller
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
-            $this->ensureJobOrderIsNotRto($lockedJobOrder);
+            $this->ensurePartsCanBeChanged($lockedJobOrder);
 
             $sparePart = null;
             if (!empty($validated['spare_part_id'])) {
@@ -1787,7 +1787,7 @@ class JobOrderController extends Controller
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
-            $this->ensureJobOrderIsNotRto($lockedJobOrder);
+            $this->ensurePartsCanBeChanged($lockedJobOrder);
             $existingPart = JobOrderPart::query()
                 ->where('job_order_id', $lockedJobOrder->id)
                 ->where('shop_id', $lockedJobOrder->shop_id)
@@ -1907,7 +1907,7 @@ class JobOrderController extends Controller
                 ->where('shop_id', $shopId)
                 ->lockForUpdate()
                 ->findOrFail($jobOrder->id);
-            $this->ensureJobOrderIsNotRto($lockedJobOrder);
+            $this->ensurePartsCanBeChanged($lockedJobOrder);
             $existingPart = JobOrderPart::query()
                 ->where('job_order_id', $lockedJobOrder->id)
                 ->where('shop_id', $lockedJobOrder->shop_id)
@@ -1979,6 +1979,15 @@ class JobOrderController extends Controller
         if (in_array($jobOrder->current_status, ['RTO', 'RTO_RELEASED'], true)) {
             throw ValidationException::withMessages([
                 'job_order' => 'Payments and repair costs cannot be changed after a job order becomes RTO.',
+            ]);
+        }
+    }
+
+    private function ensurePartsCanBeChanged(JobOrder $jobOrder): void
+    {
+        if (in_array($jobOrder->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'], true)) {
+            throw ValidationException::withMessages([
+                'job_order' => 'Parts can no longer be changed for this job in its current status.',
             ]);
         }
     }
