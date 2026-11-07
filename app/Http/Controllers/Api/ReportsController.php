@@ -229,22 +229,11 @@ class ReportsController extends Controller
                 fputcsv($handle, ['Pending means an obligation was recorded; issued means staff recorded the refund as issued and does not prove external settlement. Pending refunds are not subtracted from collections.']);
                 fputcsv($handle, []);
 
-                fputcsv($handle, ['RTO Refund Ledger']);
-                fputcsv($handle, ['Pending refunds are filtered by initiated_at; issued refunds are filtered by issued_at. Blank date filters include all applicable records.']);
-                fputcsv($handle, ['Job Order', 'Customer', 'Reason', 'Status', 'Amount', 'Method', 'Reference', 'Initiated', 'Issued']);
-                foreach ($report['refundRecords'] as $refund) {
-                    fputcsv($handle, [
-                        $refund['job_order_number'],
-                        $refund['customer_name'],
-                        $refund['reason'],
-                        $refund['status'],
-                        $refund['amount'],
-                        $refund['refund_method'],
-                        $refund['reference_number'],
-                        $refund['initiated_at'],
-                        $refund['issued_at'],
-                    ]);
-                }
+                fputcsv($handle, ['Transaction Summary']);
+                fputcsv($handle, ['Payments Received', $report['paymentSummary']['total_amount'], 'Date basis: received_at']);
+                fputcsv($handle, ['Refunds Issued', $report['paymentSummary']['issued_refunds'], 'Date basis: issued_at; staff-recorded issuance, not external settlement']);
+                fputcsv($handle, ['Net Retained', $report['paymentSummary']['net_cash_retained']]);
+                fputcsv($handle, ['Pending Refund Obligations', $report['paymentSummary']['pending_refund_obligations'], 'Date basis: initiated_at; not deducted from collections']);
                 fputcsv($handle, []);
 
                 fputcsv($handle, ['Payment Methods']);
@@ -275,21 +264,19 @@ class ReportsController extends Controller
                 }
                 fputcsv($handle, []);
 
-                fputcsv($handle, ['Payment Transaction History (Latest 30)']);
-                fputcsv($handle, ['The list is limited to the latest 30 records; summary totals include all matching transactions. Payment date uses received_at; created_at is a display-only fallback when received_at is blank.']);
-                fputcsv($handle, ['Payment Date', 'Date Basis', 'Job Order', 'Customer', 'Amount', 'Method', 'Type', 'Reference', 'Notes', 'Received By']);
-                foreach ($report['paymentRecords'] as $payment) {
+                fputcsv($handle, ['Transaction History (Latest 30)']);
+                fputcsv($handle, ['Summary totals include all matching transactions. Payments use received_at (payment created_at is a display-only fallback); issued refunds use issued_at. Pending refund obligations are not completed transactions.']);
+                fputcsv($handle, ['Date', 'Transaction', 'Date Basis', 'Job Order', 'Customer', 'Signed Amount', 'Method', 'Reference']);
+                foreach ($report['transactionRecords'] as $transaction) {
                     fputcsv($handle, [
-                        $payment['received_at_formatted'],
-                        $payment['payment_date_basis'],
-                        $payment['job_order_number'],
-                        $payment['customer_name'],
-                        $payment['amount'],
-                        $payment['payment_method'],
-                        $payment['payment_type'],
-                        $payment['reference_number'],
-                        $payment['notes'],
-                        $payment['received_by'],
+                        $transaction['transaction_date'],
+                        $transaction['transaction_label'],
+                        $transaction['date_basis'],
+                        $transaction['job_order_number'],
+                        $transaction['customer_name'],
+                        $transaction['amount'],
+                        $transaction['method'],
+                        $transaction['reference_number'],
                     ]);
                 }
             }
@@ -1009,6 +996,73 @@ class ReportsController extends Controller
             ->values()
             ->all();
 
+        $paymentTransactions = (clone $payments)
+            ->orderByRaw('COALESCE(received_at, created_at) DESC')
+            ->orderByDesc('id')
+            ->take(30)
+            ->get()
+            ->map(function (JobOrderPayment $payment): array {
+                $record = $this->mapPaymentRecord($payment);
+                $date = $payment->received_at ?? $payment->created_at;
+
+                return [
+                    'transaction_key' => "payment-{$payment->id}",
+                    'transaction_type' => 'PAYMENT_RECEIVED',
+                    'transaction_label' => 'Payment Received',
+                    'transaction_date' => $record['received_at_formatted'],
+                    'date_basis' => $record['payment_date_basis'],
+                    'job_order_id' => $payment->job_order_id,
+                    'job_order_number' => $record['job_order_number'],
+                    'customer_name' => $record['customer_name'],
+                    'method' => $record['payment_method'],
+                    'reference_number' => $record['reference_number'],
+                    'payment_type' => $record['payment_type'],
+                    'amount' => (float) $payment->amount,
+                    'sort_timestamp' => $date?->getTimestamp() ?? 0,
+                    'sort_id' => (int) $payment->id,
+                ];
+            })
+            ->all();
+
+        $refundTransactions = $paymentTypeFilter ? [] : (clone $issuedRefunds)
+            ->when($paymentMethodFilter, fn ($query) => $query->where('refund_method', $paymentMethodFilter))
+            ->with([
+                'jobOrder' => fn ($query) => $refundJobOrder($query)->select($refundJobOrderColumns),
+            ])
+            ->latest('issued_at')
+            ->latest('id')
+            ->take(30)
+            ->get()
+            ->map(fn (JobOrderRefund $refund): array => [
+                'transaction_key' => "refund-{$refund->id}",
+                'transaction_type' => 'REFUND_ISSUED',
+                'transaction_label' => 'Refund Issued',
+                'transaction_date' => $refund->issued_at?->format('M d, Y h:i A') ?? '—',
+                'date_basis' => 'issued_at',
+                'job_order_id' => $refund->job_order_id,
+                'job_order_number' => $refund->jobOrder?->job_order_number,
+                'customer_name' => $refund->jobOrder?->customer_name,
+                'method' => $refund->refund_method,
+                'reference_number' => $refund->reference_number,
+                'payment_type' => null,
+                'amount' => -1 * (float) $refund->amount,
+                'sort_timestamp' => $refund->issued_at?->getTimestamp() ?? 0,
+                'sort_id' => (int) $refund->id,
+            ])
+            ->all();
+
+        $transactionRecords = array_merge($paymentTransactions, $refundTransactions);
+        usort($transactionRecords, static function (array $left, array $right): int {
+            return ($right['sort_timestamp'] <=> $left['sort_timestamp'])
+                ?: ($right['sort_id'] <=> $left['sort_id'])
+                ?: strcmp($right['transaction_key'], $left['transaction_key']);
+        });
+        $transactionRecords = array_slice(array_map(static function (array $record): array {
+            unset($record['sort_timestamp'], $record['sort_id']);
+
+            return $record;
+        }, $transactionRecords), 0, 30);
+
         return [
             'paymentSummary' => [
                 'total_records' => $allPayments->count(),
@@ -1040,6 +1094,7 @@ class ReportsController extends Controller
                 ->values()
                 ->all(),
             'refundRecords' => $refundRecords,
+            'transactionRecords' => $transactionRecords,
         ];
     }
 

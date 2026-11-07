@@ -47,7 +47,6 @@ const markingPickedUp = ref(false);
 const releasingRto = ref(false);
 const recordingApproval = ref(false);
 const updatingWarranty = ref(false);
-const preparingRefunds = ref(false);
 const reconcilingRefund = ref(false);
 const issuingRefundId = ref(null);
 const activeAction = ref(null);
@@ -214,23 +213,6 @@ const openAction = (action) => {
     if (action === 'approval') {
         approvalForm.value.repair_approved_by_customer = defaultApprovalName();
         approvalForm.value.repair_approval_notes = '';
-    }
-};
-
-const prepareRtoRefunds = async () => {
-    if (preparingRefunds.value) return;
-    errorMessage.value = '';
-    successMessage.value = '';
-    preparingRefunds.value = true;
-    try {
-        const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/prepare-rto-refunds`);
-        successMessage.value = data.message || 'Refund obligations prepared.';
-        await loadJobOrder();
-        activeAction.value = null;
-    } catch (error) {
-        errorMessage.value = error?.response?.data?.message || 'Failed to prepare refund obligations.';
-    } finally {
-        preparingRefunds.value = false;
     }
 };
 
@@ -1363,9 +1345,6 @@ onBeforeUnmount(() => {
               <h4 class="text-lg font-semibold text-slate-900">RTO Refunds</h4>
               <p class="mt-1 text-sm text-slate-600">Original repair costs and receipts remain unchanged. Record each actual refund separately.</p>
             </div>
-            <button type="button" :disabled="preparingRefunds" class="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:bg-slate-400" @click="prepareRtoRefunds">
-              {{ preparingRefunds ? 'Preparing...' : 'Prepare missing receipt-based refunds' }}
-            </button>
             <div v-if="refunds.length" class="space-y-3">
               <div v-for="refund in refunds" :key="refund.id" class="rounded-lg border border-slate-200 p-4">
                 <div class="flex flex-wrap items-start justify-between gap-3">
@@ -1393,9 +1372,9 @@ onBeforeUnmount(() => {
             </div>
             <p v-else class="text-sm text-slate-500">No refund obligations have been recorded yet.</p>
 
-            <div v-if="legacyRefundReconciliationAmount > 0" class="rounded-lg border border-amber-200 bg-amber-50 p-4">
-              <h5 class="font-semibold text-amber-950">Legacy payment reconciliation</h5>
-              <p class="mt-1 text-sm text-amber-900">Up to {{ formatCurrency(legacyRefundReconciliationAmount) }} in historical paid totals has no matching payment receipt. Enter only a verified refund amount and document the evidence.</p>
+            <details v-if="legacyRefundReconciliationAmount > 0" class="rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <summary class="cursor-pointer font-semibold text-amber-950">Historical refund reconciliation</summary>
+              <p class="mt-2 text-sm text-amber-900">Up to {{ formatCurrency(legacyRefundReconciliationAmount) }} in historical paid totals has no matching payment receipt. Enter only a verified refund amount and document the evidence.</p>
               <form class="mt-3 space-y-3" @submit.prevent="reconcileLegacyRtoRefund">
                 <input v-model="legacyRefundForm.amount" type="number" min="0.01" :max="legacyRefundReconciliationAmount" step="0.01" class="w-full rounded-lg border border-amber-300 px-3 py-2" placeholder="Verified refund amount" required />
                 <textarea v-model="legacyRefundForm.reconciliation_reason" rows="3" minlength="10" class="w-full rounded-lg border border-amber-300 px-3 py-2" placeholder="Describe the original payment evidence and refund authorization" required></textarea>
@@ -1403,7 +1382,7 @@ onBeforeUnmount(() => {
                   {{ reconcilingRefund ? 'Recording...' : 'Record Reconciled Refund Due' }}
                 </button>
               </form>
-            </div>
+            </details>
           </div>
 
           <div v-if="activeAction === 'history'" class="card p-6">

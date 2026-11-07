@@ -235,10 +235,10 @@ onMounted(loadReport);
           </div>
 
           <div v-if="activeTab === 'payments'">
-            <p class="mb-2 text-xs font-bold uppercase text-slate-400">Payments</p>
+            <p class="mb-2 text-xs font-bold uppercase text-slate-400">Transactions</p>
             <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
               <select v-model="filters.payment_method" class="border border-slate-300 px-4 py-3">
-                <option value="">All Payment Methods</option>
+                <option value="">All Transaction Methods</option>
                 <option value="CASH">CASH</option>
                 <option value="GCASH">GCASH</option>
                 <option value="BANK_TRANSFER">BANK TRANSFER</option>
@@ -670,24 +670,30 @@ onMounted(loadReport);
 
       <section v-if="report && activeTab === 'payments'" class="space-y-4" role="tabpanel" id="reports-panel-payments" aria-labelledby="reports-tab-payments">
         <div>
-          <h3 class="flex items-center gap-2 text-xl font-bold text-slate-950"><i class="fas fa-rotate-left text-sm text-teal-700" aria-hidden="true"></i>Refund Overview</h3>
-          <p class="mt-1 text-sm text-slate-500">Payment dates use received_at. Pending refund dates use initiated_at; issued refund dates use issued_at. Refund status reflects shop records, not external settlement.</p>
+          <h3 class="flex items-center gap-2 text-xl font-bold text-slate-950"><i class="fas fa-receipt text-sm text-teal-700" aria-hidden="true"></i>Transaction Summary</h3>
+          <p class="mt-1 text-sm text-slate-500">Payments use received_at; issued refunds use issued_at; pending obligations use initiated_at. Refund status reflects shop records, not external settlement.</p>
         </div>
 
-        <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <div class="admin-panel flex items-center justify-between gap-4 px-5 py-4">
-            <div>
-              <p class="text-sm font-semibold text-slate-700">Pending Refund Obligations</p>
-              <p class="mt-1 text-xs text-slate-500">Recorded obligation · initiated_at date basis</p>
-            </div>
-            <p class="text-xl font-bold text-amber-700">{{ formatCurrency(report.paymentSummary.pending_refund_obligations) }}</p>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div class="metric-card">
+            <p class="text-sm text-slate-500">Payments Received</p>
+            <p class="mt-1 text-xl font-bold text-slate-950">{{ formatCurrency(report.paymentSummary.total_amount) }}</p>
+            <p class="mt-1 text-xs text-slate-500">Gross receipts · received_at</p>
           </div>
-          <div class="admin-panel flex items-center justify-between gap-4 px-5 py-4">
-            <div>
-              <p class="text-sm font-semibold text-slate-700">Refunds Recorded as Issued</p>
-              <p class="mt-1 text-xs text-slate-500">Staff-recorded issuance, not external settlement · issued_at date basis</p>
-            </div>
-            <p class="text-xl font-bold text-slate-900">{{ formatCurrency(report.paymentSummary.issued_refunds) }}</p>
+          <div class="metric-card">
+            <p class="text-sm text-slate-500">Refunds Issued</p>
+            <p class="mt-1 text-xl font-bold text-slate-950">{{ formatCurrency(report.paymentSummary.issued_refunds) }}</p>
+            <p class="mt-1 text-xs text-slate-500">Recorded issuance · issued_at</p>
+          </div>
+          <div class="metric-card">
+            <p class="text-sm text-slate-500">Net Retained</p>
+            <p class="mt-1 text-xl font-bold text-slate-950">{{ formatCurrency(report.paymentSummary.net_cash_retained) }}</p>
+            <p class="mt-1 text-xs text-slate-500">Payments received minus refunds issued</p>
+          </div>
+          <div class="metric-card">
+            <p class="text-sm text-slate-500">Pending Refunds</p>
+            <p class="mt-1 text-xl font-bold text-amber-700">{{ formatCurrency(report.paymentSummary.pending_refund_obligations) }}</p>
+            <p class="mt-1 text-xs text-slate-500">Obligations · initiated_at; not deducted</p>
           </div>
         </div>
 
@@ -846,100 +852,48 @@ onMounted(loadReport);
 
         <div class="admin-panel overflow-hidden">
           <div class="border-b border-slate-200 p-5">
-            <h4 class="flex items-center gap-2 font-bold text-slate-950"><i class="fas fa-receipt text-sm text-teal-700" aria-hidden="true"></i>Payment History (Latest 30)</h4>
-            <p class="mt-1 text-sm text-slate-500">Summary totals include all matching payment records. Payment date uses received_at; when blank, the record creation date is shown for display only.</p>
+            <h4 class="flex items-center gap-2 font-bold text-slate-950"><i class="fas fa-clock-rotate-left text-sm text-teal-700" aria-hidden="true"></i>Transaction History (Latest 30)</h4>
+            <p class="mt-1 text-sm text-slate-500">Payments are dated by received_at (record creation date is a display-only fallback); refunds are dated by issued_at. Pending refund obligations are not completed transactions. The method filter applies to both types; payment-type filters apply to receipts only. Amounts are positive for receipts and negative for issued refunds.</p>
           </div>
           <div class="overflow-x-auto">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th class="px-4 py-3 text-left text-slate-600">Payment Date</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Date</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Transaction</th>
                   <th class="px-4 py-3 text-left text-slate-600">Job Order</th>
-                  <th class="px-4 py-3 text-left text-slate-600">Type</th>
                   <th class="px-4 py-3 text-left text-slate-600">Method</th>
-                  <th class="px-4 py-3 text-left text-slate-600">Amount</th>
-                  <th class="px-4 py-3 text-left text-slate-600">Reference / Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="payment in visibleRows('payment-history', report.paymentRecords)" :key="payment.id">
-                  <td class="px-4 py-3 text-slate-700">
-                    {{ payment.received_at_formatted }}
-                    <p v-if="payment.received_at_is_fallback" class="text-xs text-amber-700">Record creation date shown</p>
-                  </td>
-                  <td class="px-4 py-3">
-                    <p class="font-semibold text-slate-900">{{ payment.job_order_number }}</p>
-                    <p class="text-xs text-slate-500">{{ payment.customer_name || 'N/A' }}</p>
-                  </td>
-                  <td class="px-4 py-3 text-slate-700">{{ payment.payment_type.replaceAll('_', ' ') }}</td>
-                  <td class="px-4 py-3 text-slate-700">{{ payment.payment_method.replaceAll('_', ' ') }}</td>
-                  <td class="px-4 py-3 font-semibold text-slate-900">{{ formatCurrency(payment.amount) }}</td>
-                  <td class="px-4 py-3 text-slate-700">
-                    <p v-if="payment.reference_number">Ref: {{ payment.reference_number }}</p>
-                    <p v-if="payment.notes" class="text-xs text-slate-500">{{ payment.notes }}</p>
-                    <p v-if="payment.received_by" class="text-xs text-slate-500">Received by {{ payment.received_by }}</p>
-                  </td>
-                </tr>
-                <tr v-if="!report.paymentRecords.length">
-                  <td colspan="6" class="px-4 py-8 text-center text-slate-500">No payment records found.</td>
-                </tr>
-              </tbody>
-            </table>
-            <div v-if="report.paymentRecords.length" class="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3">
-              <span class="text-xs text-slate-500">{{ disclosureText('payment-history', report.paymentRecords) }}</span>
-              <button v-if="hasMoreRows(report.paymentRecords)" type="button" class="inline-flex items-center gap-1 text-sm font-bold text-teal-700 hover:text-teal-900" @click="toggleSection('payment-history')">
-                {{ expandedSections['payment-history'] ? 'Show Less' : 'Show More' }}
-                <span aria-hidden="true">{{ expandedSections['payment-history'] ? '↑' : '↓' }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div class="admin-panel overflow-hidden">
-          <div class="border-b border-slate-200 p-5">
-            <h4 class="flex items-center gap-2 font-bold text-slate-950"><i class="fas fa-rotate-left text-sm text-teal-700" aria-hidden="true"></i>Refund History</h4>
-            <p class="mt-1 text-sm text-slate-500">PENDING means an obligation was recorded; ISSUED means staff recorded the refund as issued. ISSUED does not prove external settlement. Refund amounts are based on refund records, not inferred from RTO status.</p>
-            <p class="mt-1 text-xs text-slate-500">Pending refunds use initiated_at for date filters; issued refunds use issued_at. Blank date filters include all applicable records. Pending refunds are not subtracted from Payments Received.</p>
-            <p class="mt-1 text-xs text-slate-500">Showing the latest 30 refund records; summary totals include all matching refund records.</p>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th class="px-4 py-3 text-left text-slate-600">Job Order</th>
-                  <th class="px-4 py-3 text-left text-slate-600">Customer</th>
-                  <th class="px-4 py-3 text-left text-slate-600">Reason</th>
-                  <th class="px-4 py-3 text-left text-slate-600">Status</th>
                   <th class="px-4 py-3 text-right text-slate-600">Amount</th>
-                  <th class="px-4 py-3 text-left text-slate-600">Method / Reference</th>
-                  <th class="px-4 py-3 text-left text-slate-600">Initiated</th>
-                  <th class="px-4 py-3 text-left text-slate-600">Issued</th>
+                  <th class="px-4 py-3 text-left text-slate-600">Reference</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="refund in visibleRows('refund-history', report.refundRecords)" :key="refund.id">
-                  <td class="px-4 py-3 font-semibold text-slate-900">{{ refund.job_order_number }}</td>
-                  <td class="px-4 py-3 text-slate-700">{{ refund.customer_name }}</td>
-                  <td class="px-4 py-3 text-slate-700">{{ refund.reason }}</td>
-                  <td class="px-4 py-3 text-slate-700">{{ refund.status }}</td>
-                  <td class="px-4 py-3 text-right font-semibold text-slate-900">{{ formatCurrency(refund.amount) }}</td>
+                <tr v-for="transaction in visibleRows('transaction-history', report.transactionRecords)" :key="transaction.transaction_key">
                   <td class="px-4 py-3 text-slate-700">
-                    {{ refund.refund_method?.replaceAll('_', ' ') || '—' }}
-                    <p v-if="refund.reference_number" class="text-xs text-slate-500">{{ refund.reference_number }}</p>
+                    {{ transaction.transaction_date }}
+                    <p v-if="transaction.date_basis === 'created_at (display fallback)'" class="text-xs text-amber-700">Record creation date shown</p>
                   </td>
-                  <td class="px-4 py-3 text-slate-700">{{ refund.initiated_at || '—' }}</td>
-                  <td class="px-4 py-3 text-slate-700">{{ refund.issued_at || 'Not issued' }}</td>
+                  <td class="px-4 py-3 font-semibold text-slate-900">{{ transaction.transaction_label }}</td>
+                  <td class="px-4 py-3">
+                    <p class="font-semibold text-slate-900">{{ transaction.job_order_number || 'N/A' }}</p>
+                    <p class="text-xs text-slate-500">{{ transaction.customer_name || 'N/A' }}</p>
+                  </td>
+                  <td class="px-4 py-3 text-slate-700">{{ transaction.method?.replaceAll('_', ' ') || '—' }}</td>
+                  <td class="px-4 py-3 text-right font-semibold" :class="transaction.amount < 0 ? 'text-rose-700' : 'text-slate-900'">
+                    {{ transaction.amount < 0 ? '−' : '+' }}{{ formatCurrency(Math.abs(transaction.amount)) }}
+                  </td>
+                  <td class="px-4 py-3 text-slate-700">{{ transaction.reference_number || '—' }}</td>
                 </tr>
-                <tr v-if="!report.refundRecords.length">
-                  <td colspan="8" class="px-4 py-8 text-center text-slate-500">No refunds found for this report range.</td>
+                <tr v-if="!report.transactionRecords.length">
+                  <td colspan="6" class="px-4 py-8 text-center text-slate-500">No transactions found for this report range.</td>
                 </tr>
               </tbody>
             </table>
-            <div v-if="report.refundRecords.length" class="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3">
-              <span class="text-xs text-slate-500">{{ disclosureText('refund-history', report.refundRecords) }}</span>
-              <button v-if="hasMoreRows(report.refundRecords)" type="button" class="inline-flex items-center gap-1 text-sm font-bold text-teal-700 hover:text-teal-900" @click="toggleSection('refund-history')">
-                {{ expandedSections['refund-history'] ? 'Show Less' : 'Show More' }}
-                <span aria-hidden="true">{{ expandedSections['refund-history'] ? '↑' : '↓' }}</span>
+            <div v-if="report.transactionRecords.length" class="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3">
+              <span class="text-xs text-slate-500">{{ disclosureText('transaction-history', report.transactionRecords) }}</span>
+              <button v-if="hasMoreRows(report.transactionRecords)" type="button" class="inline-flex items-center gap-1 text-sm font-bold text-teal-700 hover:text-teal-900" @click="toggleSection('transaction-history')">
+                {{ expandedSections['transaction-history'] ? 'Show Less' : 'Show More' }}
+                <span aria-hidden="true">{{ expandedSections['transaction-history'] ? '↑' : '↓' }}</span>
               </button>
             </div>
           </div>

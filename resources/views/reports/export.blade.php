@@ -459,48 +459,56 @@
         <div>₱{{ number_format($paymentSummary['current_pending_balances'], 2) }}</div>
     </div>
 
-    <h2>Refund Summary</h2>
-    <p>PENDING means an obligation was recorded; ISSUED means staff recorded the refund as issued and does not prove external settlement. Refunds are based on refund records, not inferred from RTO status. Pending refunds are not subtracted from recorded collections.</p>
+    <h2>Transaction Summary</h2>
+    <p>Payments are dated by received_at; issued refunds are dated by issued_at. Refund status reflects shop records, not external settlement. Pending obligations are not completed transactions and are not subtracted from recorded collections.</p>
     <div class="grid">
+        <div class="card">
+            <strong>Payments Received (received_at date basis)</strong>
+            <div>₱{{ number_format($paymentSummary['total_amount'], 2) }}</div>
+        </div>
+        <div class="card">
+            <strong>Refunds Issued (issued_at date basis)</strong>
+            <div>₱{{ number_format($paymentSummary['issued_refunds'], 2) }}</div>
+        </div>
+        <div class="card">
+            <strong>Net Retained</strong>
+            <div>₱{{ number_format($paymentSummary['net_cash_retained'], 2) }}</div>
+        </div>
         <div class="card">
             <strong>Pending Refund Obligations (initiated_at date basis)</strong>
             <div>₱{{ number_format($paymentSummary['pending_refund_obligations'], 2) }}</div>
         </div>
-        <div class="card">
-            <strong>Refunds Recorded as Issued (issued_at date basis)</strong>
-            <div>₱{{ number_format($paymentSummary['issued_refunds'], 2) }}</div>
-        </div>
     </div>
 
-    <h2>RTO Refund Ledger</h2>
-    <p>Pending refunds are filtered by initiated_at; issued refunds are filtered by issued_at. Blank date filters include all applicable records. Both original timestamps are shown where available. Showing the latest 30 refund records; summary totals include all matching refund records.</p>
+    <h2>Transaction History (Latest 30)</h2>
+    <p>Summary totals include all matching records. Payments are dated by received_at, with payment record created_at shown only as a display fallback; issued refunds are dated by issued_at. Pending refund obligations are not included as outgoing transactions. Receipts are positive and issued refunds are negative.</p>
     <table>
         <thead>
             <tr>
+                <th>Date</th>
+                <th>Transaction</th>
                 <th>Job Order</th>
                 <th>Customer</th>
-                <th>Reason</th>
-                <th>Status</th>
                 <th>Amount</th>
-                <th>Method / Reference</th>
-                <th>Initiated At</th>
-                <th>Issued At</th>
+                <th>Method</th>
+                <th>Reference</th>
+                <th>Date Basis</th>
             </tr>
         </thead>
         <tbody>
-            @forelse ($refundRecords as $refund)
+            @forelse ($transactionRecords as $transaction)
                 <tr>
-                    <td>{{ $refund['job_order_number'] }}</td>
-                    <td>{{ $refund['customer_name'] }}</td>
-                    <td>{{ $refund['reason'] }}</td>
-                    <td>{{ $refund['status'] }}</td>
-                    <td>₱{{ number_format($refund['amount'], 2) }}</td>
-                    <td>{{ str_replace('_', ' ', $refund['refund_method'] ?? '-') }} {{ $refund['reference_number'] ? ' / ' . $refund['reference_number'] : '' }}</td>
-                    <td>{{ $refund['initiated_at'] ?? '—' }}</td>
-                    <td>{{ $refund['issued_at'] ?? 'Not issued' }}</td>
+                    <td>{{ $transaction['transaction_date'] }}</td>
+                    <td>{{ $transaction['transaction_label'] }}</td>
+                    <td>{{ $transaction['job_order_number'] ?? '—' }}</td>
+                    <td>{{ $transaction['customer_name'] ?? '—' }}</td>
+                    <td>{{ $transaction['amount'] < 0 ? '- ' : '+ ' }}₱{{ number_format(abs($transaction['amount']), 2) }}</td>
+                    <td>{{ str_replace('_', ' ', $transaction['method'] ?? '—') }}</td>
+                    <td>{{ $transaction['reference_number'] ?? '—' }}</td>
+                    <td>{{ $transaction['date_basis'] }}</td>
                 </tr>
             @empty
-                <tr><td colspan="8">No RTO refund records found.</td></tr>
+                <tr><td colspan="8">No transactions found for the applied report range.</td></tr>
             @endforelse
         </tbody>
     </table>
@@ -542,43 +550,6 @@
                     <td>₱{{ number_format($type['amount'], 2) }}</td>
                 </tr>
             @endforeach
-        </tbody>
-    </table>
-
-    <h2>Payment Transaction History (Latest 30)</h2>
-    <p>Summary totals include all matching transactions. Payment date uses received_at; created_at is shown only as a display fallback when received_at is blank. The date range filters received_at, not updated_at.</p>
-    <table>
-        <thead>
-            <tr>
-                <th>Payment Date</th>
-                <th>Date Basis</th>
-                <th>Job Order</th>
-                <th>Customer</th>
-                <th>Amount</th>
-                <th>Method</th>
-                <th>Type</th>
-                <th>Reference</th>
-                <th>Notes</th>
-                <th>Received By</th>
-            </tr>
-        </thead>
-        <tbody>
-            @forelse ($paymentRecords as $payment)
-                <tr>
-                    <td>{{ $payment['received_at_formatted'] }}</td>
-                    <td>{{ $payment['payment_date_basis'] }}</td>
-                    <td>{{ $payment['job_order_number'] }}</td>
-                    <td>{{ $payment['customer_name'] ?? 'N/A' }}</td>
-                    <td>₱{{ number_format($payment['amount'], 2) }}</td>
-                    <td>{{ str_replace('_', ' ', $payment['payment_method']) }}</td>
-                    <td>{{ str_replace('_', ' ', $payment['payment_type']) }}</td>
-                    <td>{{ $payment['reference_number'] ?? '—' }}</td>
-                    <td>{{ $payment['notes'] ?? '—' }}</td>
-                    <td>{{ $payment['received_by'] ?? '—' }}</td>
-                </tr>
-            @empty
-                <tr><td colspan="10">No payment records found.</td></tr>
-            @endforelse
         </tbody>
     </table>
 

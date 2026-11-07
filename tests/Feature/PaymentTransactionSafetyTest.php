@@ -324,7 +324,10 @@ class PaymentTransactionSafetyTest extends TestCase
             ->assertOk()
             ->assertJsonPath('paymentSummary.pending_refund_obligations', 20)
             ->assertJsonPath('paymentSummary.issued_refunds', 40)
-            ->assertJsonCount(2, 'refundRecords');
+            ->assertJsonCount(2, 'refundRecords')
+            ->assertJsonCount(1, 'transactionRecords')
+            ->assertJsonPath('transactionRecords.0.transaction_type', 'REFUND_ISSUED')
+            ->assertJsonPath('transactionRecords.0.amount', -40);
         $filteredRefunds = collect($filtered->json('refundRecords'))->keyBy('id');
         $this->assertArrayHasKey($pendingInRange->id, $filteredRefunds);
         $this->assertArrayHasKey($issuedInRange->id, $filteredRefunds);
@@ -338,14 +341,18 @@ class PaymentTransactionSafetyTest extends TestCase
             ->get("/api/admin/reports/export/csv?{$dateQuery}")
             ->assertOk()
             ->streamedContent();
-        $this->assertStringContainsString('Pending refunds are filtered by initiated_at; issued refunds are filtered by issued_at.', $csv);
-        $this->assertStringContainsString('Apr 01, 2025', $csv);
+        $this->assertStringContainsString('Transaction History (Latest 30)', $csv);
+        $this->assertStringContainsString('Refund Issued', $csv);
+        $this->assertStringNotContainsString('RTO Refund Ledger', $csv);
+        $this->assertStringContainsString('-40', $csv);
 
         $this->actingAs($admin)
             ->get("/api/admin/reports/export/pdf?{$dateQuery}")
             ->assertOk()
-            ->assertSee('Pending refunds are filtered by initiated_at; issued refunds are filtered by issued_at.')
-            ->assertSee('Apr 01, 2025');
+            ->assertSee('Transaction History (Latest 30)')
+            ->assertSee('Refund Issued')
+            ->assertDontSee('RTO Refund Ledger')
+            ->assertSee('Apr 11, 2025');
 
         $allDates = $this->actingAs($admin)
             ->getJson('/api/admin/reports?report_type=payments')
@@ -489,33 +496,106 @@ class PaymentTransactionSafetyTest extends TestCase
         for ($index = 1; $index <= 31; $index++) {
             $payments->push($this->createPaymentRecord($shop->id, $jobOrder, 1, '2025-04-10 09:00:00'));
         }
+        $refund = $this->createRefundRecord(
+            $shop->id,
+            $jobOrder,
+            25,
+            JobOrderRefund::STATUS_ISSUED,
+            '2025-04-10 08:00:00',
+            '2025-04-10 10:00:00',
+        );
 
         $response = $this->actingAs($admin)
             ->getJson('/api/admin/reports?report_type=payments')
             ->assertOk()
             ->assertJsonPath('paymentSummary.total_records', 31)
             ->assertJsonPath('paymentSummary.total_amount', 31)
-            ->assertJsonCount(30, 'paymentRecords');
+            ->assertJsonCount(30, 'paymentRecords')
+            ->assertJsonCount(30, 'transactionRecords');
 
         $listedIds = collect($response->json('paymentRecords'))->pluck('id');
         $this->assertNotContains($payments->first()->id, $listedIds);
         $this->assertContains($payments->last()->id, $listedIds);
+        $listedTransactions = collect($response->json('transactionRecords'));
+        $this->assertSame("refund-{$refund->id}", $listedTransactions->first()['transaction_key']);
+        $this->assertNotContains("payment-{$payments->first()->id}", $listedTransactions->pluck('transaction_key'));
+        $this->assertNotContains("payment-{$payments[1]->id}", $listedTransactions->pluck('transaction_key'));
+        $this->assertContains("payment-{$payments->last()->id}", $listedTransactions->pluck('transaction_key'));
 
         $csv = $this->actingAs($admin)
             ->get('/api/admin/reports/export/csv?report_type=payments')
             ->assertOk()
             ->streamedContent();
         $this->assertStringContainsString('Customer Collections', $csv);
-        $this->assertStringContainsString('Payment Transaction History (Latest 30)', $csv);
+        $this->assertStringContainsString('Transaction History (Latest 30)', $csv);
+        $this->assertStringContainsString('Refund Issued', $csv);
         $this->assertStringContainsString('summary totals include all matching transactions', strtolower($csv));
 
         $pdf = $this->actingAs($admin)
             ->get('/api/admin/reports/export/pdf?report_type=payments')
             ->assertOk();
-        $pdf->assertSee('Payment Transaction History (Latest 30)')
+        $pdf->assertSee('Transaction History (Latest 30)')
+            ->assertSee('Refund Issued')
             ->assertSee('Customer Collections')
             ->assertSee('Current Pending Customer Balances')
             ->assertSee('not verified bank settlements');
+    }
+
+    public function test_transaction_history_combines_receipts_and_issued_refunds_using_their_event_dates(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $jobOrder = $this->createJobOrder($shop, 1000);
+        $morningPayment = $this->createPaymentRecord($shop->id, $jobOrder, 10, '2025-04-10 08:00:00');
+        $eveningPayment = $this->createPaymentRecord($shop->id, $jobOrder, 20, '2025-04-10 12:00:00', [
+            'payment_method' => 'GCASH',
+            'payment_type' => 'FINAL_PAYMENT',
+        ]);
+        $pendingRefund = $this->createRefundRecord(
+            $shop->id,
+            $jobOrder,
+            50,
+            JobOrderRefund::STATUS_PENDING,
+            '2025-04-10 09:00:00',
+        );
+        $issuedRefund = $this->createRefundRecord(
+            $shop->id,
+            $jobOrder,
+            5,
+            JobOrderRefund::STATUS_ISSUED,
+            '2025-04-01 09:00:00',
+            '2025-04-10 10:00:00',
+        );
+
+        $response = $this->actingAs($admin)
+            ->getJson('/api/admin/reports?report_type=payments&start_date=2025-04-10&end_date=2025-04-10')
+            ->assertOk()
+            ->assertJsonPath('paymentSummary.total_amount', 30)
+            ->assertJsonPath('paymentSummary.issued_refunds', 5)
+            ->assertJsonPath('paymentSummary.pending_refund_obligations', 50)
+            ->assertJsonPath('paymentSummary.net_cash_retained', 25)
+            ->assertJsonCount(3, 'transactionRecords');
+
+        $transactions = $response->json('transactionRecords');
+        $this->assertSame("payment-{$eveningPayment->id}", $transactions[0]['transaction_key']);
+        $this->assertSame("refund-{$issuedRefund->id}", $transactions[1]['transaction_key']);
+        $this->assertSame("payment-{$morningPayment->id}", $transactions[2]['transaction_key']);
+        $this->assertEquals(-5, $transactions[1]['amount']);
+        $this->assertSame('issued_at', $transactions[1]['date_basis']);
+        $this->assertNotContains("refund-{$pendingRefund->id}", collect($transactions)->pluck('transaction_key'));
+
+        $methodFiltered = $this->actingAs($admin)
+            ->getJson('/api/admin/reports?report_type=payments&payment_method=GCASH')
+            ->assertOk()
+            ->assertJsonCount(1, 'transactionRecords');
+        $this->assertSame("payment-{$eveningPayment->id}", $methodFiltered->json('transactionRecords.0.transaction_key'));
+
+        $typeFiltered = $this->actingAs($admin)
+            ->getJson('/api/admin/reports?report_type=payments&payment_type=PARTIAL_PAYMENT')
+            ->assertOk();
+        $this->assertNotContains(
+            "refund-{$issuedRefund->id}",
+            collect($typeFiltered->json('transactionRecords'))->pluck('transaction_key'),
+        );
     }
 
     public function test_same_key_retries_return_the_original_payment_without_duplicate_rows_or_audits(): void
