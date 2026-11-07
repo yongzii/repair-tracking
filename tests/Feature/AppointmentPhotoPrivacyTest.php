@@ -73,11 +73,16 @@ class AppointmentPhotoPrivacyTest extends TestCase
         [$shopA, $appointmentA] = $this->createAppointmentWithPhoto();
         [$shopB, $appointmentB] = $this->createAppointmentWithPhoto();
         $staffA = $this->createShopUser($shopA, User::ROLE_STAFF);
+        $technicianA = $this->createShopUser($shopA, User::ROLE_TECHNICIAN);
 
         $this->getJson("/api/admin/appointments/{$appointmentA->id}/photo")
             ->assertUnauthorized();
 
         $this->actingAs($staffA)
+            ->get("/api/admin/appointments/{$appointmentA->id}/photo")
+            ->assertOk();
+
+        $this->actingAs($technicianA)
             ->get("/api/admin/appointments/{$appointmentA->id}/photo")
             ->assertOk();
 

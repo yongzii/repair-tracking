@@ -1,7 +1,8 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue';
+import { computed, onMounted, reactive, ref } from 'vue';
 import AdminLayout from '../../layouts/AdminLayout.vue';
-import { ensureRoles } from '../../composables/auth';
+import TechnicianLayout from '../../layouts/TechnicianLayout.vue';
+import { authState, ensureRoles } from '../../composables/auth';
 import { navigate } from '../../navigation';
 
 const loading = ref(true);
@@ -12,6 +13,7 @@ const appointments = ref({ data: [], links: [] });
 const selectedAppointment = ref(null);
 const updatingId = ref(null);
 const responseForms = reactive({});
+const pageLayout = computed(() => authState.user?.role === 'technician' ? TechnicianLayout : AdminLayout);
 
 const consultationStatusLabel = (appointment) => {
     if (appointment.status === 'CANCELLED') return 'Cancelled';
@@ -60,7 +62,7 @@ const hydrateResponseForms = () => {
 };
 
 const loadAppointments = async (page = 1) => {
-    const auth = await ensureRoles(['admin', 'staff']);
+    const auth = await ensureRoles(['admin', 'staff', 'technician']);
     if (!auth.ok) {
         if (auth.reason === 'unauthenticated') {
             navigate('/login', { replace: true });
@@ -153,7 +155,7 @@ onMounted(() => loadAppointments());
 </script>
 
 <template>
-  <AdminLayout title="Customer Requests">
+  <component :is="pageLayout" title="Customer Requests">
     <div v-if="loading" class="card p-6 text-slate-600">Loading customer requests...</div>
     <div v-else-if="forbidden" class="card border border-rose-200 bg-rose-50 p-6 text-rose-700">You do not have access to this page.</div>
 
@@ -285,5 +287,5 @@ onMounted(() => loadAppointments());
         </div>
       </section>
     </div>
-  </AdminLayout>
+  </component>
 </template>

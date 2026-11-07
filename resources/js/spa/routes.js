@@ -150,6 +150,10 @@ export const resolveRoute = (path) => {
         return { component: AppointmentsPage, params: {}, title: 'Customer Requests' };
     }
 
+    if (path === '/technician/consultations') {
+        return { component: AppointmentsPage, params: {}, title: 'Customer Requests' };
+    }
+
     if (path === '/admin/job-orders/create') {
         return { component: JobOrdersPage, params: { openCreate: true }, title: 'Job Orders' };
     }

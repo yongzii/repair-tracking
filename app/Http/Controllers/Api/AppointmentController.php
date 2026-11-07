@@ -77,7 +77,7 @@ class AppointmentController extends Controller
 
     public function index(Request $request)
     {
-        $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF, User::ROLE_TECHNICIAN]);
         $shopId = $this->currentShopId($request);
 
         $query = Appointment::query()
@@ -158,8 +158,9 @@ class AppointmentController extends Controller
 
     public function showStaffPhoto(Request $request, Appointment $appointment)
     {
-        $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF, User::ROLE_TECHNICIAN]);
         $this->ensureSameShop($request, $appointment);
+        $this->ensureTechnicianConsultation($user, $appointment);
 
         if (!$appointment->photo_path) {
             abort(404, 'Appointment photo not found.');
@@ -170,8 +171,9 @@ class AppointmentController extends Controller
 
     public function show(Request $request, Appointment $appointment)
     {
-        $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF, User::ROLE_TECHNICIAN]);
         $this->ensureSameShop($request, $appointment);
+        $this->ensureTechnicianConsultation($user, $appointment);
 
         return response()->json([
             'appointment' => $this->mapAppointment($appointment, $this->staffPhotoUrl($appointment)),
@@ -180,7 +182,7 @@ class AppointmentController extends Controller
 
     public function updateStatus(Request $request, Appointment $appointment)
     {
-        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF]);
+        $user = $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF, User::ROLE_TECHNICIAN]);
         $this->ensureSameShop($request, $appointment);
 
         if ($appointment->booking_type !== 'CONSULTATION') {
@@ -233,6 +235,13 @@ class AppointmentController extends Controller
             'message' => 'Appointment updated successfully.',
             'appointment' => $this->mapAppointment($appointment->fresh(), $this->staffPhotoUrl($appointment)),
         ]);
+    }
+
+    private function ensureTechnicianConsultation(User $user, Appointment $appointment): void
+    {
+        if ($user->isTechnician() && $appointment->booking_type !== 'CONSULTATION') {
+            abort(404, 'Consultation request not found.');
+        }
     }
 
     /**

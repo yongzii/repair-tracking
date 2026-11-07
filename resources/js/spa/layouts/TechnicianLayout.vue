@@ -188,6 +188,11 @@ watch(() => user.value?.role, (role) => {
           >!</span>
         </AppLink>
 
+        <AppLink to="/technician/consultations" class="nav-link" :class="currentPath === '/technician/consultations' ? 'nav-link-active' : ''">
+          <i class="fas fa-comment-medical w-5"></i>
+          <span>Customer Requests</span>
+        </AppLink>
+
         <AppLink to="/track" class="nav-link" :class="currentPath.startsWith('/track') ? 'nav-link-active' : ''">
           <i class="fas fa-eye w-5"></i>
           <span>Customer Tracking</span>

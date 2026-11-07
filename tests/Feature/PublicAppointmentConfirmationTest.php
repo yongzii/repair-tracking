@@ -60,6 +60,157 @@ class PublicAppointmentConfirmationTest extends TestCase
             ->assertJsonPath('appointment.responded_at', $appointment->responded_at->toJSON());
     }
 
+    public function test_technician_can_list_view_and_send_the_official_customer_consultation_response(): void
+    {
+        [$shop, $appointment] = $this->createAppointment();
+        $shop->update(['trial_ends_at' => now()->addDays(30)]);
+        $technician = User::factory()->create([
+            'shop_id' => $shop->id,
+            'role' => User::ROLE_TECHNICIAN,
+            'is_active' => true,
+        ]);
+        $admin = User::factory()->create([
+            'shop_id' => $shop->id,
+            'role' => User::ROLE_SHOP_ADMIN,
+            'is_active' => true,
+        ]);
+        $staff = User::factory()->create([
+            'shop_id' => $shop->id,
+            'role' => User::ROLE_STAFF,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($technician)
+            ->getJson('/api/admin/appointments')
+            ->assertOk()
+            ->assertJsonPath('appointments.data.0.id', $appointment->id)
+            ->assertJsonPath('appointments.data.0.model', 'Model One')
+            ->assertJsonPath('appointments.data.0.customer_response', 'We have provided the requested guidance.');
+
+        $this->getJson("/api/admin/appointments/{$appointment->id}")
+            ->assertOk()
+            ->assertJsonPath('appointment.customer_name', 'Customer Name')
+            ->assertJsonPath('appointment.concern', 'Device does not power on.');
+
+        $this->postJson("/api/admin/appointments/{$appointment->id}/status", [
+            'status' => 'PENDING',
+            'customer_response' => 'The symptoms may indicate a battery fault. Please bring the device in for inspection.',
+        ])->assertOk()
+            ->assertJsonPath('appointment.responded_by', $technician->name);
+
+        foreach ([$admin, $staff] as $shopUser) {
+            $this->actingAs($shopUser)
+                ->getJson('/api/admin/appointments')
+                ->assertOk()
+                ->assertJsonPath('appointments.data.0.id', $appointment->id);
+
+            $this->getJson("/api/admin/appointments/{$appointment->id}")
+                ->assertOk()
+                ->assertJsonPath('appointment.customer_response', 'The symptoms may indicate a battery fault. Please bring the device in for inspection.')
+                ->assertJsonPath('appointment.responded_by', $technician->name);
+        }
+
+        $this->getJson("/api/shops/{$shop->slug}/appointments/{$appointment->confirmation_code}")
+            ->assertOk()
+            ->assertJsonPath('appointment.customer_response', 'The symptoms may indicate a battery fault. Please bring the device in for inspection.');
+        $this->assertSame(0, JobOrder::query()->count());
+    }
+
+    public function test_technician_consultation_access_is_tenant_scoped_and_rejects_empty_responses(): void
+    {
+        [$shop, $appointment] = $this->createAppointment();
+        $shop->update(['trial_ends_at' => now()->addDays(30)]);
+        [, $otherAppointment] = $this->createAppointment();
+        $technician = User::factory()->create([
+            'shop_id' => $shop->id,
+            'role' => User::ROLE_TECHNICIAN,
+            'is_active' => true,
+        ]);
+        $unauthorized = User::factory()->create([
+            'role' => User::ROLE_PLATFORM_ADMIN,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($technician)
+            ->getJson("/api/admin/appointments/{$otherAppointment->id}")
+            ->assertNotFound();
+        $this->postJson("/api/admin/appointments/{$otherAppointment->id}/status", [
+            'status' => 'PENDING',
+            'customer_response' => 'Unauthorized cross-shop response.',
+        ])->assertNotFound();
+
+        $this->postJson("/api/admin/appointments/{$appointment->id}/status", [
+            'status' => 'PENDING',
+            'customer_response' => " \n ",
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors('customer_response');
+        $this->assertSame('We have provided the requested guidance.', $appointment->fresh()->customer_response);
+        $this->assertSame(0, JobOrder::query()->count());
+
+        $this->actingAs($unauthorized)
+            ->getJson('/api/admin/appointments')
+            ->assertForbidden();
+    }
+
+    public function test_all_shop_roles_are_strictly_isolated_from_other_shop_consultations(): void
+    {
+        [$shopA, $appointmentA] = $this->createAppointment();
+        [$shopB, $appointmentB] = $this->createAppointment();
+        $shopA->update(['trial_ends_at' => now()->addDays(30)]);
+        $shopB->update(['trial_ends_at' => now()->addDays(30)]);
+
+        $roles = [User::ROLE_SHOP_ADMIN, User::ROLE_STAFF, User::ROLE_TECHNICIAN];
+        $usersByShop = [];
+        foreach ([$shopA, $shopB] as $shop) {
+            foreach ($roles as $role) {
+                $usersByShop[$shop->id][$role] = User::factory()->create([
+                    'shop_id' => $shop->id,
+                    'role' => $role,
+                    'is_active' => true,
+                ]);
+            }
+        }
+
+        $this->getJson('/api/admin/appointments')->assertUnauthorized();
+        $this->getJson("/api/admin/appointments/{$appointmentA->id}")->assertUnauthorized();
+        $this->postJson("/api/admin/appointments/{$appointmentA->id}/status", [
+            'status' => 'CANCELLED',
+        ])->assertUnauthorized();
+
+        foreach ([
+            [$shopA, $appointmentA, $appointmentB, $shopB],
+            [$shopB, $appointmentB, $appointmentA, $shopA],
+        ] as [$ownShop, $ownAppointment, $otherAppointment, $otherShop]) {
+            foreach ($roles as $role) {
+                $user = $usersByShop[$ownShop->id][$role];
+                $this->actingAs($user)
+                    ->getJson('/api/admin/appointments')
+                    ->assertOk()
+                    ->assertJsonCount(1, 'appointments.data')
+                    ->assertJsonPath('appointments.data.0.id', $ownAppointment->id);
+
+                $this->getJson("/api/admin/appointments/{$ownAppointment->id}")
+                    ->assertOk()
+                    ->assertJsonPath('appointment.customer_name', $ownAppointment->customer_name);
+
+                $this->getJson("/api/admin/appointments/{$otherAppointment->id}")->assertNotFound();
+
+                $this->postJson("/api/admin/appointments/{$otherAppointment->id}/status", [
+                    'status' => 'PENDING',
+                    'customer_response' => 'This cross-shop response must not be saved.',
+                ])->assertNotFound();
+
+                $this->postJson("/api/admin/appointments/{$otherAppointment->id}/status", [
+                    'status' => 'CANCELLED',
+                ])->assertNotFound();
+
+                $this->assertSame('COMPLETED', $otherAppointment->fresh()->status);
+                $this->assertSame('We have provided the requested guidance.', $otherAppointment->fresh()->customer_response);
+                $this->assertSame((int) $otherShop->id, (int) $otherAppointment->fresh()->shop_id);
+            }
+        }
+    }
+
     public function test_staff_can_clear_an_internal_note_with_empty_or_null_input(): void
     {
         [$shop, $appointment] = $this->createAppointment();
