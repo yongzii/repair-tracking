@@ -61,26 +61,6 @@ class ReportsController extends Controller
                 fputcsv($handle, ['Slowest (days)', $report['maxTurnaround']]);
                 fputcsv($handle, []);
 
-                fputcsv($handle, ['Job Order Sales & Capital Report']);
-                fputcsv($handle, ['Gross = original job order estimated price (total_cost). Capital = sum of stored historical job_order_parts.total_cost. Blank capital means no parts were recorded. Gross Less Capital is not verified net profit because operating expenses are excluded.']);
-                fputcsv($handle, ['Total Job Order Value (Gross)', $report['jobOrderSalesCapital']['summary']['total_gross']]);
-                fputcsv($handle, ['Total Recorded Parts Capital', $report['jobOrderSalesCapital']['summary']['total_capital']]);
-                fputcsv($handle, ['Gross Less Capital', $report['jobOrderSalesCapital']['summary']['gross_less_capital']]);
-                fputcsv($handle, ['Customer Name', 'Tracking Number', 'Device / Unit', 'Service', 'Gross', 'Capital', 'Payment Method', 'Technician']);
-                foreach ($report['jobOrderSalesCapital']['rows'] as $row) {
-                    fputcsv($handle, [
-                        $row['customer_name'],
-                        $row['tracking_number'],
-                        $row['unit'],
-                        $row['service'],
-                        $row['gross'],
-                        $row['capital'],
-                        $row['payment_method'],
-                        $row['technician'],
-                    ]);
-                }
-                fputcsv($handle, []);
-
                 fputcsv($handle, ['Technician Performance (Current Assignment)']);
                 fputcsv($handle, ['Results reflect the currently stored technician assignment; not historical assignment']);
                 fputcsv($handle, ['Successful jobs use pickup date (picked_up_at); RTO outcomes use job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.']);
@@ -112,15 +92,13 @@ class ReportsController extends Controller
                 fputcsv($handle, ['Active Inventory Items', $inventory['summary']['active_items']]);
                 fputcsv($handle, ['Inactive Inventory Items', $inventory['summary']['inactive_items']]);
                 fputcsv($handle, ['Low Stock Items', $inventory['summary']['low_stock_items'], 'Includes inactive items; stock_quantity <= reorder_level.']);
-                fputcsv($handle, ['Estimated Current Inventory Value (PHP)', $inventory['summary']['estimated_current_inventory_value']]);
-                fputcsv($handle, ['Estimated value formula', 'Current stock_quantity × editable unit_cost; estimate only, not historical valuation or actual purchase cost.']);
                 fputcsv($handle, ['Total Current Stock Quantity by Unit']);
                 fputcsv($handle, ['Unit', 'Quantity']);
                 foreach ($inventory['summary']['stock_quantity_by_unit'] as $unitTotal) {
                     fputcsv($handle, [$unitTotal['unit'], $unitTotal['quantity']]);
                 }
                 fputcsv($handle, ['Current Inventory Items']);
-                fputcsv($handle, ['Part Name', 'Part Number', 'Category', 'Unit', 'Current Stock', 'Reorder Level', 'Stock Status', 'Active Status', 'Unit Cost (PHP)', 'Estimated Item Value (PHP)']);
+                fputcsv($handle, ['Part Name', 'Part Number', 'Category', 'Unit', 'Current Stock', 'Reorder Level', 'Stock Status', 'Active Status']);
                 foreach ($inventory['items'] as $item) {
                     fputcsv($handle, [
                         $item['part_name'],
@@ -131,8 +109,6 @@ class ReportsController extends Controller
                         $item['reorder_level'],
                         $item['stock_status'],
                         $item['active_status'],
-                        $item['unit_cost'],
-                        $item['estimated_item_value'],
                     ]);
                 }
                 if ($inventory['items'] === []) {
@@ -227,14 +203,12 @@ class ReportsController extends Controller
 
             if ($includePayments) {
                 fputcsv($handle, ['Financial Summary']);
-                fputcsv($handle, ['Original Repair Costs', $report['totalRevenue']]);
+                fputcsv($handle, ['Customer Job Order Value', $report['totalRevenue']]);
                 fputcsv($handle, ['Total Collected', $report['totalCollected']]);
                 fputcsv($handle, ['Pending RTO Refund Obligations', $report['pendingRtoRefunds']]);
                 fputcsv($handle, ['RTO Refunds Issued', $report['issuedRtoRefunds']]);
                 fputcsv($handle, ['Net Retained After Issued Refunds', $report['netRetained']]);
                 fputcsv($handle, ['Pending Receivables', $report['pendingReceivables']]);
-                fputcsv($handle, ['Estimated Gross Profit', $report['estimatedGrossProfit']]);
-                fputcsv($handle, ['Gross Profit Margin (%)', $report['grossProfitMargin']]);
                 fputcsv($handle, []);
 
                 fputcsv($handle, ['Customer Collections']);
@@ -550,9 +524,6 @@ class ReportsController extends Controller
         $pendingReceivables = round((float) (clone $baseQuery)
             ->whereNotIn('current_status', ['RTO', 'RTO_RELEASED'])
             ->sum(DB::raw('CASE WHEN total_cost > amount_paid THEN total_cost - amount_paid ELSE 0 END')), 2);
-        $partsCostTotal = round((float) (clone $baseQuery)->sum('parts_cost'), 2);
-        $estimatedGrossProfit = round($totalRevenue - $partsCostTotal, 2);
-        $grossProfitMargin = $totalRevenue > 0 ? round(($estimatedGrossProfit / $totalRevenue) * 100, 1) : 0;
         $technicianAnalytics = $this->buildTechnicianAnalytics(
             $shopId,
             $startDate,
@@ -576,8 +547,6 @@ class ReportsController extends Controller
             ->map(fn (JobOrder $jobOrder) => $this->mapJobOrderRecord($jobOrder))
             ->values()
             ->all();
-        $jobOrderSalesCapital = $this->buildJobOrderSalesCapitalReport($baseQuery, $shopId);
-
         $paymentReport = $this->buildPaymentReport(
             shopId: $shopId,
             startDate: $startDate,
@@ -624,71 +593,11 @@ class ReportsController extends Controller
             'issuedRtoRefunds' => $issuedRtoRefunds,
             'netRetained' => $netRetained,
             'pendingReceivables' => $pendingReceivables,
-            'estimatedGrossProfit' => $estimatedGrossProfit,
-            'grossProfitMargin' => $grossProfitMargin,
             'technicianPerformance' => $technicianAnalytics['performance'],
             'currentTechnicianWorkload' => $technicianAnalytics['workload'],
             'inventoryReport' => $inventoryReport,
             'filteredJobOrders' => $filteredJobOrders,
-            'jobOrderSalesCapital' => $jobOrderSalesCapital,
             ...$paymentReport,
-        ];
-    }
-
-    private function buildJobOrderSalesCapitalReport($baseQuery, int $shopId): array
-    {
-        $jobs = (clone $baseQuery)
-            ->with([
-                'technician:id,name',
-                'serviceCategory:id,name',
-                'serviceItem:id,name',
-                'parts:id,job_order_id,total_cost',
-                'payments' => fn ($query) => $query
-                    ->where('shop_id', $shopId)
-                    ->select(['id', 'shop_id', 'job_order_id', 'payment_method']),
-            ])
-            ->latest('created_at')
-            ->latest('id')
-            ->get();
-
-        $rows = $jobs->map(function (JobOrder $jobOrder): array {
-            $partRows = $jobOrder->parts;
-            $capital = $partRows->isEmpty()
-                ? null
-                : round((float) $partRows->sum('total_cost'), 2);
-            $paymentMethods = $jobOrder->payments
-                ->map(fn (JobOrderPayment $payment) => $this->normalizedPaymentMethod($payment))
-                ->unique()
-                ->sort()
-                ->map(fn (string $method) => $this->formatPaymentMethodLabel($method))
-                ->values()
-                ->implode(' + ');
-
-            return [
-                'customer_name' => $jobOrder->customer_name,
-                'tracking_number' => $jobOrder->job_order_number,
-                'unit' => trim(collect([$jobOrder->brand, $jobOrder->model, $jobOrder->device_type])->filter()->implode(' ')),
-                'service' => $jobOrder->serviceItem?->name
-                    ?? $jobOrder->serviceCategory?->name
-                    ?? $jobOrder->device_type
-                    ?? 'Unspecified service',
-                'gross' => (float) $jobOrder->total_cost,
-                'capital' => $capital,
-                'payment_method' => $paymentMethods !== '' ? $paymentMethods : 'Unpaid',
-                'technician' => $jobOrder->technician?->name ?? 'Unassigned',
-            ];
-        })->values();
-
-        $totalGross = round((float) $rows->sum('gross'), 2);
-        $totalCapital = round((float) $rows->filter(fn (array $row) => $row['capital'] !== null)->sum('capital'), 2);
-
-        return [
-            'summary' => [
-                'total_gross' => $totalGross,
-                'total_capital' => $totalCapital,
-                'gross_less_capital' => round($totalGross - $totalCapital, 2),
-            ],
-            'rows' => $rows->all(),
         ];
     }
 
@@ -705,17 +614,12 @@ class ReportsController extends Controller
                 'unit',
                 'stock_quantity',
                 'reorder_level',
-                'unit_cost',
                 'is_active',
             ]);
 
-        $estimatedValueCents = 0;
-        $items = $parts->map(function (SparePart $part) use (&$estimatedValueCents): array {
+        $items = $parts->map(function (SparePart $part): array {
             $stockQuantity = (int) $part->stock_quantity;
             $reorderLevel = (int) $part->reorder_level;
-            $unitCost = (float) $part->unit_cost;
-            $estimatedItemValue = round($stockQuantity * $unitCost, 2);
-            $estimatedValueCents += (int) round($estimatedItemValue * 100);
 
             return [
                 'id' => $part->id,
@@ -729,8 +633,6 @@ class ReportsController extends Controller
                 'is_low_stock' => $stockQuantity <= $reorderLevel,
                 'is_active' => (bool) $part->is_active,
                 'active_status' => $part->is_active ? 'Active' : 'Inactive',
-                'unit_cost' => $unitCost,
-                'estimated_item_value' => $estimatedItemValue,
             ];
         });
 
@@ -824,7 +726,6 @@ class ReportsController extends Controller
                 'inactive_items' => $items->where('is_active', false)->count(),
                 'low_stock_items' => $items->where('is_low_stock', true)->count(),
                 'stock_quantity_by_unit' => $stockQuantityByUnit,
-                'estimated_current_inventory_value' => $estimatedValueCents / 100,
             ],
             'items' => $items->values()->all(),
             'movement_summary' => [

@@ -846,7 +846,7 @@ class JobOrderSafetyTest extends TestCase
             ->assertJsonPath('inventoryReport.summary.active_items', 2)
             ->assertJsonPath('inventoryReport.summary.inactive_items', 1)
             ->assertJsonPath('inventoryReport.summary.low_stock_items', 2)
-            ->assertJsonPath('inventoryReport.summary.estimated_current_inventory_value', 92);
+            ->assertJsonMissingPath('inventoryReport.summary.estimated_current_inventory_value');
 
         $stockByUnit = collect($response->json('inventoryReport.summary.stock_quantity_by_unit'))->keyBy('unit');
         $this->assertSame(5, $stockByUnit['pcs']['quantity']);
@@ -855,7 +855,8 @@ class JobOrderSafetyTest extends TestCase
         $items = collect($response->json('inventoryReport.items'))->keyBy('part_name');
         $this->assertSame('Low Stock', $items['Inactive Boundary Part']['stock_status']);
         $this->assertSame('Inactive', $items['Inactive Boundary Part']['active_status']);
-        $this->assertEquals(30, $items['Inactive Boundary Part']['estimated_item_value']);
+        $this->assertArrayNotHasKey('unit_cost', $items['Inactive Boundary Part']);
+        $this->assertArrayNotHasKey('estimated_item_value', $items['Inactive Boundary Part']);
         $this->assertSame('In Stock', $items['Active In-Stock Part']['stock_status']);
     }
 
@@ -971,14 +972,14 @@ class JobOrderSafetyTest extends TestCase
             ->streamedContent();
         $this->assertStringContainsString('No inventory items found for this shop.', $csv);
         $this->assertStringContainsString('No stock movements found for the applied date scope.', $csv);
-        $this->assertStringContainsString('Estimated Current Inventory Value (PHP)', $csv);
+        $this->assertStringNotContainsString('Estimated Current Inventory Value (PHP)', $csv);
 
         $this->actingAs($admin)
             ->get('/api/admin/reports/export/pdf?report_type=operations')
             ->assertOk()
             ->assertSee('No inventory items found for this shop.')
             ->assertSee('No stock movements found for the applied date scope.')
-            ->assertSee('Estimated Current Inventory Value');
+            ->assertDontSee('Estimated Current Inventory Value');
     }
 
     public function test_custom_report_comparison_uses_the_preceding_equal_length_period_and_preserves_service_filter(): void

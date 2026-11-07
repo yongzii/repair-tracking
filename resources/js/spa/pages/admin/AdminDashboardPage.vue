@@ -29,7 +29,7 @@ const metricCards = computed(() => {
         { label: 'Overdue Repairs', value: stats.value.overdueJobs, hint: 'Needs attention', accent: 'text-rose-700', tone: 'bg-rose-500' },
         { label: "Today's Intake", value: stats.value.todayIntake, hint: 'New jobs today', accent: 'text-slate-950', tone: 'bg-slate-400' },
         { label: 'Unpaid Jobs', value: stats.value.unpaidJobs, hint: 'With remaining balance', accent: 'text-slate-950', tone: 'bg-indigo-500' },
-        { label: 'Pending Payments', value: formatCurrency(stats.value.pendingPayments), hint: 'Total receivables', accent: 'text-slate-950', tone: 'bg-cyan-500', wide: true },
+        { label: 'Outstanding Balances', value: formatCurrency(stats.value.pendingPayments), hint: 'Current unpaid balances from eligible Job Orders.', accent: 'text-slate-950', tone: 'bg-cyan-500', wide: true },
     ];
 });
 
@@ -39,7 +39,6 @@ const healthCards = computed(() => {
     return [
         { label: 'Average Turnaround', value: stats.value.averageTurnaround, suffix: 'days', detail: 'Average completion time' },
         { label: 'Completion Rate', value: `${stats.value.completionRate}%`, detail: 'Completed against all jobs' },
-        { label: 'Profit Margin', value: `${stats.value.profitMargin || 0}%`, detail: 'Estimated from repair cost data' },
     ];
 });
 
@@ -101,7 +100,7 @@ onMounted(loadDashboard);
             </div>
           </div>
 
-          <div class="grid gap-3 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-2">
             <div v-for="item in healthCards" :key="item.label" class="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <p class="text-xs font-bold uppercase tracking-wide text-slate-500">{{ item.label }}</p>
               <p class="mt-2 text-2xl font-bold text-slate-950">
@@ -120,6 +119,7 @@ onMounted(loadDashboard);
           :key="metric.label"
           :to="metric.to"
           class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-lg hover:shadow-slate-900/5 sm:p-5"
+          :class="metric.wide ? 'xl:col-span-2' : ''"
         >
           <div class="flex items-start justify-between gap-4">
             <div>
@@ -163,36 +163,6 @@ onMounted(loadDashboard);
               </div>
             </div>
             <p v-if="!stats.attentionJobs.length" class="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No urgent jobs right now.</p>
-          </div>
-        </div>
-
-      </section>
-
-      <section class="grid grid-cols-1 gap-6 xl:grid-cols-[0.82fr_1.18fr]">
-        <div class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div class="mb-5 flex items-center justify-between gap-4">
-            <div>
-              <h3 class="text-lg font-bold text-slate-950">Technician Workload</h3>
-              <p class="mt-1 text-sm text-slate-500">Current queue by technician.</p>
-            </div>
-            <AppLink v-if="canManageTeam()" to="/admin/technicians" class="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Manage</AppLink>
-          </div>
-
-          <div class="space-y-3">
-            <div v-for="tech in stats.technicians" :key="tech.id" class="rounded-xl border border-slate-200 p-4">
-              <div class="flex items-center justify-between gap-4">
-                <div>
-                  <AppLink v-if="canManageTeam()" :to="`/admin/technicians/${tech.id}`" class="font-bold text-slate-950 hover:text-teal-700">{{ tech.name }}</AppLink>
-                  <p v-else class="font-bold text-slate-950">{{ tech.name }}</p>
-                  <p class="mt-1 text-sm text-slate-500">Current jobs: {{ tech.currentJobs }}</p>
-                </div>
-                <div class="text-right">
-                  <p class="text-sm font-semibold text-slate-700">Completed: {{ tech.completedJobs }}</p>
-                  <p class="text-xs text-slate-500">Rating: {{ tech.rating || 'N/A' }}</p>
-                </div>
-              </div>
-            </div>
-            <p v-if="!stats.technicians.length" class="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500">No active technicians found.</p>
           </div>
         </div>
 
@@ -243,6 +213,32 @@ onMounted(loadDashboard);
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <section class="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div class="mb-5 flex items-center justify-between gap-4">
+          <div>
+            <h3 class="text-lg font-bold text-slate-950">Technician Workload</h3>
+            <p class="mt-1 text-sm text-slate-500">Current queue by technician.</p>
+          </div>
+          <AppLink v-if="canManageTeam()" to="/admin/technicians" class="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:border-teal-200 hover:text-teal-700">Manage</AppLink>
+        </div>
+
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          <div v-for="tech in stats.technicians" :key="tech.id" class="rounded-xl border border-slate-200 p-4">
+            <div class="flex items-center justify-between gap-4">
+              <div>
+                <AppLink v-if="canManageTeam()" :to="`/admin/technicians/${tech.id}`" class="font-bold text-slate-950 hover:text-teal-700">{{ tech.name }}</AppLink>
+                <p v-else class="font-bold text-slate-950">{{ tech.name }}</p>
+                <p class="mt-1 text-sm text-slate-500">Current jobs: {{ tech.currentJobs }}</p>
+              </div>
+              <div class="text-right">
+                <p class="text-sm font-semibold text-slate-700">Completed: {{ tech.completedJobs }}</p>
+              </div>
+            </div>
+          </div>
+          <p v-if="!stats.technicians.length" class="rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 md:col-span-2 xl:col-span-3">No active technicians found.</p>
         </div>
       </section>
     </div>

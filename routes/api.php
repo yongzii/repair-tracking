@@ -89,7 +89,6 @@ Route::middleware('web')->group(function () {
         Route::patch('/job-order-part-orders/{partOrder}/place-order', [JobOrderPartOrderController::class, 'placeOrder']);
         Route::patch('/job-order-part-orders/{partOrder}/receive', [JobOrderPartOrderController::class, 'receive']);
         Route::patch('/job-order-part-orders/{partOrder}/cancel', [JobOrderPartOrderController::class, 'cancel']);
-        Route::patch('/job-orders/{jobOrder}/device-location', [JobOrderPartOrderController::class, 'updateDeviceLocation']);
         Route::get('/blocked-job-requests', [BlockedJobPartController::class, 'index']);
         Route::post('/blocked-job-orders/{jobOrder}/fulfill-parts-request', [BlockedJobPartController::class, 'fulfill']);
         Route::get('/appointments', [AppointmentController::class, 'index']);
@@ -182,7 +181,6 @@ Route::middleware('web')->group(function () {
         Route::post('/job-orders/{jobOrder}/blocked-part-requests', [BlockedJobPartController::class, 'store']);
         Route::post('/job-orders/{jobOrder}/part-orders', [JobOrderPartOrderController::class, 'store']);
         Route::patch('/job-orders/{jobOrder}/part-orders/{partOrder}/issue', [JobOrderPartOrderController::class, 'issueToJob']);
-        Route::patch('/job-orders/{jobOrder}/device-location', [JobOrderPartOrderController::class, 'updateDeviceLocation']);
         Route::get('/job-orders/{jobOrder}', [TechnicianPortalController::class, 'showJob']);
         Route::post('/job-orders/{jobOrder}/record-repair-approval', [TechnicianPortalController::class, 'recordRepairApproval']);
         Route::post('/job-orders/{jobOrder}/update-status', [TechnicianPortalController::class, 'updateStatus']);

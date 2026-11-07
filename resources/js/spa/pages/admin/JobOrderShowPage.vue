@@ -27,6 +27,7 @@ const legacyRefundReconciliationAmount = ref(0);
 const photos = ref([]);
 const notifications = ref([]);
 const warrantyAssessments = ref([]);
+const warrantyEligibility = ref(null);
 const selectedPhoto = ref(null);
 const uploadingPhoto = ref(false);
 const issuingWarrantyService = ref(false);
@@ -123,7 +124,6 @@ const partForm = ref({
     spare_part_id: '',
     part_name: '',
     quantity: 1,
-    unit_cost: '',
     notes: '',
 });
 
@@ -149,17 +149,6 @@ const activeWarrantyService = computed(() => warrantyAssessments.value.find((ass
         && !['RTO', 'RTO_RELEASED'].includes(warrantyJob.current_status);
 }) || null);
 
-const warrantyExpiresAt = computed(() => {
-    if (!jobOrder.value?.picked_up_at || !jobOrder.value?.warranty_days) return null;
-    const pickedUpAt = new Date(jobOrder.value.picked_up_at);
-
-    if (Number.isNaN(pickedUpAt.getTime())) return null;
-
-    pickedUpAt.setDate(pickedUpAt.getDate() + Number(jobOrder.value.warranty_days || 0));
-
-    return pickedUpAt;
-});
-
 const warrantyServiceBlockReason = computed(() => {
     if (!jobOrder.value || isWarrantyServiceJob.value || activeWarrantyService.value) return '';
 
@@ -172,11 +161,11 @@ const warrantyServiceBlockReason = computed(() => {
     }
 
     if (Number(jobOrder.value.warranty_days || 0) <= 0) {
-        return 'This job order has no warranty coverage recorded.';
+        return 'No warranty was issued for this Job Order. Warranty Service is unavailable.';
     }
 
-    if (warrantyExpiresAt.value && new Date() > warrantyExpiresAt.value) {
-        return 'This job order warranty has already expired.';
+    if (warrantyEligibility.value && !warrantyEligibility.value.is_active) {
+        return 'Warranty period has expired. Warranty Service is no longer available for this Job Order.';
     }
 
     return '';
@@ -383,6 +372,7 @@ const loadJobOrder = async () => {
         photos.value = data.photos || [];
         notifications.value = data.notifications || [];
         warrantyAssessments.value = data.warrantyAssessments || [];
+        warrantyEligibility.value = data.warrantyEligibility || null;
         inventoryParts.value = inventoryResponse.data.items || [];
         warrantyForm.value.warranty_days = Number(jobOrder.value.warranty_days || 0);
         warrantyForm.value.warranty_details = jobOrder.value.warranty_details || '';
@@ -661,12 +651,14 @@ const addPart = async () => {
     errorMessage.value = '';
     try {
         const payload = {
-            ...partForm.value,
+            part_name: partForm.value.part_name,
+            quantity: partForm.value.quantity,
+            notes: partForm.value.notes || null,
             spare_part_id: partForm.value.spare_part_id || null,
         };
         const { data } = await window.axios.post(`/api/admin/job-orders/${props.params.id}/parts`, payload);
         successMessage.value = data.message || 'Part added.';
-        partForm.value = { spare_part_id: '', part_name: '', quantity: 1, unit_cost: '', notes: '' };
+        partForm.value = { spare_part_id: '', part_name: '', quantity: 1, notes: '' };
         await loadJobOrder();
     } catch (error) {
         const firstError = error?.response?.data?.errors
@@ -679,7 +671,6 @@ const addPart = async () => {
 const onSparePartChange = () => {
     if (!selectedSparePart.value) return;
     partForm.value.part_name = selectedSparePart.value.name;
-    partForm.value.unit_cost = selectedSparePart.value.unit_cost;
 };
 
 const deletePart = async (partId) => {
@@ -720,8 +711,8 @@ onMounted(loadJobOrder);
         </div>
         <div class="flex flex-wrap gap-2">
           <AppLink :to="`/admin/job-orders/${jobOrder.id}/print/intake`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Claim Slip</AppLink>
-          <AppLink :to="`/admin/job-orders/${jobOrder.id}/print/warranty`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Warranty</AppLink>
-          <AppLink :to="`/admin/job-orders/${jobOrder.id}/invoice`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">{{ jobOrder.service_type === 'WARRANTY_SERVICE' ? 'Service Summary' : 'Invoice' }}</AppLink>
+          <AppLink v-if="Number(jobOrder.warranty_days || 0) > 0" :to="`/admin/job-orders/${jobOrder.id}/print/warranty`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Warranty</AppLink>
+          <AppLink v-if="jobOrder.service_type === 'WARRANTY_SERVICE'" :to="`/admin/job-orders/${jobOrder.id}/warranty-service-summary`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Service Summary</AppLink>
           <AppLink to="/admin/part-requests" class="btn-soft inline-flex items-center px-3 py-2 text-xs">For Order</AppLink>
           <AppLink :to="`/admin/job-orders/${jobOrder.id}/edit`" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Edit</AppLink>
           <AppLink to="/admin/job-orders" class="btn-soft inline-flex items-center px-3 py-2 text-xs">Back</AppLink>
@@ -763,13 +754,6 @@ onMounted(loadJobOrder);
               <div>
                 <p class="text-slate-500">Balance</p>
                 <p class="font-semibold text-slate-900">{{ formatCurrency(balance) }}</p>
-              </div>
-              <div>
-                <p class="text-slate-500">Device Location</p>
-                <p class="font-semibold text-slate-900">{{ jobOrder.device_location === 'AT_SHOP' ? 'At Shop' : jobOrder.device_location === 'WITH_CUSTOMER' ? 'With Customer' : 'Not recorded' }}</p>
-                <p v-if="jobOrder.device_location_updated_at" class="mt-1 text-xs text-slate-500">
-                  Updated {{ formatDate(jobOrder.device_location_updated_at, true) }} by {{ jobOrder.device_location_updated_by?.name || 'a shop user' }}
-                </p>
               </div>
               <div class="md:col-span-2">
                 <p class="text-slate-500">Problem</p>
@@ -895,10 +879,11 @@ onMounted(loadJobOrder);
                   <p v-if="part.spare_part" class="text-xs text-slate-500">
                     From inventory · Remaining: {{ part.spare_part.stock_quantity }} {{ part.spare_part.unit || 'pcs' }}
                   </p>
-                  <p class="text-sm text-slate-600">Qty {{ part.quantity }} x {{ formatCurrency(part.unit_cost) }}</p>
+                  <p class="text-sm text-slate-600">Qty {{ part.quantity }} {{ part.spare_part?.unit || '' }}</p>
+                  <p v-if="part.job_order_part_order_id" class="text-sm text-slate-600">Qty {{ part.quantity }} x {{ formatCurrency(part.unit_cost) }}</p>
                 </div>
                 <div class="flex items-center gap-3">
-                  <span class="text-sm font-semibold text-slate-800">{{ formatCurrency(part.total_cost) }}</span>
+                  <span v-if="part.job_order_part_order_id" class="text-sm font-semibold text-slate-800">{{ formatCurrency(part.total_cost) }}</span>
                   <button v-if="!isRtoStatus" type="button" class="text-rose-600 font-semibold" @click="deletePart(part.id)">Delete</button>
                 </div>
               </div>
@@ -914,16 +899,16 @@ onMounted(loadJobOrder);
                   :value="String(item.id)"
                   :disabled="item.stock_quantity <= 0"
                 >
-                  {{ item.name }} · Stock {{ item.stock_quantity }} · {{ formatCurrency(item.unit_cost) }}
+                  {{ item.name }} · Stock {{ item.stock_quantity }} {{ item.unit || 'pcs' }}
                 </option>
               </select>
               <input v-model.number="partForm.quantity" type="number" min="1" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Qty" required />
-              <input v-model="partForm.unit_cost" type="number" min="0" step="0.01" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Unit cost (auto from inventory)" :readonly="Boolean(selectedSparePart)" required />
               <input v-model="partForm.part_name" class="md:col-span-4 px-4 py-2 border border-slate-300 rounded-lg" placeholder="Part name (required for custom part)" :readonly="Boolean(selectedSparePart)" :required="!selectedSparePart" />
               <input v-model="partForm.notes" class="md:col-span-3 px-4 py-2 border border-slate-300 rounded-lg" placeholder="Notes (optional)" />
               <button type="submit" class="md:col-span-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Add Part</button>
             </form>
-            <p v-else class="text-sm text-slate-500">Parts and repair costs are locked after an RTO decision.</p>
+            <p v-if="!isRtoStatus" class="mt-3 text-xs text-slate-500">Selecting an inventory part deducts the selected quantity from inventory.</p>
+            <p v-else class="text-sm text-slate-500">Parts are locked after an RTO decision.</p>
           </div>
 
         </div>
@@ -1074,7 +1059,13 @@ onMounted(loadJobOrder);
 
           <div v-if="activeAction === 'warranty'" class="card p-6">
             <h4 class="text-lg font-semibold text-slate-900 mb-4">Warranty</h4>
-            <form class="space-y-3" @submit.prevent="updateWarranty">
+            <div v-if="jobOrder.picked_up_at || ['PICKED_UP', 'RTO_RELEASED'].includes(jobOrder.current_status)" class="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+              Warranty setup is locked after the Job Order is released. Existing warranty details remain available for viewing and printing.
+              <p v-if="jobOrder.warranty_days > 0" class="mt-2 text-xs text-slate-500">
+                Coverage: {{ jobOrder.warranty_days }} days<span v-if="warrantyEligibility?.expires_on"> · Expires {{ warrantyEligibility.expires_on }}</span>
+              </p>
+            </div>
+            <form v-else class="space-y-3" @submit.prevent="updateWarranty">
               <input v-model.number="warrantyForm.warranty_days" type="number" min="0" max="3650" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Warranty days" required />
               <textarea v-model="warrantyForm.service_performed" rows="3" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Service performed"></textarea>
               <textarea v-model="warrantyForm.warranty_details" rows="3" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Warranty coverage details"></textarea>

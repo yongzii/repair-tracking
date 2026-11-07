@@ -27,10 +27,6 @@ const filters = reactive({
 const serviceCatalog = computed(() => report.value?.serviceCatalog || []);
 const technicianPerformance = computed(() => report.value?.technicianPerformance || []);
 const technicianWorkload = computed(() => report.value?.currentTechnicianWorkload || []);
-const jobOrderSalesCapital = computed(() => report.value?.jobOrderSalesCapital || {
-    summary: { total_gross: 0, total_capital: 0, gross_less_capital: 0 },
-    rows: [],
-});
 const inventoryReport = computed(() => report.value?.inventoryReport || {
     summary: { stock_quantity_by_unit: [] },
     items: [],
@@ -301,13 +297,6 @@ onMounted(loadReport);
             <p class="mt-1 text-2xl font-bold text-amber-700">{{ formatCurrency(report.paymentSummary.current_pending_balances) }}</p>
             <p class="mt-1 text-xs text-slate-500">{{ report.paymentSummary.current_pending_balance_jobs }} jobs · current snapshot, independent of report dates.</p>
           </div>
-          <div class="metric-card">
-            <p class="text-slate-500 text-sm">Estimated Gross Profit</p>
-            <p class="mt-1 text-2xl font-bold" :class="report.estimatedGrossProfit >= 0 ? 'text-slate-900' : 'text-rose-700'">
-              {{ formatCurrency(report.estimatedGrossProfit) }}
-            </p>
-            <p class="mt-1 text-xs text-slate-500">Selected job estimates less recorded parts costs · margin {{ report.grossProfitMargin }}%.</p>
-          </div>
         </div>
       </section>
       </div>
@@ -390,70 +379,6 @@ onMounted(loadReport);
         </div>
       </section>
 
-      <section v-if="activeTab === 'operations'" class="space-y-5">
-        <div v-if="activeTab === 'operations'">
-        <div class="admin-panel overflow-hidden">
-          <div class="border-b border-slate-200 p-5">
-            <h3 class="flex items-center gap-2 text-xl font-bold text-slate-950"><i class="fas fa-chart-column text-sm text-teal-700" aria-hidden="true"></i>Job Order Sales &amp; Capital Report</h3>
-            <p class="mt-1 text-sm text-slate-500">Gross uses the original job order estimated price (total_cost). Capital uses stored historical parts usage costs. Gross Less Capital is not verified net profit because operating expenses are excluded.</p>
-          </div>
-          <div class="grid grid-cols-1 gap-3 p-5 sm:grid-cols-3">
-            <div class="metric-card">
-              <p class="text-sm text-slate-500">Total Gross</p>
-              <p class="mt-1 text-2xl font-bold text-slate-900">{{ formatCurrency(jobOrderSalesCapital.summary.total_gross) }}</p>
-            </div>
-            <div class="metric-card">
-              <p class="text-sm text-slate-500">Total Capital</p>
-              <p class="mt-1 text-2xl font-bold text-slate-900">{{ formatCurrency(jobOrderSalesCapital.summary.total_capital) }}</p>
-            </div>
-            <div class="metric-card">
-              <p class="text-sm text-slate-500">Gross Less Capital</p>
-              <p class="mt-1 text-2xl font-bold text-teal-700">{{ formatCurrency(jobOrderSalesCapital.summary.gross_less_capital) }}</p>
-            </div>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="data-table min-w-[1050px]">
-              <thead>
-                <tr>
-                  <th class="px-4 py-3 text-left">Customer Name</th>
-                  <th class="px-4 py-3 text-left">Tracking Number</th>
-                  <th class="px-4 py-3 text-left">Unit</th>
-                  <th class="px-4 py-3 text-left">Service</th>
-                  <th class="px-4 py-3 text-right">Gross</th>
-                  <th class="px-4 py-3 text-right">Capital</th>
-                  <th class="px-4 py-3 text-left">Payment Method</th>
-                  <th class="px-4 py-3 text-left">Technician</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in visibleRows('sales-capital', jobOrderSalesCapital.rows)" :key="row.tracking_number">
-                  <td class="px-4 py-3 font-semibold text-slate-900">{{ row.customer_name }}</td>
-                  <td class="px-4 py-3 text-slate-700">{{ row.tracking_number }}</td>
-                  <td class="px-4 py-3 text-slate-700">{{ row.unit || '—' }}</td>
-                  <td class="px-4 py-3 text-slate-700">{{ row.service }}</td>
-                  <td class="px-4 py-3 text-right text-slate-700">{{ formatCurrency(row.gross) }}</td>
-                  <td class="px-4 py-3 text-right text-slate-700">{{ row.capital === null ? '—' : formatCurrency(row.capital) }}</td>
-                  <td class="px-4 py-3 text-slate-700">{{ row.payment_method }}</td>
-                  <td class="px-4 py-3 text-slate-700">{{ row.technician }}</td>
-                </tr>
-                <tr v-if="!jobOrderSalesCapital.rows.length">
-                  <td colspan="8" class="px-4 py-8 text-center text-slate-500">No job orders match the selected filters.</td>
-                </tr>
-              </tbody>
-            </table>
-            <div v-if="jobOrderSalesCapital.rows.length" class="flex items-center justify-between gap-3 border-t border-slate-100 px-4 py-3">
-              <span class="text-xs text-slate-500">{{ disclosureText('sales-capital', jobOrderSalesCapital.rows) }}</span>
-              <button v-if="hasMoreRows(jobOrderSalesCapital.rows)" type="button" class="inline-flex items-center gap-1 text-sm font-bold text-teal-700 hover:text-teal-900" @click="toggleSection('sales-capital')">
-                {{ expandedSections['sales-capital'] ? 'Show Less' : 'Show More' }}
-                <span aria-hidden="true">{{ expandedSections['sales-capital'] ? '↑' : '↓' }}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-        </div>
-
-      </section>
-
       <section v-if="activeTab === 'inventory'" class="space-y-5">
         <div>
           <h3 class="flex items-center gap-2 text-xl font-bold text-slate-950"><i class="fas fa-boxes-stacked text-sm text-teal-700" aria-hidden="true"></i>Inventory Reports</h3>
@@ -463,9 +388,8 @@ onMounted(loadReport);
         <div class="admin-panel p-5">
           <div class="mb-4">
             <h4 class="text-lg font-bold text-slate-950">Current Stock Snapshot</h4>
-            <p class="mt-1 text-xs text-slate-500">Estimated Current Inventory Value uses current stock_quantity × editable unit_cost. It is an estimate, not historical valuation or actual purchase cost.</p>
           </div>
-          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div class="metric-card">
               <p class="text-sm text-slate-500">Total Inventory Items</p>
               <p class="text-2xl font-bold text-slate-900">{{ inventoryReport.summary.total_items }}</p>
@@ -483,10 +407,6 @@ onMounted(loadReport);
               <p class="text-2xl font-bold text-rose-700">{{ inventoryReport.summary.low_stock_items }}</p>
               <p class="mt-1 text-xs text-slate-500">Includes inactive items; stock ≤ reorder level.</p>
             </div>
-            <div class="metric-card">
-              <p class="text-sm text-slate-500">Estimated Current Inventory Value</p>
-              <p class="text-xl font-bold text-slate-900">{{ formatCurrency(inventoryReport.summary.estimated_current_inventory_value) }}</p>
-            </div>
           </div>
           <div class="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p class="text-sm font-semibold text-slate-700">Total Current Stock Quantity by Unit</p>
@@ -499,7 +419,7 @@ onMounted(loadReport);
           </div>
 
           <div class="mt-5 overflow-x-auto">
-            <table class="data-table min-w-[1050px]">
+            <table class="data-table min-w-[850px]">
               <thead>
                 <tr>
                   <th class="px-3 py-3 text-left">Part</th>
@@ -510,8 +430,6 @@ onMounted(loadReport);
                   <th class="px-3 py-3 text-right">Reorder Level</th>
                   <th class="px-3 py-3 text-left">Stock Status</th>
                   <th class="px-3 py-3 text-left">Active Status</th>
-                  <th class="px-3 py-3 text-right">Unit Cost</th>
-                  <th class="px-3 py-3 text-right">Estimated Item Value</th>
                 </tr>
               </thead>
               <tbody>
@@ -526,11 +444,9 @@ onMounted(loadReport);
                   <td class="px-3 py-3 text-right text-slate-700">{{ item.reorder_level }}</td>
                   <td class="px-3 py-3 text-slate-700">{{ item.stock_status }}</td>
                   <td class="px-3 py-3 text-slate-700">{{ item.active_status }}</td>
-                  <td class="px-3 py-3 text-right text-slate-700">{{ formatCurrency(item.unit_cost) }}</td>
-                  <td class="px-3 py-3 text-right text-slate-700">{{ formatCurrency(item.estimated_item_value) }}</td>
                 </tr>
                 <tr v-if="!inventoryReport.items.length">
-                  <td colspan="10" class="px-4 py-8 text-center text-slate-500">No inventory items found for this shop.</td>
+                  <td colspan="8" class="px-4 py-8 text-center text-slate-500">No inventory items found for this shop.</td>
                 </tr>
               </tbody>
             </table>

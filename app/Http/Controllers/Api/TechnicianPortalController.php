@@ -64,7 +64,6 @@ class TechnicianPortalController extends Controller
         $this->ensureAssignedToTechnician($jobOrder, $technician);
 
         $jobOrder->load([
-            'deviceLocationUpdatedBy:id,name',
             'statusHistories',
             'parts',
             'payments',
@@ -385,19 +384,14 @@ class TechnicianPortalController extends Controller
                 ]);
             }
 
-            $unitCost = (float) $sparePart->unit_cost;
-            $total = $validated['quantity'] * $unitCost;
-            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') + $total;
-            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
-
             $part = JobOrderPart::create([
                 'shop_id' => $lockedJobOrder->shop_id,
                 'job_order_id' => $lockedJobOrder->id,
                 'spare_part_id' => $sparePart->id,
                 'part_name' => $sparePart->name,
                 'quantity' => $validated['quantity'],
-                'unit_cost' => $unitCost,
-                'total_cost' => $total,
+                'unit_cost' => 0,
+                'total_cost' => 0,
                 'notes' => $validated['notes'] ?? null,
             ]);
 
@@ -414,12 +408,6 @@ class TechnicianPortalController extends Controller
                 'balance_after' => $sparePart->stock_quantity,
                 'note' => "Used by technician for job order {$jobOrder->job_order_number}",
                 'created_by' => $request->user()?->name,
-            ]);
-
-            $lockedJobOrder->update([
-                'parts_cost' => $partsTotal,
-                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
-                'payment_status' => $this->paymentStatusForTotal($lockedJobOrder->amount_paid, $partsTotal + (float) $lockedJobOrder->labor_cost),
             ]);
 
             return [$lockedJobOrder->fresh(), $part];
@@ -479,9 +467,6 @@ class TechnicianPortalController extends Controller
                 ]);
             }
             $before = $existingPart->only(['part_name', 'quantity', 'unit_cost', 'total_cost', 'spare_part_id', 'notes']);
-            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') - (float) $existingPart->total_cost;
-            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
-
             if ($existingPart->spare_part_id) {
                 $sparePart = SparePart::query()
                     ->where('shop_id', $shopId)
@@ -507,12 +492,6 @@ class TechnicianPortalController extends Controller
             }
 
             $existingPart->delete();
-
-            $lockedJobOrder->update([
-                'parts_cost' => $partsTotal,
-                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
-                'payment_status' => $this->paymentStatusForTotal($lockedJobOrder->amount_paid, $partsTotal + (float) $lockedJobOrder->labor_cost),
-            ]);
 
             return [$lockedJobOrder->fresh(), $before];
         });
@@ -588,11 +567,6 @@ class TechnicianPortalController extends Controller
             'model' => $job->model,
             'problem_description' => $job->problem_description,
             'current_status' => $job->current_status,
-            'device_location' => $job->device_location ?? 'UNKNOWN',
-            'device_location_updated_at' => $job->device_location_updated_at,
-            'device_location_updated_by' => $job->relationLoaded('deviceLocationUpdatedBy')
-                ? $job->deviceLocationUpdatedBy?->name
-                : null,
             'priority' => $job->priority,
             'estimated_completion' => $job->estimated_completion,
             'estimated_completion_formatted' => $job->estimated_completion?->format('M d, Y h:i A'),

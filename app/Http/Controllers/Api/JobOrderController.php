@@ -238,7 +238,6 @@ class JobOrderController extends Controller
                 'job_order_number' => $jobOrderNumber,
                 'received_by' => $request->user()?->name,
                 'current_status' => 'RECEIVED',
-                'device_location' => 'AT_SHOP',
                 'priority' => $validated['priority'] ?? 'STANDARD',
                 'warranty_days' => 0,
                 'payment_status' => $paymentStatus,
@@ -312,7 +311,6 @@ class JobOrderController extends Controller
 
         $jobOrder->load([
             'technician',
-            'deviceLocationUpdatedBy:id,name',
             'statusHistories',
             'parts',
             'payments',
@@ -349,6 +347,10 @@ class JobOrderController extends Controller
                 ->latest()
                 ->get()
                 ->map(fn (WarrantyAssessment $assessment) => $this->mapWarrantyAssessment($assessment)),
+            'warrantyEligibility' => [
+                'expires_on' => $jobOrder->warrantyExpiresAt()?->toDateString(),
+                'is_active' => $jobOrder->isUnderWarranty(),
+            ],
         ]);
     }
 
@@ -401,9 +403,6 @@ class JobOrderController extends Controller
             'jobOrder' => $jobOrder,
             'customer' => [
                 'name' => $jobOrder->customer_name,
-                'email' => $jobOrder->customer_email,
-                'phone' => $jobOrder->customer_phone,
-                'contact' => $jobOrder->customer_contact,
             ],
             'device' => [
                 'type' => $jobOrder->device_type,
@@ -438,6 +437,12 @@ class JobOrderController extends Controller
     {
         $this->authorizeStaffOrAdmin($request);
         $this->ensureSameShop($request, $jobOrder);
+
+        if ($request->boolean('warranty') && (int) ($jobOrder->warranty_days ?? 0) <= 0) {
+            throw ValidationException::withMessages([
+                'warranty' => 'No warranty was issued for this Job Order. Warranty Slip is unavailable.',
+            ]);
+        }
 
         $jobOrder->load(['technician', 'parts', 'payments']);
 
@@ -489,6 +494,16 @@ class JobOrderController extends Controller
         ]);
         $validated = $this->normalizeServiceSelection($shopId, $validated);
 
+        if (
+            array_key_exists('warranty_days', $validated)
+            && (int) $validated['warranty_days'] !== (int) ($jobOrder->warranty_days ?? 0)
+            && ($jobOrder->picked_up_at || in_array($jobOrder->current_status, ['PICKED_UP', 'RTO_RELEASED'], true))
+        ) {
+            throw ValidationException::withMessages([
+                'warranty_days' => 'Warranty can only be issued or updated before the Job Order is released.',
+            ]);
+        }
+
         $jobOrder->update($validated);
 
         AuditLogger::log(
@@ -512,6 +527,13 @@ class JobOrderController extends Controller
     {
         $this->authorizeStaffOrAdmin($request);
         $this->ensureSameShop($request, $jobOrder);
+
+        if ($jobOrder->picked_up_at || in_array($jobOrder->current_status, ['PICKED_UP', 'RTO_RELEASED'], true)) {
+            throw ValidationException::withMessages([
+                'warranty' => 'Warranty can only be issued or updated before the Job Order is released.',
+            ]);
+        }
+
         $before = $jobOrder->only(['warranty_days', 'warranty_details', 'service_performed']);
 
         $validated = $request->validate([
@@ -582,7 +604,6 @@ class JobOrderController extends Controller
                     'received_by' => $request->user()?->name,
                     'included_accessories' => $lockedJobOrder->included_accessories,
                     'current_status' => 'RECEIVED',
-                    'device_location' => 'AT_SHOP',
                     'priority' => 'STANDARD',
                     'estimated_cost' => 0,
                     'parts_cost' => 0,
@@ -1689,11 +1710,7 @@ class JobOrderController extends Controller
                 }
             }
 
-            $unitCost = $validated['unit_cost'] ?? ($sparePart?->unit_cost ?? 0);
             $partName = $sparePart?->name ?? $validated['part_name'];
-            $total = $validated['quantity'] * $unitCost;
-            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') + $total;
-            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
 
             $part = JobOrderPart::create([
                 'shop_id' => $lockedJobOrder->shop_id,
@@ -1701,8 +1718,8 @@ class JobOrderController extends Controller
                 'spare_part_id' => $sparePart?->id,
                 'part_name' => $partName,
                 'quantity' => $validated['quantity'],
-                'unit_cost' => $unitCost,
-                'total_cost' => $total,
+                'unit_cost' => 0,
+                'total_cost' => 0,
                 'notes' => $validated['notes'] ?? null,
             ]);
 
@@ -1719,14 +1736,6 @@ class JobOrderController extends Controller
                     createdBy: $request->user()?->name
                 );
             }
-
-            $lockedJobOrder->update([
-                'parts_cost' => $partsTotal,
-                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
-                'payment_status' => $lockedJobOrder->amount_paid <= 0
-                    ? 'PENDING'
-                    : ($lockedJobOrder->amount_paid >= ($partsTotal + (float) $lockedJobOrder->labor_cost) ? 'PAID' : 'PARTIAL'),
-            ]);
 
             return [$lockedJobOrder->fresh(), $part];
         });
@@ -1832,20 +1841,12 @@ class JobOrderController extends Controller
                 ]);
             }
 
-            $unitCost = $validated['unit_cost'] ?? ($newSparePart?->unit_cost ?? 0);
             $partName = $newSparePart?->name ?? $validated['part_name'];
-            $total = $validated['quantity'] * $unitCost;
-            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost')
-                - (float) $existingPart->total_cost
-                + $total;
-            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
 
             $existingPart->update([
                 'spare_part_id' => $newSparePart?->id,
                 'part_name' => $partName,
                 'quantity' => $validated['quantity'],
-                'unit_cost' => $unitCost,
-                'total_cost' => $total,
                 'notes' => $validated['notes'] ?? null,
             ]);
 
@@ -1862,14 +1863,6 @@ class JobOrderController extends Controller
                     createdBy: $request->user()?->name
                 );
             }
-
-            $lockedJobOrder->update([
-                'parts_cost' => $partsTotal,
-                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
-                'payment_status' => $lockedJobOrder->amount_paid <= 0
-                    ? 'PENDING'
-                    : ($lockedJobOrder->amount_paid >= ($partsTotal + (float) $lockedJobOrder->labor_cost) ? 'PAID' : 'PARTIAL'),
-            ]);
 
             return [$lockedJobOrder->fresh(), $existingPart->fresh()];
         });
@@ -1926,9 +1919,6 @@ class JobOrderController extends Controller
                 ]);
             }
             $before = $existingPart->only(['part_name', 'quantity', 'unit_cost', 'total_cost', 'spare_part_id', 'notes']);
-            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') - (float) $existingPart->total_cost;
-            $this->ensureTotalCoversCollectedAmount($partsTotal + (float) $lockedJobOrder->labor_cost, $lockedJobOrder->amount_paid);
-
             if ($existingPart->spare_part_id) {
                 $sparePart = SparePart::query()
                     ->where('shop_id', $shopId)
@@ -1950,14 +1940,6 @@ class JobOrderController extends Controller
             }
 
             $existingPart->delete();
-
-            $lockedJobOrder->update([
-                'parts_cost' => $partsTotal,
-                'total_cost' => $partsTotal + (float) $lockedJobOrder->labor_cost,
-                'payment_status' => $lockedJobOrder->amount_paid <= 0
-                    ? 'PENDING'
-                    : ($lockedJobOrder->amount_paid >= ($partsTotal + (float) $lockedJobOrder->labor_cost) ? 'PAID' : 'PARTIAL'),
-            ]);
 
             return [$lockedJobOrder->fresh(), $before];
         });
@@ -2077,7 +2059,6 @@ class JobOrderController extends Controller
             'received_by' => $request->user()?->name,
             'included_accessories' => $jobOrder->included_accessories,
             'current_status' => 'RECEIVED',
-            'device_location' => 'AT_SHOP',
             'priority' => 'STANDARD',
             'estimated_cost' => 0,
             'parts_cost' => 0,
@@ -2126,23 +2107,17 @@ class JobOrderController extends Controller
             ]);
         }
 
-        if ($jobOrder->payment_status !== 'PAID' || (float) $jobOrder->balance > 0) {
-            throw ValidationException::withMessages([
-                'warranty_service' => 'Warranty service can only be issued after the original job order is fully paid.',
-            ]);
-        }
-
         if ((int) ($jobOrder->warranty_days ?? 0) <= 0) {
             throw ValidationException::withMessages([
-                'warranty_service' => 'This job order has no warranty coverage recorded.',
+                'warranty_service' => 'No warranty was issued for this Job Order. Warranty Service is unavailable.',
             ]);
         }
 
-        $warrantyExpiresAt = $jobOrder->picked_up_at->copy()->addDays((int) $jobOrder->warranty_days);
+        $warrantyExpiresAt = $jobOrder->warrantyExpiresAt();
 
-        if (now()->greaterThan($warrantyExpiresAt)) {
+        if (!$warrantyExpiresAt || today()->greaterThan($warrantyExpiresAt)) {
             throw ValidationException::withMessages([
-                'warranty_service' => 'This job order warranty has already expired.',
+                'warranty_service' => 'Warranty period has expired. Warranty Service is no longer available for this Job Order.',
             ]);
         }
     }
@@ -2394,9 +2369,7 @@ class JobOrderController extends Controller
             : url('/track/' . $jobOrder->job_order_number);
         $warrantyDays = (int) ($jobOrder->warranty_days ?? 0);
         $pickedUpAt = $jobOrder->picked_up_at;
-        $warrantyExpiresAt = $warrantyDays > 0 && $pickedUpAt
-            ? $pickedUpAt->copy()->addDays($warrantyDays)
-            : null;
+        $warrantyExpiresAt = $jobOrder->warrantyExpiresAt();
 
         return [
             'shop' => [
@@ -2410,9 +2383,6 @@ class JobOrderController extends Controller
             'jobOrder' => $jobOrder,
             'customer' => [
                 'name' => $jobOrder->customer_name,
-                'phone' => $jobOrder->customer_phone,
-                'email' => $jobOrder->customer_email,
-                'contact' => $jobOrder->customer_phone ?: ($jobOrder->customer_email ?: $jobOrder->customer_contact),
             ],
             'device' => [
                 'type' => $jobOrder->device_type,
@@ -2444,6 +2414,7 @@ class JobOrderController extends Controller
                 'total_cost' => $jobOrder->total_cost,
                 'amount_paid' => $jobOrder->amount_paid,
                 'balance' => $jobOrder->balance,
+                'payment_status' => $jobOrder->payment_status,
             ],
             'warranty' => [
                 'is_available' => $warrantyDays > 0,

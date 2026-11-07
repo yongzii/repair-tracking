@@ -188,19 +188,14 @@ class BlockedJobPartController extends Controller
                 ]);
             }
 
-            $total = $quantity * (float) $sparePart->unit_cost;
-            $partsTotal = (float) $lockedJobOrder->parts()->sum('total_cost') + $total;
-            $newTotal = $partsTotal + (float) $lockedJobOrder->labor_cost;
-            $this->ensureTotalCoversCollectedAmount($newTotal, $lockedJobOrder->amount_paid);
-
             $part = JobOrderPart::create([
                 'shop_id' => $lockedJobOrder->shop_id,
                 'job_order_id' => $lockedJobOrder->id,
                 'spare_part_id' => $sparePart->id,
                 'part_name' => $sparePart->name,
                 'quantity' => $quantity,
-                'unit_cost' => $sparePart->unit_cost,
-                'total_cost' => $total,
+                'unit_cost' => 0,
+                'total_cost' => 0,
                 'notes' => $operatorNote !== '' ? $operatorNote : 'Issued for a job-linked blocked parts request',
             ]);
 
@@ -219,12 +214,7 @@ class BlockedJobPartController extends Controller
             ]);
 
             $previousStatus = $lockedJobOrder->current_status;
-            $lockedJobOrder->update([
-                'parts_cost' => $partsTotal,
-                'total_cost' => $newTotal,
-                'payment_status' => $this->paymentStatusForTotal($lockedJobOrder->amount_paid, $newTotal),
-                'current_status' => 'IN_PROGRESS',
-            ]);
+            $lockedJobOrder->update(['current_status' => 'IN_PROGRESS']);
             StatusHistory::create([
                 'shop_id' => $shopId,
                 'job_order_id' => $lockedJobOrder->id,

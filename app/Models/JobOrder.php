@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Collection;
@@ -34,9 +35,6 @@ class JobOrder extends Model
         'repair_approval_notes',
         'current_status',
         'priority',
-        'device_location',
-        'device_location_updated_at',
-        'device_location_updated_by_user_id',
         'estimated_cost',
         'parts_cost',
         'labor_cost',
@@ -62,7 +60,6 @@ class JobOrder extends Model
     protected $casts = [
         'picked_up_at' => 'datetime',
         'repair_approved_at' => 'datetime',
-        'device_location_updated_at' => 'datetime',
         'payment_date' => 'date',
         'estimated_completion' => 'datetime',
         'parts_cost' => 'decimal:2',
@@ -137,11 +134,6 @@ class JobOrder extends Model
         return $this->belongsTo(Technician::class);
     }
 
-    public function deviceLocationUpdatedBy()
-    {
-        return $this->belongsTo(User::class, 'device_location_updated_by_user_id');
-    }
-
     public function serviceCategory()
     {
         return $this->belongsTo(ServiceCategory::class);
@@ -168,14 +160,22 @@ class JobOrder extends Model
         return $balance > 0 ? $balance : 0;
     }
 
-    // Check if warranty is active
-    public function isUnderWarranty()
+    public function warrantyExpiresAt(): ?Carbon
     {
-        if ($this->current_status !== 'PICKED_UP' || !$this->picked_up_at) {
-            return false;
+        if (!$this->picked_up_at || (int) ($this->warranty_days ?? 0) <= 0) {
+            return null;
         }
-        $expiryDate = $this->picked_up_at->copy()->addDays($this->warranty_days ?? 30);
-        return now()->lessThanOrEqualTo($expiryDate);
+
+        return $this->picked_up_at->copy()->addDays((int) $this->warranty_days)->startOfDay();
+    }
+
+    public function isUnderWarranty(): bool
+    {
+        $expiryDate = $this->warrantyExpiresAt();
+
+        return $this->current_status === 'PICKED_UP'
+            && $expiryDate !== null
+            && today()->lessThanOrEqualTo($expiryDate);
     }
 
     public function partsTotal(): float

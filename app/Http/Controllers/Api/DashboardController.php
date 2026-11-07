@@ -75,11 +75,14 @@ class DashboardController extends Controller
 
         $totalRevenue = (clone $jobOrders)->sum('total_cost');
         $totalPaid = (clone $jobOrders)->sum('amount_paid');
-        $pendingPayments = (clone $jobOrders)->sum(DB::raw('total_cost - amount_paid'));
-        $unpaidJobs = (clone $jobOrders)->whereColumn('amount_paid', '<', 'total_cost')
+        $pendingPayments = (clone $jobOrders)
+            ->whereNotIn('current_status', ['RTO', 'RTO_RELEASED'])
+            ->sum(DB::raw('CASE WHEN total_cost > amount_paid THEN total_cost - amount_paid ELSE 0 END'));
+        $unpaidJobs = (clone $jobOrders)
+            ->whereNotIn('current_status', ['RTO', 'RTO_RELEASED'])
+            ->whereColumn('amount_paid', '<', 'total_cost')
             ->where('total_cost', '>', 0)
             ->count();
-        $profitMargin = $totalRevenue > 0 ? round((($totalRevenue - (clone $jobOrders)->sum('parts_cost')) / $totalRevenue) * 100, 1) : 0;
 
         $expressJobs = (clone $jobOrders)->where('priority', 'EXPRESS')->count();
         $standardJobs = (clone $jobOrders)->where('priority', 'STANDARD')->count();
@@ -219,7 +222,6 @@ class DashboardController extends Controller
             'totalPaid' => $totalPaid,
             'pendingPayments' => $pendingPayments,
             'unpaidJobs' => $unpaidJobs,
-            'profitMargin' => $profitMargin,
             'expressJobs' => $expressJobs,
             'standardJobs' => $standardJobs,
             'deviceStats' => $deviceStats,

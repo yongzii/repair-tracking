@@ -68,7 +68,8 @@ const loadPrintData = async () => {
     }
 
     try {
-        const { data } = await window.axios.get(`/api/admin/job-orders/${props.params.id}/print-data`);
+        const query = isWarrantyMode.value ? '?warranty=1' : '';
+        const { data } = await window.axios.get(`/api/admin/job-orders/${props.params.id}/print-data${query}`);
         printData.value = data;
     } catch (error) {
         forbidden.value = true;
@@ -96,7 +97,7 @@ onMounted(loadPrintData);
       <div class="no-print flex flex-wrap items-center justify-between gap-3">
         <div class="flex flex-wrap gap-3">
           <AppLink :to="`/admin/job-orders/${props.params.id}`" class="rounded-lg bg-slate-100 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-200">Back to Job Order</AppLink>
-          <AppLink v-if="!isWarrantyMode" :to="`/admin/job-orders/${props.params.id}/print/warranty`" class="rounded-lg bg-slate-100 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-200">Warranty Slip</AppLink>
+          <AppLink v-if="!isWarrantyMode && printData.warranty?.is_available" :to="`/admin/job-orders/${props.params.id}/print/warranty`" class="rounded-lg bg-slate-100 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-200">Warranty Slip</AppLink>
         </div>
         <button type="button" class="rounded-lg bg-slate-950 px-5 py-2 font-bold text-white hover:bg-slate-800" @click="printPage">Print</button>
       </div>
@@ -192,11 +193,16 @@ onMounted(loadPrintData);
 
           <div class="info-grid claim-info">
             <p><span>Customer</span><strong>{{ printData.customer.name }}</strong></p>
-            <p><span>Contact</span><strong>{{ printData.customer.phone }}</strong></p>
             <p><span>Device</span><strong>{{ printData.device.label || printData.device.type }}</strong></p>
             <p><span>Serial Number</span><strong>{{ printData.device.serial_number || 'N/A' }}</strong></p>
             <p class="full-row"><span>Reported Problem</span><strong>{{ printData.device.problem_description }}</strong></p>
+            <p class="full-row"><span>Accessories Received</span><strong>{{ printData.device.included_accessories || 'None recorded' }}</strong></p>
+            <p><span>Date Received</span><strong>{{ printData.service.received_at_formatted }}</strong></p>
             <p><span>Estimated Cost</span><strong>{{ formatCurrency(printData.costs.estimated_cost) }}</strong></p>
+            <p><span>Current Repair Total</span><strong>{{ formatCurrency(printData.costs.total_cost) }}</strong></p>
+            <p><span>Amount Paid</span><strong>{{ formatCurrency(printData.costs.amount_paid) }}</strong></p>
+            <p><span>Outstanding Balance</span><strong>{{ formatCurrency(printData.costs.balance) }}</strong></p>
+            <p><span>Payment Status</span><strong>{{ printData.costs.payment_status || 'PENDING' }}</strong></p>
             <p><span>Target Date</span><strong>{{ printData.service.estimated_completion_formatted || 'To be advised' }}</strong></p>
           </div>
 
@@ -240,10 +246,8 @@ onMounted(loadPrintData);
           </div>
 
           <div class="tag-section">
-            <h3>Device & Customer</h3>
+            <h3>Device Identification</h3>
             <div class="info-grid tag-fields">
-              <p><span>Customer</span><strong>{{ printData.customer.name }}</strong></p>
-              <p><span>Contact</span><strong>{{ printData.customer.phone }}</strong></p>
               <p><span>Device</span><strong>{{ printData.device.label || printData.device.type }}</strong></p>
               <p><span>Serial</span><strong>{{ printData.device.serial_number || 'N/A' }}</strong></p>
               <p class="full-row"><span>Problem</span><strong>{{ printData.device.problem_description }}</strong></p>
@@ -254,19 +258,9 @@ onMounted(loadPrintData);
           <div class="tag-section">
             <h3>Service Assignment</h3>
             <div class="info-grid tag-fields">
-              <p><span>Priority</span><strong>{{ printData.service.priority }}</strong></p>
               <p><span>Technician</span><strong>{{ printData.service.technician || 'Unassigned' }}</strong></p>
-              <p><span>Received By</span><strong>{{ printData.service.received_by || 'N/A' }}</strong></p>
-              <p><span>Received</span><strong>{{ printData.service.received_at_formatted }}</strong></p>
-              <p><span>Target</span><strong>{{ printData.service.estimated_completion_formatted || 'Not set' }}</strong></p>
-              <p><span>Approval</span><strong>{{ printData.service.repair_approved_by_customer || 'Pending' }}</strong></p>
+              <p><span>Status</span><strong>{{ formatStatus(printData.service.current_status) }}</strong></p>
             </div>
-          </div>
-
-          <div class="payment-summary">
-            <div><span>Estimate</span><strong>{{ formatCurrency(printData.costs.estimated_cost) }}</strong></div>
-            <div><span>Paid</span><strong>{{ formatCurrency(printData.costs.amount_paid) }}</strong></div>
-            <div><span>Balance</span><strong>{{ formatCurrency(printData.costs.balance) }}</strong></div>
           </div>
 
           <footer class="tag-footer">Attach securely to the customer device.</footer>
@@ -405,8 +399,7 @@ onMounted(loadPrintData);
 
 .info-grid span,
 .coverage-box span,
-.warranty-validity span,
-.payment-summary span {
+.warranty-validity span {
   display: block;
   margin-bottom: 1px;
   font-size: 4.6px;
@@ -542,28 +535,6 @@ onMounted(loadPrintData);
 .tag-fields .full-row strong {
   max-height: 0.46cm;
   overflow: hidden;
-}
-
-.payment-summary {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  margin-top: auto;
-  border: 1.5px solid #000;
-}
-
-.payment-summary div {
-  padding: 0.06cm;
-  text-align: center;
-}
-
-.payment-summary div + div {
-  border-left: 1px solid #000;
-}
-
-.payment-summary strong {
-  display: block;
-  font-size: 5.8px;
-  line-height: 1.1;
 }
 
 .tag-footer {

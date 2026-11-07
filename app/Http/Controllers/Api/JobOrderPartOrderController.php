@@ -32,7 +32,6 @@ class JobOrderPartOrderController extends Controller
             ->with([
                 'jobOrder.payments' => fn ($query) => $query->where('shop_id', $shopId)->with('refund'),
                 'jobOrder.technician:id,name',
-                'jobOrder.deviceLocationUpdatedBy:id,name',
                 'requestedBy:id,name',
                 'customerDecisionRecordedBy:id,name',
                 'receivedBy:id,name',
@@ -91,8 +90,6 @@ class JobOrderPartOrderController extends Controller
                     JobOrderPartOrder::DECISION_REJECTED,
                 ]),
             ];
-            $rules['device_location'] = ['sometimes', 'required', Rule::in(['AT_SHOP', 'WITH_CUSTOMER'])];
-            $rules['device_location_note'] = ['nullable', 'string', 'max:255'];
             if ($decision === JobOrderPartOrder::DECISION_APPROVED) {
                 $rules['required_downpayment_amount'] = [
                     'required',
@@ -125,7 +122,7 @@ class JobOrderPartOrderController extends Controller
         $idempotencyPayloadHash = $this->partOrderPayloadHash($jobOrder->id, $validated, $isTechnician, $decision);
 
         try {
-            [$order, $deviceLocationChange, $created] = DB::transaction(function () use ($request, $jobOrder, $technician, $user, $validated, $isTechnician, $decision, $idempotencyKey, $idempotencyPayloadHash) {
+            [$order, $created] = DB::transaction(function () use ($request, $jobOrder, $technician, $user, $validated, $isTechnician, $decision, $idempotencyKey, $idempotencyPayloadHash) {
             $lockedJob = JobOrder::query()
                 ->where('shop_id', $this->currentShopId($request))
                 ->lockForUpdate()
@@ -153,21 +150,6 @@ class JobOrderPartOrderController extends Controller
                 throw ValidationException::withMessages([
                     'job_order' => 'A parts order cannot be created for a completed or released repair.',
                 ]);
-            }
-
-            $deviceLocationChange = null;
-            if (!$isTechnician && isset($validated['device_location'])) {
-                $previousLocation = $lockedJob->device_location;
-                $lockedJob->update([
-                    'device_location' => $validated['device_location'],
-                    'device_location_updated_at' => now(),
-                    'device_location_updated_by_user_id' => $user->id,
-                ]);
-                $deviceLocationChange = [
-                    'previous' => $previousLocation,
-                    'current' => $validated['device_location'],
-                    'note' => isset($validated['device_location_note']) ? trim($validated['device_location_note']) : null,
-                ];
             }
 
             $now = now();
@@ -211,7 +193,7 @@ class JobOrderPartOrderController extends Controller
                     : null,
             ]);
 
-            return [$order, $deviceLocationChange, true];
+            return [$order, true];
             }, 3);
         } catch (QueryException $exception) {
             if (!$this->isIdempotencyConstraintViolation($exception, 'jopo_shop_idempotency_unique') || $idempotencyKey === null) {
@@ -225,14 +207,12 @@ class JobOrderPartOrderController extends Controller
             if ($order->idempotency_payload_hash !== $idempotencyPayloadHash) {
                 abort(409, 'This idempotency key was already used with different request data.');
             }
-            $deviceLocationChange = null;
             $created = false;
         }
 
         $order->load([
             'jobOrder.payments.refund',
             'jobOrder.technician',
-            'jobOrder.deviceLocationUpdatedBy:id,name',
             'requestedBy',
             'customerDecisionRecordedBy',
             'issuedJobOrderPart',
@@ -276,22 +256,6 @@ class JobOrderPartOrderController extends Controller
                 );
             }
         }
-        if ($deviceLocationChange !== null) {
-            AuditLogger::log(
-                request: $request,
-                user: $user,
-                action: 'job_order.device_location_updated',
-                module: 'job_orders',
-                record: $jobOrder,
-                description: "Updated device location for {$jobOrder->job_order_number} to {$deviceLocationChange['current']}.",
-                oldValues: ['device_location' => $deviceLocationChange['previous']],
-                newValues: [
-                    'device_location' => $deviceLocationChange['current'],
-                    'note' => $deviceLocationChange['note'],
-                ]
-            );
-        }
-
         return response()->json([
             'message' => match ($decision) {
                 JobOrderPartOrder::DECISION_APPROVED => 'Customer approval recorded by staff; supplier ordering remains subject to downpayment verification.',
@@ -605,70 +569,6 @@ class JobOrderPartOrderController extends Controller
         ]);
     }
 
-    public function updateDeviceLocation(Request $request, JobOrder $jobOrder)
-    {
-        $user = $request->user();
-        if ($user?->hasAnyRole([User::ROLE_ADMIN, User::ROLE_STAFF])) {
-            $this->authorizeStaffOrAdmin($request);
-        } elseif ($user?->hasRole(User::ROLE_TECHNICIAN)) {
-            $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
-            $this->ensureSameShop($request, $jobOrder);
-            $this->ensureAssignedToTechnician($jobOrder, $this->resolveTechnician($user));
-        } else {
-            $this->authorizeRoles($request, [User::ROLE_ADMIN, User::ROLE_STAFF, User::ROLE_TECHNICIAN]);
-        }
-        $this->ensureSameShop($request, $jobOrder);
-
-        $validated = $request->validate([
-            'device_location' => ['required', Rule::in(['AT_SHOP', 'WITH_CUSTOMER'])],
-            'note' => ['nullable', 'string', 'max:255'],
-        ]);
-
-        [$updated, $previousLocation] = DB::transaction(function () use ($request, $jobOrder, $user, $validated) {
-            $lockedJob = JobOrder::query()
-                ->where('shop_id', $this->currentShopId($request))
-                ->lockForUpdate()
-                ->findOrFail($jobOrder->id);
-            $previousLocation = $lockedJob->device_location;
-
-            if ($user->hasRole(User::ROLE_TECHNICIAN)) {
-                $this->ensureAssignedToTechnician($lockedJob, $this->resolveTechnician($user));
-            }
-
-            $lockedJob->update([
-                'device_location' => $validated['device_location'],
-                'device_location_updated_at' => now(),
-                'device_location_updated_by_user_id' => $user->id,
-            ]);
-
-            return [$lockedJob->fresh(['deviceLocationUpdatedBy:id,name']), $previousLocation];
-        });
-
-        AuditLogger::log(
-            request: $request,
-            user: $user,
-            action: 'job_order.device_location_updated',
-            module: 'job_orders',
-            record: $updated,
-            description: "Updated device location for {$updated->job_order_number} to {$updated->device_location}.",
-            oldValues: ['device_location' => $previousLocation],
-            newValues: [
-                'device_location' => $updated->device_location,
-                'note' => isset($validated['note']) ? trim($validated['note']) : null,
-            ]
-        );
-
-        return response()->json([
-            'message' => 'Device location updated.',
-            'job_order' => [
-                'id' => $updated->id,
-                'device_location' => $updated->device_location,
-                'device_location_updated_at' => $updated->device_location_updated_at,
-                'device_location_updated_by' => $updated->deviceLocationUpdatedBy?->name,
-            ],
-        ]);
-    }
-
     public function issueToJob(Request $request, JobOrder $jobOrder, JobOrderPartOrder $partOrder)
     {
         $user = $this->authorizeRoles($request, User::ROLE_TECHNICIAN);
@@ -692,11 +592,6 @@ class JobOrderPartOrderController extends Controller
             if ($lockedOrder->status !== JobOrderPartOrder::STATUS_RECEIVED || $lockedOrder->issued_at) {
                 throw ValidationException::withMessages([
                     'part_order' => 'This part order is not available to issue or has already been issued.',
-                ]);
-            }
-            if ($lockedJob->device_location !== 'AT_SHOP') {
-                throw ValidationException::withMessages([
-                    'device_location' => 'Update the device location to At Shop before issuing the ordered part to the repair.',
                 ]);
             }
             if (in_array($lockedJob->current_status, ['READY_FOR_PICKUP', 'PICKED_UP', 'RTO', 'RTO_RELEASED'], true)) {
@@ -803,9 +698,6 @@ class JobOrderPartOrderController extends Controller
             'customer_name' => $jobOrder?->customer_name,
             'customer_contact' => $jobOrder?->customer_contact,
             'customer_phone' => $jobOrder?->customer_phone,
-            'device_location' => $jobOrder?->device_location ?? 'UNKNOWN',
-            'device_location_updated_at' => $jobOrder?->device_location_updated_at,
-            'device_location_updated_by' => $jobOrder?->deviceLocationUpdatedBy?->name,
             'technician_name' => $jobOrder?->technician?->name,
             'part_name' => $order->part_name,
             'quantity' => (int) $order->quantity,
@@ -906,10 +798,6 @@ class JobOrderPartOrderController extends Controller
             'customer_decision' => $decision,
             'customer_decision_note' => $validated['customer_decision_note'] ?? null,
             'required_downpayment_amount' => $validated['required_downpayment_amount'] ?? null,
-            'device_location' => $validated['device_location'] ?? null,
-            'device_location_note' => isset($validated['device_location_note'])
-                ? trim($validated['device_location_note'])
-                : null,
             'technician_request' => $isTechnician,
         ], JSON_THROW_ON_ERROR));
     }

@@ -8,8 +8,8 @@ const ShopOnboardingPage = () => import('./pages/ShopOnboardingPage.vue');
 const AdminDashboardPage = () => import('./pages/admin/AdminDashboardPage.vue');
 const JobOrdersPage = () => import('./pages/admin/JobOrdersPage.vue');
 const JobOrderEditPage = () => import('./pages/admin/JobOrderEditPage.vue');
-const JobOrderInvoicePage = () => import('./pages/admin/JobOrderInvoicePage.vue');
 const JobOrderPrintPage = () => import('./pages/admin/JobOrderPrintPage.vue');
+const WarrantyServiceSummaryPage = () => import('./pages/admin/WarrantyServiceSummaryPage.vue');
 const JobOrderShowPage = () => import('./pages/admin/JobOrderShowPage.vue');
 const JobOrderTrashPage = () => import('./pages/admin/JobOrderTrashPage.vue');
 const PartRequestsPage = () => import('./pages/admin/PartRequestsPage.vue');
@@ -160,13 +160,6 @@ export const resolveRoute = (path) => {
 
     if (path.startsWith('/admin/job-orders/')) {
         const id = path.replace('/admin/job-orders/', '');
-        if (id.endsWith('/invoice')) {
-            return {
-                component: JobOrderInvoicePage,
-                params: { id: id.replace('/invoice', '') },
-                title: 'Invoice',
-            };
-        }
         if (id.endsWith('/print/intake')) {
             return {
                 component: JobOrderPrintPage,
@@ -179,6 +172,13 @@ export const resolveRoute = (path) => {
                 component: JobOrderPrintPage,
                 params: { id: id.replace('/print/warranty', ''), mode: 'warranty' },
                 title: 'Warranty Certificate',
+            };
+        }
+        if (id.endsWith('/warranty-service-summary')) {
+            return {
+                component: WarrantyServiceSummaryPage,
+                params: { id: id.replace('/warranty-service-summary', '') },
+                title: 'Warranty Service Summary',
             };
         }
         if (id.endsWith('/edit')) {

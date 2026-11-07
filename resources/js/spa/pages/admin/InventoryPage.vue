@@ -16,7 +16,6 @@ const summary = ref({
 });
 const isAdmin = computed(() => adminRoles.includes(authState.user?.role));
 const canWriteInventory = computed(() => [...adminRoles, 'staff'].includes(authState.user?.role));
-
 const filters = reactive({
     search: '',
     active_only: true,
@@ -30,7 +29,6 @@ const createForm = reactive({
     stock_quantity: '',
     reorder_level: '',
     unit_cost: '',
-    description: '',
     is_active: true,
 });
 
@@ -42,7 +40,6 @@ const editForm = reactive({
     stock_quantity: '',
     reorder_level: '',
     unit_cost: '',
-    description: '',
     is_active: true,
 });
 
@@ -98,10 +95,9 @@ const createPart = async () => {
     try {
         const payload = {
             ...createForm,
-            unit: 'pcs',
             part_number: createForm.part_number || null,
             category: createForm.category || null,
-            description: createForm.description || null,
+            unit_cost: 0,
         };
         const { data } = await window.axios.post('/api/admin/inventory', payload);
         successMessage.value = data.message || 'Spare part created.';
@@ -112,7 +108,6 @@ const createPart = async () => {
             stock_quantity: '',
             reorder_level: '',
             unit_cost: '',
-            description: '',
             is_active: true,
         });
         await loadInventory();
@@ -120,7 +115,7 @@ const createPart = async () => {
         const firstError = error?.response?.data?.errors
             ? Object.values(error.response.data.errors)[0]?.[0]
             : null;
-        errorMessage.value = firstError || error?.response?.data?.message || 'Unable to create spare part.';
+        errorMessage.value = firstError || error?.response?.data?.message || error?.message || 'Unable to create spare part.';
     }
 };
 
@@ -133,7 +128,6 @@ const startEdit = (item) => {
         stock_quantity: item.stock_quantity,
         reorder_level: item.reorder_level,
         unit_cost: Number(item.unit_cost || 0),
-        description: item.description || '',
         is_active: item.is_active,
     });
 };
@@ -148,10 +142,8 @@ const saveEdit = async (partId) => {
     try {
         const payload = {
             ...editForm,
-            unit: 'pcs',
             part_number: editForm.part_number || null,
             category: editForm.category || null,
-            description: editForm.description || null,
         };
         const { data } = await window.axios.put(`/api/admin/inventory/${partId}`, payload);
         successMessage.value = data.message || 'Spare part updated.';
@@ -161,7 +153,7 @@ const saveEdit = async (partId) => {
         const firstError = error?.response?.data?.errors
             ? Object.values(error.response.data.errors)[0]?.[0]
             : null;
-        errorMessage.value = firstError || error?.response?.data?.message || 'Unable to update spare part.';
+        errorMessage.value = firstError || error?.response?.data?.message || error?.message || 'Unable to update spare part.';
     }
 };
 
@@ -242,11 +234,6 @@ const submitForOrder = async () => {
     }
 };
 
-const formatCurrency = (value) => {
-    const amount = Number(value || 0);
-    return `PHP ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
-
 onMounted(loadInventory);
 </script>
 
@@ -259,7 +246,7 @@ onMounted(loadInventory);
       <section class="admin-hero p-6">
         <p class="text-xs font-bold uppercase text-teal-700">Spare parts control</p>
         <h3 class="mt-2 font-display text-3xl">Inventory</h3>
-        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Monitor spare parts, low stock, unit costs, and stock movements used in repair jobs.</p>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Monitor spare parts, stock levels, and stock movements used in repair jobs.</p>
       </section>
 
       <div v-if="successMessage" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">{{ successMessage }}</div>
@@ -282,19 +269,17 @@ onMounted(loadInventory);
 
       <div v-if="canWriteInventory" class="admin-panel p-6">
         <h3 class="text-lg font-bold text-slate-950 mb-4">Add Spare Part</h3>
-        <form class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="createPart">
+        <form class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3" @submit.prevent="createPart">
           <input v-model="createForm.name" class="border border-slate-300 px-4 py-3" placeholder="Part name" required />
           <input v-model="createForm.part_number" class="border border-slate-300 px-4 py-3" placeholder="Item code (optional)" />
           <input v-model="createForm.category" class="border border-slate-300 px-4 py-3" placeholder="Category" />
-          <input v-model.number="createForm.stock_quantity" type="number" min="0" class="border border-slate-300 px-4 py-3" placeholder="Initial stock (pcs)" required />
+          <input v-model.number="createForm.stock_quantity" type="number" min="0" class="border border-slate-300 px-4 py-3" placeholder="Initial stock" required />
           <input v-model.number="createForm.reorder_level" type="number" min="0" class="border border-slate-300 px-4 py-3" placeholder="Reorder level" required />
-          <input v-model.number="createForm.unit_cost" type="number" min="0" step="0.01" class="border border-slate-300 px-4 py-3" placeholder="Unit cost (PHP)" required />
-          <label class="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
+          <label class="inline-flex w-fit items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">
             <input v-model="createForm.is_active" type="checkbox" />
             Active
           </label>
-          <input v-model="createForm.description" class="md:col-span-3 border border-slate-300 px-4 py-3" placeholder="Description (optional)" />
-          <button type="submit" class="btn-primary md:col-span-1 py-3">Save Part</button>
+          <button type="submit" class="btn-primary py-3">Save Part</button>
         </form>
       </div>
 
@@ -318,7 +303,6 @@ onMounted(loadInventory);
               <tr>
                 <th class="px-4 py-3 text-left text-slate-600">Part</th>
                 <th class="px-4 py-3 text-left text-slate-600">Stock</th>
-                <th class="px-4 py-3 text-left text-slate-600">Cost</th>
                 <th class="px-4 py-3 text-left text-slate-600">Status</th>
                 <th class="px-4 py-3 text-left text-slate-600">Actions</th>
               </tr>
@@ -331,11 +315,10 @@ onMounted(loadInventory);
                 </td>
                 <td class="px-4 py-3">
                   <p class="font-semibold" :class="item.is_low_stock ? 'text-rose-700' : 'text-slate-900'">
-                    {{ item.stock_quantity }} pcs
+                    {{ item.stock_quantity }} {{ item.unit || 'pcs' }}
                   </p>
                   <p class="text-xs text-slate-500">Reorder at {{ item.reorder_level }}</p>
                 </td>
-                <td class="px-4 py-3 text-slate-700">{{ formatCurrency(item.unit_cost) }}</td>
                 <td class="px-4 py-3">
                   <span class="badge" :class="item.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'">
                     {{ item.is_active ? 'Active' : 'Inactive' }}
@@ -358,7 +341,7 @@ onMounted(loadInventory);
                 </td>
               </tr>
               <tr v-if="!inventory.data?.length">
-                <td colspan="5" class="px-4 py-8 text-center text-slate-500">No spare parts found.</td>
+                <td colspan="4" class="px-4 py-8 text-center text-slate-500">No spare parts found.</td>
               </tr>
             </tbody>
           </table>
@@ -367,19 +350,17 @@ onMounted(loadInventory);
 
       <div v-if="isAdmin && editingId" class="card p-6">
         <h3 class="text-lg font-semibold text-slate-900 mb-4">Edit Spare Part</h3>
-        <form class="grid grid-cols-1 md:grid-cols-4 gap-3" @submit.prevent="saveEdit(editingId)">
+        <form class="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3" @submit.prevent="saveEdit(editingId)">
           <input v-model="editForm.name" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Part name" required />
           <input v-model="editForm.part_number" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Item code (optional)" />
           <input v-model="editForm.category" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Category" />
-          <input v-model.number="editForm.stock_quantity" type="number" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Stock (pcs)" required />
+          <input v-model.number="editForm.stock_quantity" type="number" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Stock" required />
           <input v-model.number="editForm.reorder_level" type="number" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Reorder level" required />
-          <input v-model.number="editForm.unit_cost" type="number" min="0" step="0.01" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Unit cost" required />
-          <label class="flex items-center gap-2 text-sm text-slate-700 px-2">
+          <label class="inline-flex w-fit items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700">
             <input v-model="editForm.is_active" type="checkbox" />
             Active
           </label>
-          <input v-model="editForm.description" class="md:col-span-4 px-4 py-2 border border-slate-300 rounded-lg" placeholder="Description" />
-          <div class="md:col-span-4 flex gap-3">
+          <div class="flex gap-3">
             <button type="submit" class="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-semibold py-2 rounded-lg">Save Changes</button>
             <button type="button" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2 rounded-lg" @click="cancelEdit">Cancel</button>
           </div>

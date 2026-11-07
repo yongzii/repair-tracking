@@ -211,24 +211,6 @@ const addPart = async () => {
     }
 };
 
-const updateDeviceLocation = async (deviceLocation) => {
-    errorMessage.value = '';
-    successMessage.value = '';
-
-    try {
-        const { data } = await window.axios.patch(`/api/technician/job-orders/${props.params.id}/device-location`, {
-            device_location: deviceLocation,
-        });
-        job.value = { ...job.value, ...data.job_order };
-        successMessage.value = data.message || 'Device location updated.';
-    } catch (error) {
-        const firstError = error?.response?.data?.errors
-            ? Object.values(error.response.data.errors)[0]?.[0]
-            : null;
-        errorMessage.value = firstError || error?.response?.data?.message || 'Unable to update device location.';
-    }
-};
-
 const removePart = async (part) => {
     if (!window.confirm(`Remove ${part.part_name} from this job and restore the stock?`)) {
         return;
@@ -300,15 +282,6 @@ onMounted(loadJob);
               <div>
                 <p class="text-slate-500">Priority</p>
                 <p class="font-semibold text-slate-900">{{ job.priority }}</p>
-              </div>
-              <div class="md:col-span-2">
-                <p class="text-slate-500">Device Location</p>
-                <p class="font-semibold text-slate-900">{{ job.device_location === 'AT_SHOP' ? 'At Shop' : job.device_location === 'WITH_CUSTOMER' ? 'With Customer' : 'Not recorded' }}</p>
-                <p v-if="job.device_location_updated_at" class="mt-1 text-xs text-slate-500">Updated {{ formatDateTime(job.device_location_updated_at) }} by {{ job.device_location_updated_by || 'a shop user' }}</p>
-                <div class="mt-2 flex flex-wrap gap-2">
-                  <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50" :disabled="job.device_location === 'AT_SHOP'" @click="updateDeviceLocation('AT_SHOP')">Record Returned to Shop</button>
-                  <button type="button" class="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold hover:bg-slate-50" :disabled="job.device_location === 'WITH_CUSTOMER'" @click="updateDeviceLocation('WITH_CUSTOMER')">Record Released to Customer</button>
-                </div>
               </div>
               <div>
                 <p class="text-slate-500">Device</p>
@@ -410,8 +383,11 @@ onMounted(loadJob);
             <div v-if="job.parts?.length" class="space-y-3">
               <div v-for="part in job.parts" :key="part.id" class="rounded-lg border border-slate-200 p-3">
                 <p class="font-semibold text-slate-900">{{ part.part_name }}</p>
-                <p class="text-sm text-slate-600">Qty {{ part.quantity }} x {{ formatCurrency(part.unit_cost) }}</p>
-                <p class="text-sm font-semibold text-slate-800">{{ formatCurrency(part.total_cost) }}</p>
+                <p class="text-sm text-slate-600">Qty {{ part.quantity }} {{ part.unit || availableParts.find((item) => Number(item.id) === Number(part.spare_part_id))?.unit || '' }}</p>
+                <template v-if="part.job_order_part_order_id">
+                  <p class="text-sm text-slate-600">Qty {{ part.quantity }} x {{ formatCurrency(part.unit_cost) }}</p>
+                  <p class="text-sm font-semibold text-slate-800">{{ formatCurrency(part.total_cost) }}</p>
+                </template>
                 <p v-if="part.notes" class="mt-1 text-sm text-slate-600">{{ part.notes }}</p>
                 <button
                   v-if="job.can_record_parts && !part.job_order_part_order_id"
@@ -435,7 +411,7 @@ onMounted(loadJob);
                 <TechnicianSelect
                   v-model="partForm.spare_part_id"
                   class="md:col-span-2"
-                  :options="availableParts.map((part) => ({ value: part.id, label: `${part.name} - Stock ${part.stock_quantity} - ${formatCurrency(part.unit_cost)}${part.is_low_stock ? ' - Low stock' : ''}` }))"
+                  :options="availableParts.map((part) => ({ value: part.id, label: `${part.name} - Stock ${part.stock_quantity} ${part.unit || 'pcs'}${part.is_low_stock ? ' - Low stock' : ''}` }))"
                   placeholder="Select inventory part"
                   required
                 />
@@ -446,7 +422,7 @@ onMounted(loadJob);
                 </button>
               </form>
               <div class="mt-3 space-y-1 text-xs text-slate-500">
-                <p>This uses the inventory cost automatically and deducts stock right away.</p>
+                <p>Recording a used part deducts stock right away.</p>
                 <p>If a wrong part is recorded by mistake, remove that entry from the list above and the stock will be restored automatically.</p>
                 <p v-if="availableParts.some((part) => part.is_low_stock)" class="font-semibold text-amber-700">
                   Some available parts are already at low stock level.

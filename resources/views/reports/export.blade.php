@@ -158,7 +158,7 @@
     @if ($includePayments)
     <div class="grid">
         <div class="card">
-            <strong>Original Repair Costs</strong>
+            <strong>Customer Job Order Value</strong>
             <div>₱{{ number_format($totalRevenue, 2) }}</div>
         </div>
         <div class="card">
@@ -181,56 +181,10 @@
             <strong>Net Retained</strong>
             <div>₱{{ number_format($netRetained, 2) }}</div>
         </div>
-        <div class="card">
-            <strong>Estimated Gross Profit</strong>
-            <div>₱{{ number_format($estimatedGrossProfit, 2) }}</div>
-        </div>
-        <div class="card">
-            <strong>Gross Profit Margin</strong>
-            <div>{{ $grossProfitMargin }}%</div>
-        </div>
     </div>
     @endif
 
     @if ($includeOperations)
-    <h2>Job Order Sales &amp; Capital Report</h2>
-    <p>Gross is the original job order estimated price (total_cost). Capital is the sum of stored historical job_order_parts.total_cost values. A blank Capital cell means no parts were recorded. Gross Less Capital is not verified net profit because operating expenses are excluded.</p>
-    <div class="grid">
-        <div class="card"><strong>Total Job Order Value (Gross)</strong><div>₱{{ number_format($jobOrderSalesCapital['summary']['total_gross'], 2) }}</div></div>
-        <div class="card"><strong>Total Recorded Parts Capital</strong><div>₱{{ number_format($jobOrderSalesCapital['summary']['total_capital'], 2) }}</div></div>
-        <div class="card"><strong>Gross Less Capital</strong><div>₱{{ number_format($jobOrderSalesCapital['summary']['gross_less_capital'], 2) }}</div></div>
-    </div>
-    <table>
-        <thead>
-            <tr>
-                <th>Customer Name</th>
-                <th>Tracking Number</th>
-                <th>Device / Unit</th>
-                <th>Service</th>
-                <th>Gross</th>
-                <th>Capital</th>
-                <th>Payment Method</th>
-                <th>Technician</th>
-            </tr>
-        </thead>
-        <tbody>
-            @forelse ($jobOrderSalesCapital['rows'] as $row)
-                <tr>
-                    <td>{{ $row['customer_name'] }}</td>
-                    <td>{{ $row['tracking_number'] }}</td>
-                    <td>{{ $row['unit'] ?: '—' }}</td>
-                    <td>{{ $row['service'] }}</td>
-                    <td>₱{{ number_format($row['gross'], 2) }}</td>
-                    <td>{{ $row['capital'] === null ? '' : '₱' . number_format($row['capital'], 2) }}</td>
-                    <td>{{ $row['payment_method'] }}</td>
-                    <td>{{ $row['technician'] }}</td>
-                </tr>
-            @empty
-                <tr><td colspan="8">No job orders match the selected filters.</td></tr>
-            @endforelse
-        </tbody>
-    </table>
-
     <h2>Technician Performance (Current Assignment)</h2>
     <p>Results reflect the currently stored technician assignment, not historical assignment. Successful jobs use pickup date (picked_up_at); RTO outcomes use job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.</p>
     <table>
@@ -294,13 +248,12 @@
     @if ($includeInventory)
     <h2>Inventory Reports</h2>
     <h3>Current Stock Snapshot</h3>
-    <p>Current inventory snapshot; report date filters do not apply. Estimated Current Inventory Value = current stock_quantity × editable unit_cost. This is an estimate, not historical valuation or actual purchase cost. Low stock uses stock_quantity ≤ reorder_level and includes inactive items.</p>
+    <p>Current inventory snapshot; report date filters do not apply. Low stock uses stock_quantity ≤ reorder_level and includes inactive items.</p>
     <div class="grid">
         <div class="card"><strong>Total Inventory Items</strong><div>{{ $inventoryReport['summary']['total_items'] }}</div></div>
         <div class="card"><strong>Active Inventory Items</strong><div>{{ $inventoryReport['summary']['active_items'] }}</div></div>
         <div class="card"><strong>Inactive Inventory Items</strong><div>{{ $inventoryReport['summary']['inactive_items'] }}</div></div>
         <div class="card"><strong>Low Stock Items</strong><div>{{ $inventoryReport['summary']['low_stock_items'] }}</div></div>
-        <div class="card"><strong>Estimated Current Inventory Value</strong><div>₱{{ number_format($inventoryReport['summary']['estimated_current_inventory_value'], 2) }}</div></div>
     </div>
     <h4>Total Current Stock Quantity by Unit</h4>
     <table>
@@ -318,7 +271,6 @@
             <tr>
                 <th>Part Name</th><th>Part Number</th><th>Category</th><th>Unit</th>
                 <th>Current Stock</th><th>Reorder Level</th><th>Stock Status</th><th>Active Status</th>
-                <th>Unit Cost</th><th>Estimated Item Value</th>
             </tr>
         </thead>
         <tbody>
@@ -328,11 +280,9 @@
                     <td>{{ $item['category'] ?? '—' }}</td><td>{{ $item['unit'] }}</td>
                     <td>{{ $item['stock_quantity'] }}</td><td>{{ $item['reorder_level'] }}</td>
                     <td>{{ $item['stock_status'] }}</td><td>{{ $item['active_status'] }}</td>
-                    <td>{{ number_format($item['unit_cost'], 2) }}</td>
-                    <td>{{ number_format($item['estimated_item_value'], 2) }}</td>
                 </tr>
             @empty
-                <tr><td colspan="10">No inventory items found for this shop.</td></tr>
+                <tr><td colspan="8">No inventory items found for this shop.</td></tr>
             @endforelse
         </tbody>
     </table>

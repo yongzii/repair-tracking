@@ -6,6 +6,7 @@ use App\Models\JobOrder;
 use App\Models\JobOrderPart;
 use App\Models\Shop;
 use App\Models\SparePart;
+use App\Models\StockMovement;
 use App\Models\StatusHistory;
 use App\Models\Technician;
 use App\Models\User;
@@ -111,7 +112,7 @@ class FinancialIntegrityCostMutationTest extends TestCase
         $this->assertFinancialState($jobOrder, 5000, 3000, 'PARTIAL');
     }
 
-    public function test_assigned_technician_can_add_a_part_when_total_covers_paid_amount(): void
+    public function test_assigned_technician_can_add_a_part_without_changing_billing(): void
     {
         $shop = $this->createShop();
         [$technicianUser, $technician] = $this->createTechnician($shop);
@@ -126,11 +127,16 @@ class FinancialIntegrityCostMutationTest extends TestCase
             ])
             ->assertCreated();
 
-        $this->assertFinancialState($jobOrder, 100, 0, 'PENDING');
-        $this->assertDatabaseHas('job_order_parts', ['job_order_id' => $jobOrder->id]);
+        $this->assertFinancialState($jobOrder, 0, 0, 'PENDING');
+        $this->assertDatabaseHas('job_order_parts', [
+            'job_order_id' => $jobOrder->id,
+            'unit_cost' => 0,
+            'total_cost' => 0,
+        ]);
+        $this->assertSame(1, $sparePart->fresh()->stock_quantity);
     }
 
-    public function test_assigned_technician_cannot_add_a_part_when_total_would_fall_below_paid_amount(): void
+    public function test_assigned_technician_can_add_a_part_after_payment_without_billing_safeguard(): void
     {
         $shop = $this->createShop();
         [$technicianUser, $technician] = $this->createTechnician($shop);
@@ -143,15 +149,14 @@ class FinancialIntegrityCostMutationTest extends TestCase
                 'spare_part_id' => $sparePart->id,
                 'quantity' => 1,
             ])
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('total_cost');
+            ->assertCreated();
 
-        $this->assertDatabaseMissing('job_order_parts', ['job_order_id' => $jobOrder->id]);
-        $this->assertSame(2, $sparePart->fresh()->stock_quantity);
+        $this->assertDatabaseHas('job_order_parts', ['job_order_id' => $jobOrder->id, 'total_cost' => 0]);
+        $this->assertSame(1, $sparePart->fresh()->stock_quantity);
         $this->assertFinancialState($jobOrder, 0, 150, 'PARTIAL');
     }
 
-    public function test_assigned_technician_cannot_remove_a_part_when_total_would_fall_below_paid_amount(): void
+    public function test_assigned_technician_can_remove_a_part_without_billing_safeguard(): void
     {
         $shop = $this->createShop();
         [$technicianUser, $technician] = $this->createTechnician($shop);
@@ -170,11 +175,11 @@ class FinancialIntegrityCostMutationTest extends TestCase
 
         $this->actingAs($technicianUser)
             ->deleteJson("/api/technician/job-orders/{$jobOrder->id}/parts/{$part->id}")
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('total_cost');
+            ->assertOk();
 
-        $this->assertDatabaseHas('job_order_parts', ['id' => $part->id]);
-        $this->assertSame(1, $sparePart->fresh()->stock_quantity);
+        $this->assertDatabaseMissing('job_order_parts', ['id' => $part->id]);
+        $this->assertSame(2, $sparePart->fresh()->stock_quantity);
+        $this->assertFinancialState($jobOrder, 100, 150, 'PARTIAL');
     }
 
     public function test_parts_request_fulfillment_rejects_without_partial_stock_or_job_changes(): void
@@ -192,17 +197,21 @@ class FinancialIntegrityCostMutationTest extends TestCase
         $this->actingAs($staff)
             ->postJson("/api/admin/blocked-job-orders/{$jobOrder->id}/fulfill-parts-request", [
                 'spare_part_id' => $sparePart->id,
-                'quantity' => 1,
+                'quantity' => 3,
             ])
             ->assertUnprocessable()
-            ->assertJsonValidationErrors('total_cost');
+            ->assertJsonValidationErrors('quantity');
 
         $this->assertDatabaseMissing('job_order_parts', ['job_order_id' => $jobOrder->id]);
+        $this->assertDatabaseMissing('stock_movements', [
+            'spare_part_id' => $sparePart->id,
+            'job_order_id' => $jobOrder->id,
+        ]);
         $this->assertSame(2, $sparePart->fresh()->stock_quantity);
         $this->assertSame('WAITING_PARTS', $jobOrder->fresh()->current_status);
     }
 
-    public function test_parts_request_fulfillment_succeeds_when_resulting_total_covers_paid_amount(): void
+    public function test_parts_request_fulfillment_preserves_billing(): void
     {
         [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
         $jobOrder = $this->createJobOrder($shop, 100, 100, 'PAID', 'WAITING_PARTS');
@@ -221,19 +230,21 @@ class FinancialIntegrityCostMutationTest extends TestCase
             ])
             ->assertOk();
 
-        $this->assertDatabaseHas('job_order_parts', ['job_order_id' => $jobOrder->id, 'total_cost' => 100]);
+        $this->assertDatabaseHas('job_order_parts', ['job_order_id' => $jobOrder->id, 'total_cost' => 0]);
         $this->assertSame(1, $sparePart->fresh()->stock_quantity);
         $this->assertSame('IN_PROGRESS', $jobOrder->fresh()->current_status);
         $this->assertFinancialState($jobOrder, 100, 100, 'PAID');
     }
 
-    public function test_admin_part_deletion_cannot_reduce_total_below_paid_amount(): void
+    public function test_admin_part_deletion_preserves_billing(): void
     {
         [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
         $jobOrder = $this->createJobOrder($shop, 100, 150, 'PARTIAL');
+        $sparePart = $this->createSparePart($shop, 1, 1);
         $part = JobOrderPart::create([
             'shop_id' => $shop->id,
             'job_order_id' => $jobOrder->id,
+            'spare_part_id' => $sparePart->id,
             'part_name' => 'Paid test part',
             'quantity' => 1,
             'unit_cost' => 100,
@@ -242,11 +253,76 @@ class FinancialIntegrityCostMutationTest extends TestCase
 
         $this->actingAs($admin)
             ->deleteJson("/api/admin/job-orders/{$jobOrder->id}/parts/{$part->id}")
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('total_cost');
+            ->assertOk();
 
-        $this->assertDatabaseHas('job_order_parts', ['id' => $part->id]);
+        $this->assertDatabaseMissing('job_order_parts', ['id' => $part->id]);
+        $this->assertSame(2, $sparePart->fresh()->stock_quantity);
         $this->assertFinancialState($jobOrder, 100, 150, 'PARTIAL');
+    }
+
+    public function test_admin_inventory_part_mutations_are_stock_only_and_preserve_legacy_values(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $jobOrder = $this->createJobOrder($shop, 1000, 200, 'PARTIAL');
+        $sparePart = $this->createSparePart($shop, 1, 5);
+        $initialState = [
+            'estimated_cost' => $jobOrder->estimated_cost,
+            'parts_cost' => $jobOrder->parts_cost,
+            'labor_cost' => $jobOrder->labor_cost,
+            'total_cost' => $jobOrder->total_cost,
+            'amount_paid' => $jobOrder->amount_paid,
+            'payment_status' => $jobOrder->payment_status,
+        ];
+
+        $add = $this->actingAs($admin)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/parts", [
+                'spare_part_id' => $sparePart->id,
+                'quantity' => 2,
+                'unit_cost' => 999,
+            ])
+            ->assertCreated();
+        $partId = $add->json('part.id');
+
+        $this->assertSame(3, $sparePart->fresh()->stock_quantity);
+        $this->assertDatabaseHas('stock_movements', [
+            'spare_part_id' => $sparePart->id,
+            'job_order_id' => $jobOrder->id,
+            'job_order_part_id' => $partId,
+            'type' => 'OUT',
+            'quantity_change' => -2,
+        ]);
+        $this->assertFinancialState($jobOrder, 1000, 200, 'PARTIAL');
+        $this->assertSame($initialState['estimated_cost'], $jobOrder->fresh()->estimated_cost);
+
+        $legacyPart = JobOrderPart::findOrFail($partId);
+        $legacyPart->update(['unit_cost' => 77, 'total_cost' => 154]);
+
+        $this->actingAs($admin)
+            ->putJson("/api/admin/job-orders/{$jobOrder->id}/parts/{$partId}", [
+                'spare_part_id' => $sparePart->id,
+                'quantity' => 3,
+                'notes' => 'Updated quantity',
+            ])
+            ->assertOk();
+
+        $updatedPart = $legacyPart->fresh();
+        $this->assertSame(77.0, (float) $updatedPart->unit_cost);
+        $this->assertSame(154.0, (float) $updatedPart->total_cost);
+        $this->assertSame(3, (int) $updatedPart->quantity);
+        $this->assertSame(2, $sparePart->fresh()->stock_quantity);
+        $this->assertFinancialState($jobOrder, 1000, 200, 'PARTIAL');
+
+        $this->actingAs($admin)
+            ->deleteJson("/api/admin/job-orders/{$jobOrder->id}/parts/{$partId}")
+            ->assertOk();
+
+        $this->assertSame(5, $sparePart->fresh()->stock_quantity);
+        $this->assertSame(3, (int) StockMovement::where('job_order_id', $jobOrder->id)
+            ->where('type', 'IN')
+            ->where('note', 'like', 'Returned from job order%')
+            ->latest('id')
+            ->value('quantity_change'));
+        $this->assertFinancialState($jobOrder, 1000, 200, 'PARTIAL');
     }
 
     private function updateCosts(User $user, JobOrder $jobOrder, int $partsCost, int $laborCost)
@@ -289,7 +365,7 @@ class FinancialIntegrityCostMutationTest extends TestCase
             'shop_id' => $shop->id,
             'name' => 'Test Spare Part ' . uniqid(),
             'part_number' => 'PART-' . uniqid(),
-            'unit' => 'piece',
+            'unit' => 'pcs',
             'stock_quantity' => $stock,
             'reorder_level' => 1,
             'unit_cost' => $unitCost,

@@ -78,7 +78,7 @@ class WarrantyAssessmentWorkflowTest extends TestCase
         $this->assertDatabaseCount('job_orders', 2);
     }
 
-    public function test_direct_warranty_service_requires_released_paid_active_warranty_original_job(): void
+    public function test_direct_warranty_service_requires_released_active_warranty_original_job(): void
     {
         [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
         $jobOrder = $this->createPickedUpWarrantyJob($shop);
@@ -96,6 +96,92 @@ class WarrantyAssessmentWorkflowTest extends TestCase
 
         $this->assertDatabaseCount('warranty_assessments', 0);
         $this->assertDatabaseCount('job_orders', 1);
+    }
+
+    public function test_direct_warranty_service_allows_released_original_job_with_outstanding_balance(): void
+    {
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOrder = $this->createPickedUpWarrantyJob($shop);
+        $jobOrder->update([
+            'payment_status' => 'PARTIAL',
+            'amount_paid' => 500,
+        ]);
+
+        $original = $jobOrder->fresh();
+        $financialState = [
+            'payment_status' => $original->payment_status,
+            'total_cost' => (float) $original->total_cost,
+            'amount_paid' => (float) $original->amount_paid,
+            'balance' => (float) $original->balance,
+        ];
+
+        $this->assertGreaterThan(0, $financialState['balance']);
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/issue-warranty-service")
+            ->assertCreated()
+            ->assertJsonPath('message', 'Warranty service job created.');
+
+        $updated = $jobOrder->fresh();
+        $this->assertSame($financialState['payment_status'], $updated->payment_status);
+        $this->assertSame($financialState['total_cost'], (float) $updated->total_cost);
+        $this->assertSame($financialState['amount_paid'], (float) $updated->amount_paid);
+        $this->assertSame($financialState['balance'], (float) $updated->balance);
+    }
+
+    public function test_warranty_setup_is_rejected_after_release(): void
+    {
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOrder = $this->createPickedUpWarrantyJob($shop);
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/update-warranty", [
+                'warranty_days' => 60,
+                'warranty_details' => 'Attempted replacement warranty.',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('warranty');
+
+        $this->assertSame(30, $jobOrder->fresh()->warranty_days);
+    }
+
+    public function test_warranty_service_is_allowed_on_the_final_valid_warranty_date(): void
+    {
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOrder = $this->createPickedUpWarrantyJob($shop);
+        $jobOrder->update(['picked_up_at' => today()->subDays(30)->startOfDay()]);
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/issue-warranty-service")
+            ->assertCreated();
+    }
+
+    public function test_warranty_service_is_rejected_after_expiration_with_clear_message(): void
+    {
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOrder = $this->createPickedUpWarrantyJob($shop);
+        $jobOrder->update(['picked_up_at' => today()->subDays(31)->startOfDay()]);
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/issue-warranty-service")
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors([
+                'warranty_service' => 'Warranty period has expired. Warranty Service is no longer available for this Job Order.',
+            ]);
+    }
+
+    public function test_warranty_service_is_rejected_when_no_warranty_was_issued(): void
+    {
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOrder = $this->createPickedUpWarrantyJob($shop);
+        $jobOrder->update(['warranty_days' => 0, 'warranty_details' => null]);
+
+        $this->actingAs($staff)
+            ->postJson("/api/admin/job-orders/{$jobOrder->id}/issue-warranty-service")
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors([
+                'warranty_service' => 'No warranty was issued for this Job Order. Warranty Service is unavailable.',
+            ]);
     }
 
     public function test_staff_can_cancel_newly_issued_warranty_service_job(): void
@@ -226,12 +312,92 @@ class WarrantyAssessmentWorkflowTest extends TestCase
             ->assertJsonPath('document.title', 'Service Summary')
             ->assertJsonPath('document.is_warranty_service', true)
             ->assertJsonPath('invoice.invoice_number', 'WS-' . str_pad((string) $jobOrder->id, 6, '0', STR_PAD_LEFT));
+
+        $ordinaryJobOrder = JobOrder::create([
+            'shop_id' => $shop->id,
+            'job_order_number' => 'TEST-ORDINARY-SUMMARY-' . $shop->id,
+            'service_type' => 'STANDARD',
+            'customer_name' => 'Customer Name',
+            'customer_phone' => '09123456789',
+            'device_type' => 'Phone',
+            'problem_description' => 'Ordinary repair.',
+            'current_status' => 'IN_PROGRESS',
+            'estimated_cost' => 600,
+            'total_cost' => 700,
+            'amount_paid' => 0,
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson("/api/admin/job-orders/{$ordinaryJobOrder->id}/invoice")
+            ->assertOk()
+            ->assertJsonPath('document.type', 'invoice')
+            ->assertJsonPath('document.is_warranty_service', false);
+    }
+
+    public function test_print_data_contains_current_financial_summary_without_customer_contact(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $jobOrder = JobOrder::create([
+            'shop_id' => $shop->id,
+            'job_order_number' => 'TEST-PRINT-DATA-' . $shop->id,
+            'customer_name' => 'Customer Name',
+            'customer_phone' => '09123456789',
+            'device_type' => 'Phone',
+            'problem_description' => 'Screen issue.',
+            'current_status' => 'IN_PROGRESS',
+            'estimated_cost' => 600,
+            'parts_cost' => 200,
+            'labor_cost' => 500,
+            'total_cost' => 700,
+            'payment_status' => 'PENDING',
+            'amount_paid' => 0,
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson("/api/admin/job-orders/{$jobOrder->id}/print-data")
+            ->assertOk()
+            ->assertJsonPath('customer.name', 'Customer Name')
+            ->assertJsonMissingPath('customer.phone')
+            ->assertJsonPath('costs.estimated_cost', '600.00')
+            ->assertJsonPath('costs.total_cost', '700.00')
+            ->assertJsonPath('costs.amount_paid', '0.00')
+            ->assertJsonPath('costs.balance', 700)
+            ->assertJsonPath('costs.payment_status', 'PENDING')
+            ->assertJsonPath('tracking.claim_code', $jobOrder->job_order_number);
+
+        $this->assertSame(600.0, (float) $jobOrder->fresh()->estimated_cost);
+        $this->assertSame(700.0, (float) $jobOrder->fresh()->total_cost);
+        $this->assertSame(0.0, (float) $jobOrder->fresh()->amount_paid);
+    }
+
+    public function test_warranty_print_data_is_rejected_without_issued_warranty(): void
+    {
+        [$shop, $admin] = $this->createShopUser(User::ROLE_ADMIN);
+        $jobOrder = JobOrder::create([
+            'shop_id' => $shop->id,
+            'job_order_number' => 'TEST-NO-WARRANTY-PRINT-' . $shop->id,
+            'customer_name' => 'Customer Name',
+            'customer_phone' => '09123456789',
+            'device_type' => 'Phone',
+            'problem_description' => 'Screen issue.',
+            'current_status' => 'IN_PROGRESS',
+            'warranty_days' => 0,
+        ]);
+
+        $this->actingAs($admin)
+            ->getJson("/api/admin/job-orders/{$jobOrder->id}/print-data?warranty=1")
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('warranty');
     }
 
     public function test_general_and_dedicated_updates_enforce_the_warranty_duration_limit(): void
     {
         [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
         $jobOrder = $this->createPickedUpWarrantyJob($shop);
+        $jobOrder->update([
+            'current_status' => 'READY_FOR_PICKUP',
+            'picked_up_at' => null,
+        ]);
 
         $this->actingAs($staff)
             ->putJson("/api/admin/job-orders/{$jobOrder->id}", $this->jobOrderUpdatePayload(3650))

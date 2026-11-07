@@ -664,7 +664,7 @@ class PartRequestWorkflowTest extends TestCase
         $this->assertSame(1, JobOrderPartOrder::where('shop_id', $shop->id)->where('idempotency_key', $key)->count());
     }
 
-    public function test_shop_admin_and_staff_can_create_customer_orders_for_an_existing_job_with_decision_payment_and_location(): void
+    public function test_shop_admin_and_staff_can_create_customer_orders_for_an_existing_job_with_decision_and_payment(): void
     {
         [$shop, , $jobOrder] = $this->createTechnicianWithJob();
         [, $shopAdmin] = $this->createShopUser(User::ROLE_SHOP_ADMIN, $shop);
@@ -679,14 +679,10 @@ class PartRequestWorkflowTest extends TestCase
                 'reason' => 'The damaged display needs replacement.',
                 'estimated_unit_price' => 100,
                 'customer_decision' => JobOrderPartOrder::DECISION_PENDING,
-                'device_location' => 'WITH_CUSTOMER',
-                'device_location_note' => 'Customer is temporarily keeping the device.',
             ])
             ->assertCreated()
             ->assertJsonPath('order.job_order_id', $jobOrder->id)
-            ->assertJsonPath('order.status', JobOrderPartOrder::STATUS_AWAITING_APPROVAL)
-            ->assertJsonPath('order.device_location', 'WITH_CUSTOMER')
-            ->assertJsonPath('order.device_location_updated_by', $shopAdmin->name);
+            ->assertJsonPath('order.status', JobOrderPartOrder::STATUS_AWAITING_APPROVAL);
 
         $this->assertDatabaseHas('job_order_part_orders', [
             'shop_id' => $shop->id,
@@ -694,19 +690,6 @@ class PartRequestWorkflowTest extends TestCase
             'requested_by_user_id' => $shopAdmin->id,
             'customer_decision' => JobOrderPartOrder::DECISION_PENDING,
         ]);
-        $this->assertDatabaseHas('job_orders', [
-            'id' => $jobOrder->id,
-            'shop_id' => $shop->id,
-            'device_location' => 'WITH_CUSTOMER',
-            'device_location_updated_by_user_id' => $shopAdmin->id,
-        ]);
-        $this->assertNotNull($jobOrder->fresh()->device_location_updated_at);
-        $this->assertDatabaseHas('audit_logs', [
-            'user_id' => $shopAdmin->id,
-            'action' => 'job_order.device_location_updated',
-            'record_id' => $jobOrder->id,
-        ]);
-
         $this->actingAs($staff)
             ->postJson("/api/admin/job-orders/{$jobOrder->id}/part-orders", [
                 'part_name' => 'Display assembly',
@@ -716,7 +699,6 @@ class PartRequestWorkflowTest extends TestCase
                 'customer_decision' => JobOrderPartOrder::DECISION_APPROVED,
                 'customer_decision_note' => 'Customer approved by phone; staff recorded the decision.',
                 'required_downpayment_amount' => 25,
-                'device_location' => 'AT_SHOP',
             ])
             ->assertCreated()
             ->assertJsonPath('order.customer_decision', JobOrderPartOrder::DECISION_APPROVED)
@@ -749,7 +731,6 @@ class PartRequestWorkflowTest extends TestCase
             'reason' => 'The charging port is damaged.',
             'estimated_unit_price' => 50,
             'customer_decision' => JobOrderPartOrder::DECISION_APPROVED,
-            'device_location' => 'AT_SHOP',
         ];
 
         $this->actingAs($staff)
@@ -782,7 +763,6 @@ class PartRequestWorkflowTest extends TestCase
                 'reason' => 'Required for the repair.',
                 'estimated_unit_price' => 20,
                 'customer_decision' => JobOrderPartOrder::DECISION_PENDING,
-                'device_location' => 'AT_SHOP',
             ])
             ->assertNotFound();
 
@@ -928,18 +908,8 @@ class PartRequestWorkflowTest extends TestCase
         $this->assertDatabaseCount('stock_movements', 1);
         $this->assertSame('IN_PROGRESS', $jobOrder->fresh()->current_status);
 
-        $this->patchJson("/api/technician/job-orders/{$jobOrder->id}/device-location", [
-            'device_location' => 'WITH_CUSTOMER',
-        ])->assertOk();
-        $this->actingAs($technician)
+        $issueResponse = $this->actingAs($technician)
             ->patchJson("/api/technician/job-orders/{$jobOrder->id}/part-orders/{$order->id}/issue")
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('device_location');
-
-        $this->patchJson("/api/technician/job-orders/{$jobOrder->id}/device-location", [
-            'device_location' => 'AT_SHOP',
-        ])->assertOk();
-        $issueResponse = $this->patchJson("/api/technician/job-orders/{$jobOrder->id}/part-orders/{$order->id}/issue")
             ->assertCreated();
         $this->patchJson("/api/technician/job-orders/{$jobOrder->id}/part-orders/{$order->id}/issue")
             ->assertUnprocessable()
@@ -1127,26 +1097,10 @@ class PartRequestWorkflowTest extends TestCase
             ->assertJsonPath('message', 'No active technician profile is linked to this account.');
     }
 
-    public function test_device_location_is_audited_and_existing_public_tracking_does_not_include_parts_orders(): void
+    public function test_existing_public_tracking_does_not_include_parts_orders(): void
     {
         [$shop, $technician, $jobOrder] = $this->createTechnicianWithJob();
         $order = $this->createCustomerPartOrder($shop, $jobOrder, $technician);
-
-        $this->actingAs($technician)->patchJson("/api/technician/job-orders/{$jobOrder->id}/device-location", [
-            'device_location' => 'WITH_CUSTOMER',
-        ])->assertOk();
-
-        $this->assertDatabaseHas('job_orders', [
-            'id' => $jobOrder->id,
-            'device_location' => 'WITH_CUSTOMER',
-            'device_location_updated_by_user_id' => $technician->id,
-        ]);
-        $this->assertNotNull($jobOrder->fresh()->device_location_updated_at);
-        $this->assertDatabaseHas('audit_logs', [
-            'user_id' => $technician->id,
-            'action' => 'job_order.device_location_updated',
-            'record_id' => $jobOrder->id,
-        ]);
 
         $this->getJson("/api/shops/{$shop->slug}/track/{$jobOrder->job_order_number}")
             ->assertOk()
