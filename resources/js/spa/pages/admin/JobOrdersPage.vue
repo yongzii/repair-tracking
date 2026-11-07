@@ -653,7 +653,7 @@ watch(
         <div class="p-6">
           <div v-if="errorMessage" class="mb-4 p-3 rounded border border-rose-200 bg-rose-50 text-rose-700">{{ errorMessage }}</div>
 
-          <form class="grid grid-cols-1 md:grid-cols-2 gap-4" @submit.prevent="submit">
+          <form class="grid grid-cols-1 md:grid-cols-2 items-start gap-4" @submit.prevent="submit">
             <input v-model="form.customer_name" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Customer name" required />
             <input v-model="form.customer_email" type="email" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Customer email (optional)" />
             <input v-model="form.customer_phone" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Customer cellphone number" required />
@@ -674,8 +674,14 @@ watch(
               <option value="EMERGENCY">EMERGENCY</option>
             </select>
             <input v-model="form.estimated_cost" type="number" step="0.01" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Estimated cost" />
-            <input v-model="form.partial_payment" type="number" step="0.01" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Initial partial payment" />
-            <input v-model="form.estimated_completion" type="datetime-local" class="px-4 py-2 border border-slate-300 rounded-lg" />
+            <label class="block">
+              <span class="mb-1 block text-sm font-semibold text-slate-700">Initial Partial Payment</span>
+              <input v-model="form.partial_payment" type="number" step="0.01" min="0" class="w-full px-4 py-2 border border-slate-300 rounded-lg" />
+            </label>
+            <label class="block">
+              <span class="mb-1 block text-sm font-semibold text-slate-700">Estimated Completion Date &amp; Time</span>
+              <input v-model="form.estimated_completion" type="datetime-local" class="w-full px-4 py-2 border border-slate-300 rounded-lg" />
+            </label>
             <select v-model="form.technician_id" class="px-4 py-2 border border-slate-300 rounded-lg" :disabled="loadingTechnicians">
               <option value="">No technician assigned</option>
               <option v-for="tech in technicians" :key="tech.id" :value="tech.id">{{ tech.name }}</option>
