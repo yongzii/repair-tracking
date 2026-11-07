@@ -59,7 +59,7 @@ onMounted(loadDashboard);
 
       <div v-if="errorMessage" class="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm font-semibold text-rose-700">{{ errorMessage }}</div>
 
-      <div class="grid grid-cols-2 gap-3 xl:grid-cols-4 sm:gap-4">
+      <div class="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
         <div class="metric-card">
           <p class="text-slate-500 text-sm">Technician</p>
           <p class="mt-2 break-words text-lg font-bold text-slate-900 sm:text-2xl">{{ technician.name }}</p>
@@ -71,10 +71,6 @@ onMounted(loadDashboard);
         <div class="metric-card">
           <p class="text-slate-500 text-sm">Completed Jobs</p>
           <p class="text-3xl font-bold text-slate-900">{{ technician.completedJobsCount }}</p>
-        </div>
-        <div class="metric-card">
-          <p class="text-slate-500 text-sm">Average Rating</p>
-          <p class="text-3xl font-bold text-slate-900">{{ technician.averageRating || 'N/A' }}</p>
         </div>
       </div>
 
