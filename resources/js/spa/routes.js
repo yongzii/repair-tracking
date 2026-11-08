@@ -28,7 +28,6 @@ const ShopSettingsPage = () => import('./pages/admin/ShopSettingsPage.vue');
 const PlatformDashboardPage = () => import('./pages/platform/PlatformDashboardPage.vue');
 const PlatformSubscriptionRequestsPage = () => import('./pages/platform/PlatformSubscriptionRequestsPage.vue');
 const PlatformSettingsPage = () => import('./pages/platform/PlatformSettingsPage.vue');
-const PlatformAuditLogsPage = () => import('./pages/platform/PlatformAuditLogsPage.vue');
 const TechnicianDashboardPage = () => import('./pages/technician/TechnicianDashboardPage.vue');
 const TechnicianJobOrderPage = () => import('./pages/technician/TechnicianJobOrderPage.vue');
 const NotFoundPage = () => import('./pages/NotFoundPage.vue');
@@ -112,10 +111,6 @@ export const resolveRoute = (path) => {
 
     if (path === '/platform/failed-jobs') {
         return { component: FailedJobsPage, params: {}, title: 'Failed Jobs' };
-    }
-
-    if (path === '/platform/audit-logs') {
-        return { component: PlatformAuditLogsPage, params: {}, title: 'Audit Logs' };
     }
 
     if (path === '/platform/settings') {

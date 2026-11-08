@@ -4,11 +4,14 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\PlatformSubscriptionSetting;
+use App\Models\Shop;
 use App\Models\SubscriptionRequest;
 use App\Models\User;
 use App\Support\ManilaDateTime;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Throwable;
 
 class SubscriptionRequestController extends Controller
 {
@@ -90,24 +93,69 @@ class SubscriptionRequestController extends Controller
             ], 422);
         }
 
-        $proofPath = $request->file('proof')->store("shops/{$user->shop->id}/subscription-proofs", 'local');
+        $proofPath = null;
 
-        $subscriptionRequest = SubscriptionRequest::create([
-            'shop_id' => $user->shop->id,
-            'requested_by_id' => $user->id,
-            'plan_key' => $plan['key'],
-            'plan_name' => $plan['name'],
-            'amount' => $plan['amount'],
-            'duration_months' => $plan['duration_months'] ?? null,
-            'payment_method_key' => $method['key'],
-            'payment_method_name' => $method['name'],
-            'reference_number' => $validated['reference_number'] ?? null,
-            'proof_path' => $proofPath,
-            'status' => SubscriptionRequest::STATUS_PENDING,
-        ]);
+        try {
+            $result = DB::transaction(function () use ($request, $user, $plan, $method, $validated, &$proofPath) {
+                $shop = Shop::query()
+                    ->lockForUpdate()
+                    ->findOrFail($user->shop->id);
+
+                if ($shop->hasActiveAccess()) {
+                    return ['conflict' => 'active'];
+                }
+
+                $pendingRequest = $shop->subscriptionRequests()
+                    ->where('status', SubscriptionRequest::STATUS_PENDING)
+                    ->latest()
+                    ->first();
+
+                if ($pendingRequest) {
+                    return ['conflict' => 'pending', 'subscription_request' => $pendingRequest];
+                }
+
+                $proofPath = $request->file('proof')->store("shops/{$shop->id}/subscription-proofs", 'local');
+
+                $subscriptionRequest = $shop->subscriptionRequests()->create([
+                    'requested_by_id' => $user->id,
+                    'plan_key' => $plan['key'],
+                    'plan_name' => $plan['name'],
+                    'amount' => $plan['amount'],
+                    'duration_months' => $plan['duration_months'] ?? null,
+                    'payment_method_key' => $method['key'],
+                    'payment_method_name' => $method['name'],
+                    'reference_number' => $validated['reference_number'] ?? null,
+                    'proof_path' => $proofPath,
+                    'status' => SubscriptionRequest::STATUS_PENDING,
+                ]);
+
+                return ['subscription_request' => $subscriptionRequest];
+            });
+        } catch (Throwable $exception) {
+            if ($proofPath) {
+                Storage::disk('local')->delete($proofPath);
+            }
+
+            throw $exception;
+        }
+
+        if (($result['conflict'] ?? null) === 'active') {
+            return response()->json([
+                'message' => 'This shop already has active subscription access. New requests are not available while access is active.',
+            ], 409);
+        }
+
+        if (($result['conflict'] ?? null) === 'pending') {
+            return response()->json([
+                'message' => 'You already have a pending subscription request. Please wait for the Platform Administrator to review your application before submitting another request.',
+                'pending_request' => $this->mapRequest($result['subscription_request']),
+            ], 409);
+        }
+
+        $subscriptionRequest = $result['subscription_request'];
 
         return response()->json([
-            'message' => 'Subscription request submitted. Please wait for platform admin verification.',
+            'message' => 'Subscription Request Submitted Successfully! Your subscription request is now awaiting review by the Platform Administrator. Please wait for the administrator\'s approval. Once approved, refresh the page to access your shop\'s full features.',
             'subscription_request' => $this->mapRequest($subscriptionRequest->fresh()),
         ], 201);
     }

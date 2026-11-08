@@ -16,7 +16,9 @@ use App\Models\StatusHistory;
 use App\Models\SubscriptionRequest;
 use App\Models\Technician;
 use App\Models\User;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\Process;
 use Tests\TestCase;
@@ -66,6 +68,43 @@ class WorkflowConcurrencyTest extends TestCase
             ->where('action', 'platform.subscription_request.approved')
             ->where('record_id', $subscriptionRequest->id)
             ->count());
+    }
+
+    public function test_two_concurrent_shop_subscription_submissions_create_one_pending_request(): void
+    {
+        $shop = $this->createShop();
+        $shop->update(['trial_ends_at' => null]);
+        $firstAdmin = $this->createUser(User::ROLE_SHOP_ADMIN, $shop);
+        $secondAdmin = $this->createUser(User::ROLE_SHOP_ADMIN, $shop);
+        $proofPath = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'repairsync-subscription-proof-' . Str::uuid() . '.pdf';
+        file_put_contents($proofPath, "%PDF-1.4\nConcurrency proof\n%%EOF");
+
+        try {
+            $responses = $this->runContenders(
+                'subscription-create',
+                'shops',
+                $shop->id,
+                $firstAdmin->id,
+                $secondAdmin->id,
+                $proofPath
+            );
+
+            $requests = $shop->subscriptionRequests()->get();
+            $this->assertSortedStatuses($responses, [201, 409]);
+            $this->assertCount(1, $requests);
+            $this->assertSame(SubscriptionRequest::STATUS_PENDING, $requests->sole()->status);
+            $this->assertSame(1, $shop->subscriptionRequests()->where('status', SubscriptionRequest::STATUS_PENDING)->count());
+        } finally {
+            if (is_file($proofPath)) {
+                unlink($proofPath);
+            }
+            foreach ($shop->subscriptionRequests()->get() as $request) {
+                $this->subscriptionRequestIds[] = $request->id;
+                if ($request->proof_path) {
+                    Storage::disk('local')->delete($request->proof_path);
+                }
+            }
+        }
     }
 
     public function test_two_concurrent_pickups_release_a_ready_job_only_once(): void

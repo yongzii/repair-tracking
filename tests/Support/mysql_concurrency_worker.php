@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\JobOrderController;
 use App\Http\Controllers\Api\JobOrderPartOrderController;
 use App\Http\Controllers\Api\PartRequestController;
 use App\Http\Controllers\Api\PlatformController;
+use App\Http\Controllers\Api\SubscriptionRequestController;
 use App\Http\Controllers\Api\TechnicianPortalController;
 use App\Models\JobOrder;
 use App\Models\PartRequest;
@@ -12,6 +13,7 @@ use App\Models\SubscriptionRequest;
 use App\Models\User;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Support\Facades\DB;
 
@@ -54,6 +56,12 @@ try {
     $user = User::findOrFail((int) $userId);
     $request = match ($scenario) {
         'subscription-approve' => Request::create('/api/platform/subscription-requests/' . $recordId . '/approve', 'POST', []),
+        'subscription-create' => Request::create('/api/admin/subscription/requests', 'POST', [
+            'plan_key' => 'monthly',
+            'payment_method_key' => 'gcash',
+        ], [], [
+            'proof' => new UploadedFile((string) $sparePartId, 'payment-proof.pdf', 'application/pdf', null, true),
+        ]),
         'pickup' => Request::create('/api/admin/job-orders/' . $recordId . '/mark-picked-up', 'POST', [
             'picked_up_by' => 'Synthetic Test Customer',
         ]),
@@ -102,6 +110,7 @@ try {
                 $request,
                 SubscriptionRequest::findOrFail((int) $recordId)
             ),
+            'subscription-create' => app(SubscriptionRequestController::class)->store($request),
             'pickup' => app(JobOrderController::class)->markPickedUp(
                 $request,
                 JobOrder::findOrFail((int) $recordId)

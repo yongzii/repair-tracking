@@ -661,10 +661,6 @@ onMounted(refresh);
             <span class="flex min-w-0 items-center gap-3"><i class="fas fa-triangle-exclamation w-5 text-center text-amber-600" aria-hidden="true"></i><span>Failed Jobs</span></span>
             <i class="fas fa-arrow-right text-xs text-slate-400 group-hover:text-teal-700" aria-hidden="true"></i>
           </AppLink>
-          <AppLink to="/platform/audit-logs" class="group flex min-h-14 items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 font-semibold text-slate-800 shadow-sm hover:border-teal-200 hover:text-teal-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-500">
-            <span class="flex min-w-0 items-center gap-3"><i class="fas fa-clipboard-list w-5 text-center text-violet-700" aria-hidden="true"></i><span>Audit Logs</span></span>
-            <i class="fas fa-arrow-right text-xs text-slate-400 group-hover:text-teal-700" aria-hidden="true"></i>
-          </AppLink>
         </div>
       </section>
 

@@ -62,6 +62,7 @@ const subscriptionError = ref('');
 const subscriptionSuccess = ref('');
 const subscriptionSettings = ref(null);
 const pendingSubscriptionRequest = ref(null);
+const subscriptionOptionsLoaded = ref(false);
 const subscriptionForm = ref({
     plan_key: '',
     payment_method_key: '',
@@ -228,6 +229,9 @@ onMounted(() => {
     loadAlerts();
     alertsRefreshInterval = window.setInterval(loadAlerts, 60_000);
     window.addEventListener('focus', loadAlerts);
+    if (isAdmin.value) {
+        loadSubscriptionOptions();
+    }
     const scrollTop = consumeAdminSidebarScroll();
     if (scrollTop > 0) {
         nextTick(() => {
@@ -262,13 +266,17 @@ watch(() => user.value?.role, (role) => {
 });
 
 const loadSubscriptionOptions = async () => {
+    if (subscriptionLoading.value) return;
+
     subscriptionLoading.value = true;
+    subscriptionOptionsLoaded.value = false;
     subscriptionError.value = '';
 
     try {
         const { data } = await window.axios.get('/api/admin/subscription/options');
         subscriptionSettings.value = data.settings;
         pendingSubscriptionRequest.value = data.pending_request;
+        subscriptionOptionsLoaded.value = true;
         if (!subscriptionForm.value.plan_key && data.settings?.plans?.[0]) {
             subscriptionForm.value.plan_key = data.settings.plans[0].key;
         }
@@ -287,9 +295,7 @@ const openSubscribeModal = async () => {
 
     showSubscribeModal.value = true;
     subscriptionSuccess.value = '';
-    if (!subscriptionSettings.value) {
-        await loadSubscriptionOptions();
-    }
+    await loadSubscriptionOptions();
 };
 
 const onProofChange = (event) => {
@@ -297,7 +303,13 @@ const onProofChange = (event) => {
 };
 
 const submitSubscriptionRequest = async () => {
-    if (!isAdmin.value) return;
+    if (
+        !isAdmin.value
+        || subscriptionSubmitting.value
+        || !subscriptionOptionsLoaded.value
+        || pendingSubscriptionRequest.value
+        || user.value?.shop?.has_active_access
+    ) return;
 
     subscriptionSubmitting.value = true;
     subscriptionError.value = '';
@@ -316,14 +328,18 @@ const submitSubscriptionRequest = async () => {
             headers: { 'Content-Type': 'multipart/form-data' },
         });
         pendingSubscriptionRequest.value = data.subscription_request;
-        subscriptionSuccess.value = data.message || 'Subscription request submitted.';
+        subscriptionSuccess.value = data.message || 'Subscription request submitted successfully and is awaiting Platform Administrator review.';
         subscriptionForm.value.reference_number = '';
         subscriptionForm.value.proof = null;
     } catch (error) {
-        const firstError = error?.response?.data?.errors
-            ? Object.values(error.response.data.errors)[0]?.[0]
+        const responseData = error?.response?.data;
+        const firstError = responseData?.errors
+            ? Object.values(responseData.errors)[0]?.[0]
             : null;
-        subscriptionError.value = firstError || error?.response?.data?.message || 'Unable to submit subscription request.';
+        if (responseData?.pending_request) {
+            pendingSubscriptionRequest.value = responseData.pending_request;
+        }
+        subscriptionError.value = firstError || responseData?.message || 'Unable to submit subscription request.';
     } finally {
         subscriptionSubmitting.value = false;
     }
@@ -503,17 +519,38 @@ const submitSubscriptionRequest = async () => {
             <p class="mt-1">Close-out mode is active: existing job orders can still be completed and released, but new intake is locked until the subscription is renewed.</p>
           </div>
           <div v-if="isPreviewMode && isAdmin" class="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 sm:flex-row sm:items-center sm:justify-between">
-            <span>Preview mode: subscription required before saving records or processing transactions.</span>
-            <button ref="subscribeButton" type="button" class="shrink-0 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white hover:bg-slate-800" @click="openSubscribeModal">
-              Subscribe Now
+            <span v-if="pendingSubscriptionRequest">A subscription request is awaiting Platform Administrator review.</span>
+            <span v-else>Preview mode: subscription required before saving records or processing transactions.</span>
+            <span v-if="pendingSubscriptionRequest" class="shrink-0 rounded-lg border border-amber-300 bg-amber-100 px-4 py-2 text-center text-xs font-bold uppercase tracking-[0.08em]">Request Pending</span>
+            <button
+              v-else
+              ref="subscribeButton"
+              type="button"
+              class="shrink-0 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+              :disabled="subscriptionLoading"
+              @click="openSubscribeModal"
+            >
+              {{ subscriptionLoading ? 'Checking Request...' : 'Subscribe Now' }}
             </button>
           </div>
           <div class="relative">
-            <div :class="isPreviewMode ? 'blur-[3px] opacity-55' : ''" class="transition duration-200">
+            <div :class="isPreviewMode ? 'blur-[3px] opacity-55' : ''" class="transition duration-200" :inert="isPreviewMode">
               <slot />
             </div>
-            <div v-if="isPreviewMode" class="pointer-events-none absolute inset-x-0 top-6 flex justify-center">
-              <span class="rounded-full bg-slate-950/85 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white shadow-lg">
+            <div v-if="isPreviewMode" class="absolute inset-x-0 top-6 z-10 flex justify-center">
+              <button
+                v-if="isAdmin && !pendingSubscriptionRequest"
+                type="button"
+                class="rounded-full bg-slate-950/85 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white shadow-lg focus:outline-none focus:ring-2 focus:ring-teal-400 focus:ring-offset-2"
+                :disabled="subscriptionLoading"
+                @click="openSubscribeModal"
+              >
+                {{ subscriptionLoading ? 'Checking Request...' : 'Subscribe to Unlock' }}
+              </button>
+              <span v-else-if="isAdmin" class="rounded-full bg-amber-100 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-amber-900 shadow-lg">
+                Request Pending
+              </span>
+              <span v-else class="rounded-full bg-slate-950/85 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em] text-white shadow-lg">
                 Subscribe to unlock
               </span>
             </div>
@@ -544,21 +581,27 @@ const submitSubscriptionRequest = async () => {
             <p>{{ subscriptionSettings?.instructions || 'Choose a plan, pay using an available method, then upload proof for verification.' }}</p>
 
             <div v-if="subscriptionError" class="rounded-lg border border-rose-200 bg-rose-50 p-3 font-semibold text-rose-700">{{ subscriptionError }}</div>
-            <div v-if="subscriptionSuccess" class="rounded-lg border border-emerald-200 bg-emerald-50 p-3 font-semibold text-emerald-700">{{ subscriptionSuccess }}</div>
+            <div v-if="subscriptionSuccess" class="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800" role="status">
+              <p class="font-bold">Subscription Request Submitted Successfully!</p>
+              <p class="mt-1">Your subscription request is now awaiting review by the Platform Administrator.</p>
+              <p class="mt-1">Please wait for the administrator's approval. Once approved, refresh the page to access your shop's full features.</p>
+            </div>
             <div v-if="subscriptionLoading" class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-slate-500">Loading subscription options...</div>
 
             <div v-if="pendingSubscriptionRequest" class="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
-              <p class="font-bold">Pending verification</p>
+              <p class="font-bold">Pending Approval</p>
+              <p v-if="subscriptionSuccess" class="mt-1 text-sm">Your subscription request is awaiting Platform Administrator approval. You cannot submit another request while it is pending.</p>
+              <p v-else class="mt-1 text-sm">You already have a pending subscription request. Please wait for the Platform Administrator to review your application before submitting another request.</p>
               <p class="mt-1 text-xs">{{ pendingSubscriptionRequest.plan_name }} - {{ formatCurrency(pendingSubscriptionRequest.amount) }} via {{ pendingSubscriptionRequest.payment_method_name }}</p>
               <p class="mt-1 text-xs">Submitted {{ pendingSubscriptionRequest.created_at_formatted }}</p>
             </div>
 
-            <div class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div v-if="!pendingSubscriptionRequest" class="rounded-lg border border-slate-200 bg-slate-50 p-4">
               <p class="text-xs font-bold uppercase text-slate-500">Workspace Code</p>
               <p class="mt-1 font-bold text-slate-950">{{ shopSlug || 'Not assigned' }}</p>
             </div>
 
-            <form class="space-y-4" @submit.prevent="submitSubscriptionRequest">
+            <form v-if="!pendingSubscriptionRequest" class="space-y-4" @submit.prevent="submitSubscriptionRequest">
               <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <label v-for="plan in subscriptionPlans" :key="plan.key" class="cursor-pointer rounded-lg border p-3" :class="subscriptionForm.plan_key === plan.key ? 'border-teal-300 bg-teal-50 ring-2 ring-teal-100' : 'border-slate-200'">
                   <input v-model="subscriptionForm.plan_key" type="radio" class="sr-only" :value="plan.key" />
@@ -598,7 +641,7 @@ const submitSubscriptionRequest = async () => {
               </label>
 
               <div class="sticky bottom-0 bg-white pb-1 pt-3">
-                <button type="submit" class="w-full rounded-lg bg-teal-600 px-4 py-3 font-bold text-white hover:bg-teal-700 disabled:opacity-60" :disabled="subscriptionSubmitting || subscriptionLoading">
+                <button type="submit" class="w-full rounded-lg bg-teal-600 px-4 py-3 font-bold text-white hover:bg-teal-700 disabled:opacity-60" :disabled="subscriptionSubmitting || subscriptionLoading || !subscriptionOptionsLoaded">
                   {{ subscriptionSubmitting ? 'Submitting...' : 'Submit Payment Proof' }}
                 </button>
               </div>

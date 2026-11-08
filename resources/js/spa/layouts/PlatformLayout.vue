@@ -211,11 +211,6 @@ const onLogout = async () => {
           <span>Failed Jobs</span>
         </AppLink>
 
-        <AppLink to="/platform/audit-logs" class="platform-nav-link" :class="currentPath === '/platform/audit-logs' ? 'platform-nav-link-active' : ''">
-          <i class="fas fa-clipboard-list w-5"></i>
-          <span>Audit Logs</span>
-        </AppLink>
-
         <AppLink to="/platform/settings" class="platform-nav-link" :class="currentPath === '/platform/settings' ? 'platform-nav-link-active' : ''">
           <i class="fas fa-gear w-5"></i>
           <span>Platform Settings</span>
