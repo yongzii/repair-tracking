@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\PlatformController;
 use App\Http\Controllers\Api\ReportsController;
 use App\Http\Controllers\Api\RepairPhotoController;
 use App\Http\Controllers\Api\ShopController;
+use App\Http\Controllers\Api\ShopFreeTrialController;
 use App\Http\Controllers\Api\ShopOnboardingController;
 use App\Http\Controllers\Api\SubscriptionRequestController;
 use App\Http\Controllers\Api\TechnicianController;
@@ -36,6 +37,9 @@ Route::middleware('web')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth');
         Route::post('/password', [AuthController::class, 'changePassword'])->middleware(['auth', EnsureActiveUser::class]);
     });
+
+    Route::post('/shop/free-trial/activate', [ShopFreeTrialController::class, 'activate'])
+        ->middleware(['auth', EnsureActiveUser::class]);
 
     Route::prefix('onboarding')->group(function () {
         Route::get('/check-slug', [ShopOnboardingController::class, 'checkSlug']);

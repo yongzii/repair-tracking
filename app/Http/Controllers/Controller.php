@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Database\Eloquent\Model;
 use App\Models\JobOrder;
+use App\Models\Shop;
 use App\Models\Technician;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -33,8 +34,8 @@ abstract class Controller
         if (!$user->hasRole(User::ROLE_PLATFORM_ADMIN) && $user->shop_id && !$request->isMethodSafe()) {
             $user->loadMissing('shop');
 
-            if (!$user->shop?->hasActiveAccess() && !$user->shop?->isInCloseOutMode()) {
-                abort(Response::HTTP_PAYMENT_REQUIRED, 'Subscription required. Preview mode lets you explore the system, but saving records and transactions are locked until payment is activated.');
+            if (!$user->shop?->canPerformBusinessWrites()) {
+                abort(Response::HTTP_PAYMENT_REQUIRED, $this->businessWriteRestrictionMessage($user->shop));
             }
         }
 
@@ -55,8 +56,8 @@ abstract class Controller
 
         $user->loadMissing('shop');
 
-        if (!$request->isMethodSafe() && !$user->shop?->hasActiveAccess() && !$user->shop?->isInCloseOutMode()) {
-            abort(Response::HTTP_PAYMENT_REQUIRED, 'Subscription required. Preview mode lets you explore the system, but saving records and transactions are locked until payment is activated.');
+        if (!$request->isMethodSafe() && !$user->shop?->canPerformBusinessWrites()) {
+            abort(Response::HTTP_PAYMENT_REQUIRED, $this->businessWriteRestrictionMessage($user->shop));
         }
 
         return (int) $user->shop_id;
@@ -117,13 +118,26 @@ abstract class Controller
             abort(Response::HTTP_FORBIDDEN, 'This account is not linked to a shop yet.');
         }
 
-        if (!$user->shop->hasActiveAccess()) {
+        if (!$user->shop->canStartNewWork()) {
+            if ($user->shop->isFreeTrialExpired()) {
+                abort(Response::HTTP_PAYMENT_REQUIRED, 'The free trial has expired. Existing records remain available in Preview Mode, but business operations and new intake are locked.');
+            }
+
             $message = $user->shop->trial_ends_at
                 ? 'Shop access has expired. Existing job orders can still be completed, but new intake is locked until the subscription is renewed.'
                 : 'Shop access needs setup. Existing job orders can still be completed, but new intake is locked until billing coverage is recorded.';
 
             abort(Response::HTTP_PAYMENT_REQUIRED, $message);
         }
+    }
+
+    private function businessWriteRestrictionMessage(?Shop $shop): string
+    {
+        if ($shop?->isFreeTrialExpired()) {
+            return 'The free trial has expired. Existing records remain available in Preview Mode, but business operations are locked.';
+        }
+
+        return 'Subscription required. Preview mode lets you explore the system, but saving records and transactions are locked until payment is activated.';
     }
 
     protected function ensureSameShop(Request $request, Model $record, string $shopKey = 'shop_id'): void

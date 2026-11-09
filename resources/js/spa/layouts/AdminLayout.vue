@@ -44,12 +44,63 @@ const isSectionActive = (path) => {
 const user = computed(() => authState.user);
 const isDesktopCollapsed = computed(() => sidebarCollapsed.value && !isMobile.value);
 const isAdmin = computed(() => adminRoles.includes(user.value?.role));
+const isShopAdmin = computed(() => user.value?.role === 'shop_admin');
 const canViewInventory = computed(() => [...adminRoles, 'staff'].includes(user.value?.role));
 const shopName = computed(() => user.value?.shop?.name || appConfig.name);
 const shopSlug = computed(() => user.value?.shop?.slug || '');
 const shopLogo = computed(() => user.value?.shop?.logo_url || '');
 const isCloseOutMode = computed(() => Boolean(user.value?.shop?.is_close_out_mode));
-const isPreviewMode = computed(() => Boolean(user.value?.shop && !user.value.shop.has_active_access && !user.value.shop.is_close_out_mode));
+const currentTime = ref(Date.now());
+const hasActivePaidAccess = computed(() => Boolean(
+    user.value?.shop?.has_active_paid_access ?? user.value?.shop?.has_active_access
+));
+const freeTrialExpiration = computed(() => {
+    const timestamp = user.value?.shop?.free_trial_ends_at;
+    if (!timestamp) return null;
+
+    const expiration = Date.parse(timestamp);
+    return Number.isFinite(expiration) ? expiration : null;
+});
+const isFreeTrialActive = computed(() => Boolean(
+    user.value?.shop?.free_trial_active
+    && user.value?.shop?.has_operational_access
+    && !hasActivePaidAccess.value
+    && freeTrialExpiration.value !== null
+    && freeTrialExpiration.value > currentTime.value
+));
+const isFreeTrialExpired = computed(() => Boolean(
+    user.value?.shop?.free_trial_used
+    && !hasActivePaidAccess.value
+    && (freeTrialExpiration.value === null || freeTrialExpiration.value <= currentTime.value)
+));
+const hasOperationalAccess = computed(() => {
+    if (!user.value?.shop) return false;
+    if (user.value.shop.free_trial_active && !hasActivePaidAccess.value) {
+        return isFreeTrialActive.value;
+    }
+
+    return Boolean(user.value.shop.has_operational_access);
+});
+const isPreviewMode = computed(() => Boolean(
+    user.value?.shop && !hasOperationalAccess.value && !isCloseOutMode.value
+));
+const canActivateFreeTrial = computed(() => Boolean(
+    isShopAdmin.value
+    && isPreviewMode.value
+    && !hasActivePaidAccess.value
+    && !user.value?.shop?.free_trial_used
+    && !user.value?.shop?.free_trial_active
+    && user.value?.shop?.free_trial_eligible
+));
+const formattedFreeTrialExpiration = computed(() => {
+    if (freeTrialExpiration.value === null) return '';
+
+    return new Intl.DateTimeFormat('en-PH', {
+        dateStyle: 'medium',
+        timeStyle: 'medium',
+        timeZone: 'Asia/Manila',
+    }).format(freeTrialExpiration.value);
+});
 const accessUntil = computed(() => user.value?.shop?.access_until_formatted || '');
 const trackingPath = computed(() => shopSlug.value ? `/shops/${shopSlug.value}/track` : '/track');
 const showSubscribeModal = ref(false);
@@ -60,6 +111,12 @@ const subscriptionLoading = ref(false);
 const subscriptionSubmitting = ref(false);
 const subscriptionError = ref('');
 const subscriptionSuccess = ref('');
+const trialActivationSubmitting = ref(false);
+const trialActivationError = ref('');
+const trialActivationSuccess = ref('');
+const accessRefreshError = ref('');
+let freeTrialExpirationTimeout;
+let accessRefreshPromise = null;
 const subscriptionSettings = ref(null);
 const pendingSubscriptionRequest = ref(null);
 const subscriptionOptionsLoaded = ref(false);
@@ -107,6 +164,136 @@ const loadAlerts = async () => {
 const formatCurrency = (value) => {
     const amount = Number(value || 0);
     return `PHP ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+};
+
+const isValidTrialTimestamp = (value) => (
+    typeof value === 'string'
+    && value.trim().length > 0
+    && Number.isFinite(Date.parse(value))
+);
+
+const isValidTrialActivationResponse = (trial) => Boolean(
+    trial
+    && trial.active === true
+    && isValidTrialTimestamp(trial.started_at)
+    && isValidTrialTimestamp(trial.ends_at)
+    && typeof trial.eligible === 'boolean'
+    && typeof trial.used === 'boolean'
+    && (
+        trial.used_at === null
+        || isValidTrialTimestamp(trial.used_at)
+    )
+);
+
+const refreshAccessState = () => {
+    if (accessRefreshPromise) return accessRefreshPromise;
+
+    accessRefreshPromise = (async () => {
+        try {
+            const { data } = await window.axios.get('/api/auth/user');
+            authState.user = data.user ?? null;
+            accessRefreshError.value = '';
+            return true;
+        } catch (error) {
+            accessRefreshError.value = error?.response?.data?.message || 'Unable to refresh shop access status.';
+            return false;
+        } finally {
+            accessRefreshPromise = null;
+        }
+    })();
+
+    return accessRefreshPromise;
+};
+
+const scheduleFreeTrialExpirationRefresh = () => {
+    window.clearTimeout(freeTrialExpirationTimeout);
+
+    if (freeTrialExpiration.value === null || freeTrialExpiration.value <= currentTime.value) {
+        return;
+    }
+
+    freeTrialExpirationTimeout = window.setTimeout(async () => {
+        currentTime.value = Date.now();
+        await refreshAccessState();
+        currentTime.value = Date.now();
+        scheduleFreeTrialExpirationRefresh();
+    }, freeTrialExpiration.value - currentTime.value);
+};
+
+watch(freeTrialExpiration, scheduleFreeTrialExpirationRefresh, { immediate: true });
+
+const onWindowFocus = async () => {
+    currentTime.value = Date.now();
+    await refreshAccessState();
+    currentTime.value = Date.now();
+    scheduleFreeTrialExpirationRefresh();
+
+    if (isAdmin.value) {
+        loadSubscriptionOptions();
+    }
+};
+
+const onDocumentVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+        onWindowFocus();
+    }
+};
+
+const activateFreeTrial = async () => {
+    if (!canActivateFreeTrial.value || trialActivationSubmitting.value) return;
+
+    const confirmed = window.confirm(
+        'Start your 7-Day Free Trial now? The full 168-hour period begins immediately and cannot be restarted.'
+    );
+    if (!confirmed) return;
+
+    trialActivationSubmitting.value = true;
+    trialActivationError.value = '';
+    trialActivationSuccess.value = '';
+
+    try {
+        const { data } = await window.axios.post('/api/shop/free-trial/activate');
+        const trial = data?.trial;
+
+        if (!isValidTrialActivationResponse(trial)) {
+            throw new Error('The server returned an invalid free-trial activation response. No access state was changed. Please try again.');
+        }
+
+        if (authState.user?.shop) {
+            authState.user = {
+                ...authState.user,
+                shop: {
+                    ...authState.user.shop,
+                    free_trial_eligible: Boolean(trial.eligible),
+                    free_trial_used: Boolean(trial.used),
+                    free_trial_active: trial.active,
+                    free_trial_expired: false,
+                    free_trial_started_at: trial.started_at,
+                    free_trial_ends_at: trial.ends_at,
+                    free_trial_used_at: trial.used_at,
+                    has_operational_access: trial.active || hasActivePaidAccess.value,
+                    is_close_out_mode: false,
+                },
+            };
+        }
+
+        currentTime.value = Date.now();
+        scheduleFreeTrialExpirationRefresh();
+        trialActivationSuccess.value = 'Your 7-Day Free Trial is active.';
+
+        if (!(await refreshAccessState())) {
+            trialActivationError.value = 'Trial activated, but access status could not be refreshed. The server will continue enforcing the trial expiration.';
+        }
+        currentTime.value = Date.now();
+        scheduleFreeTrialExpirationRefresh();
+    } catch (error) {
+        const responseData = error?.response?.data;
+        trialActivationError.value = responseData?.message
+            || error?.message
+            || 'Unable to activate the free trial.';
+    } finally {
+        trialActivationSubmitting.value = false;
+    }
 };
 
 const onLogout = async () => {
@@ -229,6 +416,9 @@ onMounted(() => {
     loadAlerts();
     alertsRefreshInterval = window.setInterval(loadAlerts, 60_000);
     window.addEventListener('focus', loadAlerts);
+    window.addEventListener('focus', onWindowFocus);
+    document.addEventListener('visibilitychange', onDocumentVisibilityChange);
+    scheduleFreeTrialExpirationRefresh();
     if (isAdmin.value) {
         loadSubscriptionOptions();
     }
@@ -247,7 +437,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
     mobileMediaQuery?.removeEventListener('change', syncViewport);
     window.clearInterval(alertsRefreshInterval);
+    window.clearTimeout(freeTrialExpirationTimeout);
     window.removeEventListener('focus', loadAlerts);
+    window.removeEventListener('focus', onWindowFocus);
+    document.removeEventListener('visibilitychange', onDocumentVisibilityChange);
     if (previousBodyOverflow !== null) {
         document.body.style.overflow = previousBodyOverflow;
     }
@@ -518,12 +711,14 @@ const submitSubscriptionRequest = async () => {
             <p class="font-bold">Shop access expired{{ accessUntil ? ` on ${accessUntil}` : '' }}.</p>
             <p class="mt-1">Close-out mode is active: existing job orders can still be completed and released, but new intake is locked until the subscription is renewed.</p>
           </div>
-          <div v-if="isPreviewMode && isAdmin" class="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 sm:flex-row sm:items-center sm:justify-between">
-            <span v-if="pendingSubscriptionRequest">A subscription request is awaiting Platform Administrator review.</span>
-            <span v-else>Preview mode: subscription required before saving records or processing transactions.</span>
-            <span v-if="pendingSubscriptionRequest" class="shrink-0 rounded-lg border border-amber-300 bg-amber-100 px-4 py-2 text-center text-xs font-bold uppercase tracking-[0.08em]">Request Pending</span>
+          <div v-if="isFreeTrialActive" class="flex flex-col gap-3 rounded-xl border border-teal-200 bg-teal-50 p-4 text-sm text-teal-950 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+              <p class="font-bold">7-Day Free Trial Active</p>
+              <p class="mt-1 break-words">Your trial ends {{ formattedFreeTrialExpiration }} (Asia/Manila).</p>
+              <p v-if="accessRefreshError" class="mt-2 break-words text-amber-800" role="status">{{ accessRefreshError }}</p>
+            </div>
             <button
-              v-else
+              v-if="isShopAdmin && !pendingSubscriptionRequest"
               ref="subscribeButton"
               type="button"
               class="shrink-0 rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
@@ -532,6 +727,38 @@ const submitSubscriptionRequest = async () => {
             >
               {{ subscriptionLoading ? 'Checking Request...' : 'Subscribe Now' }}
             </button>
+          </div>
+          <div v-if="isPreviewMode && isAdmin" class="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+            <div class="min-w-0">
+              <p v-if="isFreeTrialExpired">Your free trial has ended. Preview Mode is active; submit a subscription request to restore operational access.</p>
+              <p v-else-if="pendingSubscriptionRequest">A subscription request is awaiting Platform Administrator review.</p>
+              <p v-else>Preview mode: subscription or a free trial is required before saving records or processing transactions.</p>
+              <p v-if="trialActivationSuccess" class="mt-1 text-emerald-800" role="status">{{ trialActivationSuccess }}</p>
+              <p v-if="trialActivationError" class="mt-1 break-words text-rose-800" role="alert">{{ trialActivationError }}</p>
+              <p v-if="accessRefreshError" class="mt-1 break-words text-amber-800" role="status">{{ accessRefreshError }}</p>
+            </div>
+            <div class="flex shrink-0 flex-col gap-2 sm:items-end">
+              <span v-if="pendingSubscriptionRequest" class="rounded-lg border border-amber-300 bg-amber-100 px-4 py-2 text-center text-xs font-bold uppercase tracking-[0.08em]">Request Pending</span>
+              <button
+                v-if="canActivateFreeTrial"
+                type="button"
+                class="rounded-lg border border-teal-700 bg-white px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-teal-800 hover:bg-teal-50 disabled:cursor-wait disabled:opacity-60"
+                :disabled="trialActivationSubmitting"
+                @click="activateFreeTrial"
+              >
+                {{ trialActivationSubmitting ? 'Starting Trial...' : 'Start 7-Day Free Trial' }}
+              </button>
+              <button
+                v-if="!pendingSubscriptionRequest"
+                ref="subscribeButton"
+                type="button"
+                class="rounded-lg bg-slate-950 px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-60"
+                :disabled="subscriptionLoading"
+                @click="openSubscribeModal"
+              >
+                {{ subscriptionLoading ? 'Checking Request...' : 'Subscribe Now' }}
+              </button>
+            </div>
           </div>
           <div class="relative">
             <div :class="isPreviewMode ? 'blur-[3px] opacity-55' : ''" class="transition duration-200" :inert="isPreviewMode">

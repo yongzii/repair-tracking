@@ -201,16 +201,34 @@ class PublicShopDirectoryTest extends TestCase
             ->assertJsonValidationErrors('page');
     }
 
-    public function test_public_profile_keeps_its_existing_active_only_eligibility(): void
+    public function test_public_profile_requires_active_paid_access_or_an_active_free_trial(): void
     {
-        $expiredButActiveShop = $this->createShop('Expired Profile Shop', [
-            'trial_ends_at' => now()->subDay(),
+        $paidShop = $this->createShop('Paid Profile Shop');
+        $freeTrialShop = $this->createShop('Free Trial Profile Shop', [
+            'trial_ends_at' => null,
+            'free_trial_eligible' => false,
+            'free_trial_started_at' => now()->subHour(),
+            'free_trial_ends_at' => now()->addHours(167),
+            'free_trial_used_at' => now()->subHour(),
+        ]);
+        $expiredTrialShop = $this->createShop('Expired Trial Profile Shop', [
+            'trial_ends_at' => null,
+            'free_trial_eligible' => false,
+            'free_trial_started_at' => now()->subHours(169),
+            'free_trial_ends_at' => now()->subHour(),
+            'free_trial_used_at' => now()->subHours(169),
+        ]);
+        $noAccessShop = $this->createShop('No Access Profile Shop', [
+            'trial_ends_at' => null,
         ]);
         $inactiveShop = $this->createShop('Inactive Profile Shop', [
             'is_active' => false,
         ]);
 
-        $this->getJson("/api/shops/{$expiredButActiveShop->slug}/profile")->assertOk();
+        $this->getJson("/api/shops/{$paidShop->slug}/profile")->assertOk();
+        $this->getJson("/api/shops/{$freeTrialShop->slug}/profile")->assertOk();
+        $this->getJson("/api/shops/{$expiredTrialShop->slug}/profile")->assertNotFound();
+        $this->getJson("/api/shops/{$noAccessShop->slug}/profile")->assertNotFound();
         $this->getJson("/api/shops/{$inactiveShop->slug}/profile")->assertNotFound();
     }
 

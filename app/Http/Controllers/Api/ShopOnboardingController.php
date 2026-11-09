@@ -39,6 +39,10 @@ class ShopOnboardingController extends Controller
                 'address' => $validated['shop_address'] ?? null,
                 'subscription_plan' => 'starter',
                 'trial_ends_at' => null,
+                'free_trial_eligible' => true,
+                'free_trial_started_at' => null,
+                'free_trial_ends_at' => null,
+                'free_trial_used_at' => null,
                 'is_active' => true,
             ]);
 
@@ -67,7 +71,7 @@ class ShopOnboardingController extends Controller
         $owner->loadMissing('shop');
 
         return response()->json([
-            'message' => 'Shop workspace created successfully. You can sign in to explore preview mode, but subscription payment is required before saving records or transactions.',
+            'message' => 'Shop workspace created successfully. You can explore Preview Mode or manually activate the available 7-day free trial. Subscription payment is required for full access after the trial ends.',
             'shop' => [
                 'name' => $shop->name,
                 'slug' => $shop->slug,
@@ -150,10 +154,7 @@ class ShopOnboardingController extends Controller
                 'name' => $user->shop->name,
                 'slug' => $user->shop->slug,
                 'logo_url' => $user->shop->logoUrl(),
-                'access_until' => $user->shop->trial_ends_at,
-                'access_until_formatted' => $user->shop->trial_ends_at?->format('M d, Y'),
-                'has_active_access' => $user->shop->hasActiveAccess(),
-                'is_close_out_mode' => $user->shop->isInCloseOutMode(),
+                ...$user->shop->accessState(),
             ] : null,
         ];
     }

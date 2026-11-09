@@ -25,9 +25,7 @@ class ShopController extends Controller
         $perPage = (int) ($validated['per_page'] ?? 12);
 
         $shops = Shop::query()
-            ->where('is_active', true)
-            ->whereNotNull('trial_ends_at')
-            ->where('trial_ends_at', '>', now())
+            ->withPublicOperationalAccess()
             ->withCount(['serviceItems as active_services_count' => fn ($query) => $query
                 ->where('service_items.is_active', true)
                 ->whereHas('category', fn ($categoryQuery) => $categoryQuery
@@ -108,6 +106,10 @@ class ShopController extends Controller
     public function publicProfile(Shop $shop)
     {
         if (!$shop->is_active) {
+            abort(404, 'Shop not found.');
+        }
+
+        if (!$shop->hasOperationalAccess()) {
             abort(404, 'Shop not found.');
         }
 

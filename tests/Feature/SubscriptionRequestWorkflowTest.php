@@ -25,6 +25,8 @@ class SubscriptionRequestWorkflowTest extends TestCase
     public function test_shop_without_a_pending_request_can_submit_and_retrieve_its_pending_status(): void
     {
         $shop = $this->createShop();
+        $shop->free_trial_eligible = true;
+        $shop->save();
         $admin = $this->createShopAdmin($shop);
 
         $this->actingAs($admin)
@@ -38,6 +40,7 @@ class SubscriptionRequestWorkflowTest extends TestCase
             ->assertJsonPath('pending_request.status', SubscriptionRequest::STATUS_PENDING);
 
         $this->assertSame(1, $shop->subscriptionRequests()->where('status', SubscriptionRequest::STATUS_PENDING)->count());
+        $this->assertTrue($shop->fresh()->free_trial_eligible);
     }
 
     public function test_existing_pending_request_blocks_another_direct_api_submission(): void
@@ -94,8 +97,19 @@ class SubscriptionRequestWorkflowTest extends TestCase
     public function test_rejected_request_does_not_prevent_resubmission(): void
     {
         $shop = $this->createShop();
+        $shop->free_trial_eligible = true;
+        $shop->save();
         $admin = $this->createShopAdmin($shop);
-        $this->createSubscriptionRequest($shop, SubscriptionRequest::STATUS_REJECTED);
+        $rejectedRequest = $this->createSubscriptionRequest($shop, SubscriptionRequest::STATUS_PENDING);
+        $platformAdmin = User::factory()->create([
+            'role' => User::ROLE_PLATFORM_ADMIN,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($platformAdmin)
+            ->postJson("/api/platform/subscription-requests/{$rejectedRequest->id}/reject")
+            ->assertOk()
+            ->assertJsonPath('subscription_request.status', SubscriptionRequest::STATUS_REJECTED);
 
         $this->actingAs($admin)
             ->postJson('/api/admin/subscription/requests', $this->requestPayload())
@@ -103,6 +117,7 @@ class SubscriptionRequestWorkflowTest extends TestCase
             ->assertJsonPath('subscription_request.status', SubscriptionRequest::STATUS_PENDING);
 
         $this->assertSame(2, $shop->subscriptionRequests()->count());
+        $this->assertTrue($shop->fresh()->free_trial_eligible);
     }
 
     public function test_active_subscription_cannot_create_a_new_shop_admin_request(): void

@@ -97,8 +97,8 @@ const submit = async () => {
               <span>A separate shop workspace, owner login, and a public tracking link reserved for your business.</span>
             </div>
             <div class="registration-panel">
-              <p>Activation required</p>
-              <span>You can explore preview mode first. Saving records and transactions opens after subscription payment is recorded.</span>
+              <p>Choose when to activate</p>
+              <span>Your shop starts in Preview Mode. An eligible Shop Admin can choose to start the 7-Day Free Trial after confirmation; it never starts automatically. You can also submit a subscription request for Platform Administrator review.</span>
             </div>
           </div>
 

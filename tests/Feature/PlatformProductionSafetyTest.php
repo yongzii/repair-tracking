@@ -10,6 +10,7 @@ use App\Models\SubscriptionRequest;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
@@ -61,7 +62,7 @@ class PlatformProductionSafetyTest extends TestCase
             ->assertOk();
     }
 
-    public function test_public_shop_launch_allows_preview_but_blocks_transactions_until_subscription(): void
+    public function test_public_shop_launch_preview_and_free_trial_access_then_subscription_payment(): void
     {
         $response = $this->postJson('/api/onboarding/register-shop', [
             'shop_name' => 'Pending Payment Repair',
@@ -74,7 +75,10 @@ class PlatformProductionSafetyTest extends TestCase
             'owner_password' => 'password123',
             'owner_password_confirmation' => 'password123',
         ])->assertCreated()
-            ->assertJsonPath('message', 'Shop workspace created successfully. You can sign in to explore preview mode, but subscription payment is required before saving records or transactions.');
+            ->assertJsonPath('message', 'Shop workspace created successfully. You can explore Preview Mode or manually activate the available 7-day free trial. Subscription payment is required for full access after the trial ends.')
+            ->assertJsonPath('user.shop.free_trial_eligible', true)
+            ->assertJsonPath('user.shop.free_trial_active', false)
+            ->assertJsonPath('user.shop.has_active_paid_access', false);
 
         $shop = Shop::firstWhere('slug', 'pending-payment-repair');
 
@@ -86,8 +90,7 @@ class PlatformProductionSafetyTest extends TestCase
         $this->assertFalse($response->json('user.shop.has_active_access'));
 
         $this->getJson('/api/shops/pending-payment-repair/profile')
-            ->assertOk()
-            ->assertJsonPath('shop.description', null);
+            ->assertNotFound();
 
         $owner = User::firstWhere('email', 'pending-owner@example.com');
         $this->assertAuthenticatedAs($owner);
@@ -105,6 +108,33 @@ class PlatformProductionSafetyTest extends TestCase
             ])
             ->assertPaymentRequired()
             ->assertJsonPath('message', 'Subscription required. Preview mode lets you explore the system, but saving records and transactions are locked until payment is activated.');
+
+        $this->actingAs($owner)
+            ->postJson('/api/shop/free-trial/activate')
+            ->assertOk()
+            ->assertJsonPath('trial.active', true)
+            ->assertJsonPath('trial.eligible', false)
+            ->assertJsonPath('trial.used', true);
+
+        $this->getJson('/api/shops/pending-payment-repair/profile')
+            ->assertOk()
+            ->assertJsonPath('shop.slug', 'pending-payment-repair');
+
+        $this->actingAs($owner)
+            ->postJson('/api/admin/job-orders', [
+                'customer_name' => 'Trial Customer',
+                'customer_phone' => '09123456789',
+                'device_type' => 'Laptop',
+                'problem_description' => 'Operational work during the active free trial.',
+            ])
+            ->assertCreated();
+
+        $this->postJson('/api/admin/inventory', [
+            'name' => 'Trial Part',
+            'stock_quantity' => 5,
+            'reorder_level' => 1,
+            'unit_cost' => 20,
+        ])->assertCreated();
 
         $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
 
@@ -364,6 +394,225 @@ class PlatformProductionSafetyTest extends TestCase
         ]);
     }
 
+    public function test_subscription_approval_during_a_free_trial_starts_paid_coverage_immediately_and_preserves_history(): void
+    {
+        $now = Carbon::parse('2026-11-09 14:30:00');
+        Carbon::setTestNow($now);
+
+        try {
+            $startedAt = $now->copy()->subHour();
+            $trialEndsAt = $startedAt->copy()->addHours(168);
+            $shop = $this->createShop('Trial Approval Shop');
+            $shop->forceFill([
+                'free_trial_eligible' => false,
+                'free_trial_started_at' => $startedAt,
+                'free_trial_ends_at' => $trialEndsAt,
+                'free_trial_used_at' => $startedAt,
+            ])->save();
+            $request = $this->createPendingSubscriptionRequest($shop);
+            $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
+
+            $this->actingAs($platformAdmin)
+                ->postJson("/api/platform/subscription-requests/{$request->id}/approve")
+                ->assertOk();
+
+            $shop->refresh();
+            $payment = PlatformSubscriptionPayment::where('shop_id', $shop->id)->sole();
+            $this->assertSame($now->copy()->startOfDay()->toDateTimeString(), $payment->covered_from->toDateTimeString());
+            $this->assertTrue($shop->trial_ends_at->isSameDay($now->copy()->addMonth()->subDay()));
+            $this->assertTrue($shop->hasActivePaidAccess());
+            $this->assertFalse($shop->accessState()['free_trial_active']);
+            $this->assertFalse($shop->free_trial_eligible);
+            $this->assertSame($startedAt->getTimestamp(), $shop->free_trial_started_at->getTimestamp());
+            $this->assertSame($trialEndsAt->getTimestamp(), $shop->free_trial_ends_at->getTimestamp());
+            $this->assertSame($startedAt->getTimestamp(), $shop->free_trial_used_at->getTimestamp());
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_direct_subscription_approval_forfeits_unused_trial_without_creating_trial_history(): void
+    {
+        $shop = $this->createShop('Direct Approval Shop');
+        $shop->free_trial_eligible = true;
+        $shop->save();
+        $shopAdmin = $this->createUser(User::ROLE_SHOP_ADMIN, $shop);
+        $request = $this->createPendingSubscriptionRequest($shop);
+        $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
+
+        $this->actingAs($platformAdmin)
+            ->postJson("/api/platform/subscription-requests/{$request->id}/approve")
+            ->assertOk();
+
+        $shop->refresh();
+        $this->assertFalse($shop->free_trial_eligible);
+        $this->assertFalse($shop->hasUsedFreeTrial());
+        $this->assertNull($shop->free_trial_started_at);
+        $this->assertNull($shop->free_trial_ends_at);
+        $this->assertNull($shop->free_trial_used_at);
+
+        Carbon::setTestNow($shop->trial_ends_at->copy()->addSecond());
+        try {
+            $this->actingAs($shopAdmin)
+                ->postJson('/api/shop/free-trial/activate')
+                ->assertConflict()
+                ->assertJsonPath('message', 'This shop is not eligible to activate a free trial.');
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_subscription_approval_chains_after_existing_future_paid_coverage(): void
+    {
+        $existingPaidEnd = now()->addDays(10)->endOfDay();
+        $shop = $this->createShop('Paid Renewal Approval Shop');
+        $shop->trial_ends_at = $existingPaidEnd;
+        $shop->save();
+        $request = $this->createPendingSubscriptionRequest($shop);
+        $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
+
+        $this->actingAs($platformAdmin)
+            ->postJson("/api/platform/subscription-requests/{$request->id}/approve")
+            ->assertOk();
+
+        $payment = PlatformSubscriptionPayment::where('shop_id', $shop->id)->sole();
+        $expectedStart = $existingPaidEnd->copy()->addDay()->startOfDay();
+        $this->assertSame($expectedStart->toDateTimeString(), $payment->covered_from->toDateTimeString());
+        $this->assertSame(
+            $expectedStart->copy()->addMonth()->subDay()->endOfDay()->getTimestamp(),
+            $shop->fresh()->trial_ends_at->getTimestamp()
+        );
+    }
+
+    public function test_payment_that_extends_coverage_forfeits_unused_trial_eligibility(): void
+    {
+        $shop = $this->createShop('Payment Forfeiture Shop', false);
+        $shop->free_trial_eligible = true;
+        $shop->save();
+        $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
+
+        $this->actingAs($platformAdmin)
+            ->postJson("/api/platform/shops/{$shop->id}/subscription-payments", [
+                'amount' => 1000,
+                'covered_until' => now()->addMonth()->toDateString(),
+            ])
+            ->assertCreated();
+
+        $this->assertFalse($shop->fresh()->free_trial_eligible);
+        $this->assertNull($shop->fresh()->free_trial_started_at);
+        $this->assertNull($shop->fresh()->free_trial_ends_at);
+        $this->assertNull($shop->fresh()->free_trial_used_at);
+    }
+
+    public function test_payment_without_coverage_extension_does_not_forfeit_trial_eligibility(): void
+    {
+        $shop = $this->createShop('Non-extending Payment Shop');
+        $shop->forceFill([
+            'free_trial_eligible' => true,
+            'trial_ends_at' => now()->addMonth(),
+        ])->save();
+        $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
+
+        $this->actingAs($platformAdmin)
+            ->postJson("/api/platform/shops/{$shop->id}/subscription-payments", [
+                'amount' => 1000,
+                'covered_until' => now()->addDays(10)->toDateString(),
+            ])
+            ->assertCreated();
+
+        $this->assertTrue($shop->fresh()->free_trial_eligible);
+
+        $noEffectiveCoverageShop = $this->createShop('Past Coverage Payment Shop');
+        $noEffectiveCoverageShop->free_trial_eligible = true;
+        $noEffectiveCoverageShop->save();
+        $this->actingAs($platformAdmin)
+            ->postJson("/api/platform/shops/{$noEffectiveCoverageShop->id}/subscription-payments", [
+                'amount' => 1000,
+                'covered_until' => now()->subDay()->toDateString(),
+            ])
+            ->assertCreated();
+
+        $this->assertFalse($noEffectiveCoverageShop->fresh()->hasActivePaidAccess());
+        $this->assertTrue($noEffectiveCoverageShop->fresh()->free_trial_eligible);
+    }
+
+    public function test_repeated_payments_keep_furthest_paid_coverage_and_preserve_trial_history(): void
+    {
+        $startedAt = now()->subDay()->startOfSecond();
+        $shop = $this->createShop('Repeated Payment Shop');
+        $shop->forceFill([
+            'free_trial_eligible' => false,
+            'free_trial_started_at' => $startedAt,
+            'free_trial_ends_at' => $startedAt->copy()->addHours(168),
+            'free_trial_used_at' => $startedAt,
+        ])->save();
+        $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
+        $furthestCoverage = now()->addMonths(3)->toDateString();
+
+        foreach ([$furthestCoverage, now()->addMonth()->toDateString()] as $coveredUntil) {
+            $this->actingAs($platformAdmin)
+                ->postJson("/api/platform/shops/{$shop->id}/subscription-payments", [
+                    'amount' => 1000,
+                    'covered_until' => $coveredUntil,
+                ])
+                ->assertCreated();
+        }
+
+        $shop->refresh();
+        $this->assertSame(Carbon::parse($furthestCoverage)->endOfDay()->getTimestamp(), $shop->trial_ends_at->getTimestamp());
+        $this->assertFalse($shop->free_trial_eligible);
+        $this->assertSame($startedAt->getTimestamp(), $shop->free_trial_started_at->getTimestamp());
+        $this->assertSame($startedAt->copy()->addHours(168)->getTimestamp(), $shop->free_trial_ends_at->getTimestamp());
+        $this->assertSame($startedAt->getTimestamp(), $shop->free_trial_used_at->getTimestamp());
+    }
+
+    public function test_platform_shop_update_and_reactivation_only_forfeit_when_paid_access_is_effective(): void
+    {
+        $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
+        $eligibleShop = $this->createShop('Admin Update Forfeiture Shop');
+        $eligibleShop->free_trial_eligible = true;
+        $eligibleShop->save();
+
+        $this->actingAs($platformAdmin)
+            ->putJson("/api/platform/shops/{$eligibleShop->id}", [
+                'subscription_plan' => 'monthly',
+                'trial_ends_at' => now()->addMonth()->toISOString(),
+                'is_active' => true,
+            ])
+            ->assertOk();
+        $this->assertFalse($eligibleShop->fresh()->free_trial_eligible);
+
+        $noAccessShop = $this->createShop('Admin Update No Access Shop');
+        $noAccessShop->free_trial_eligible = true;
+        $noAccessShop->save();
+        $this->actingAs($platformAdmin)
+            ->putJson("/api/platform/shops/{$noAccessShop->id}", [
+                'subscription_plan' => 'monthly',
+                'trial_ends_at' => now()->subDay()->toISOString(),
+                'is_active' => true,
+            ])
+            ->assertOk();
+        $this->assertTrue($noAccessShop->fresh()->free_trial_eligible);
+
+        $reactivatedShop = $this->createShop('Admin Reactivation Paid Shop', false);
+        $reactivatedShop->forceFill([
+            'free_trial_eligible' => true,
+            'trial_ends_at' => now()->addMonth(),
+        ])->save();
+        $this->actingAs($platformAdmin)
+            ->postJson("/api/platform/shops/{$reactivatedShop->id}/toggle", ['is_active' => true])
+            ->assertOk();
+        $this->assertFalse($reactivatedShop->fresh()->free_trial_eligible);
+
+        $inactiveWithoutCoverage = $this->createShop('Admin Reactivation Preview Shop', false);
+        $inactiveWithoutCoverage->free_trial_eligible = true;
+        $inactiveWithoutCoverage->save();
+        $this->actingAs($platformAdmin)
+            ->postJson("/api/platform/shops/{$inactiveWithoutCoverage->id}/toggle", ['is_active' => true])
+            ->assertOk();
+        $this->assertTrue($inactiveWithoutCoverage->fresh()->free_trial_eligible);
+    }
+
     public function test_subscription_request_payment_proof_can_be_approved_to_activate_access(): void
     {
         Storage::fake('local');
@@ -542,6 +791,19 @@ class PlatformProductionSafetyTest extends TestCase
             'shop_id' => $shop?->id,
             'role' => $role,
             'is_active' => true,
+        ]);
+    }
+
+    private function createPendingSubscriptionRequest(Shop $shop): SubscriptionRequest
+    {
+        return $shop->subscriptionRequests()->create([
+            'plan_key' => 'monthly',
+            'plan_name' => 'Monthly',
+            'amount' => 1500,
+            'duration_months' => 1,
+            'payment_method_key' => 'gcash',
+            'payment_method_name' => 'GCash',
+            'status' => SubscriptionRequest::STATUS_PENDING,
         ]);
     }
 }

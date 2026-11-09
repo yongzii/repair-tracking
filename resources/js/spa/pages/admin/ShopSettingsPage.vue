@@ -843,7 +843,7 @@ onMounted(loadShop);
                 <span class="font-semibold uppercase text-slate-800">{{ shop?.subscription_plan || 'starter' }}</span>
               </div>
               <div class="flex items-center justify-between">
-                <span class="text-slate-500">Trial Ends</span>
+                <span class="text-slate-500">Paid Access Until</span>
                 <span class="font-semibold text-slate-800">{{ shop?.trial_ends_at_formatted || 'Not set' }}</span>
               </div>
             </div>

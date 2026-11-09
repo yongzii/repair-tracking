@@ -4,11 +4,13 @@ use App\Http\Controllers\Api\JobOrderController;
 use App\Http\Controllers\Api\JobOrderPartOrderController;
 use App\Http\Controllers\Api\PartRequestController;
 use App\Http\Controllers\Api\PlatformController;
+use App\Http\Controllers\Api\ShopFreeTrialController;
 use App\Http\Controllers\Api\SubscriptionRequestController;
 use App\Http\Controllers\Api\TechnicianPortalController;
 use App\Models\JobOrder;
 use App\Models\PartRequest;
 use App\Models\JobOrderRefund;
+use App\Models\Shop;
 use App\Models\SubscriptionRequest;
 use App\Models\User;
 use Illuminate\Contracts\Debug\ExceptionHandler;
@@ -54,8 +56,16 @@ try {
 
     DB::connection()->getPdo();
     $user = User::findOrFail((int) $userId);
+    $subscriptionRequestId = $scenario === 'subscription-approve' && $sparePartId !== ''
+        ? $sparePartId
+        : $recordId;
     $request = match ($scenario) {
-        'subscription-approve' => Request::create('/api/platform/subscription-requests/' . $recordId . '/approve', 'POST', []),
+        'free-trial-activate' => Request::create('/api/shop/free-trial/activate', 'POST', []),
+        'subscription-approve' => Request::create('/api/platform/subscription-requests/' . $subscriptionRequestId . '/approve', 'POST', []),
+        'subscription-payment' => Request::create('/api/platform/shops/' . $recordId . '/subscription-payments', 'POST', [
+            'amount' => 1000,
+            'covered_until' => json_decode((string) $sparePartId, true, flags: JSON_THROW_ON_ERROR)['covered_until'],
+        ]),
         'subscription-create' => Request::create('/api/admin/subscription/requests', 'POST', [
             'plan_key' => 'monthly',
             'payment_method_key' => 'gcash',
@@ -106,9 +116,14 @@ try {
     $request->headers->set('Accept', 'application/json');
     try {
         $response = match ($scenario) {
+            'free-trial-activate' => app(ShopFreeTrialController::class)->activate($request),
             'subscription-approve' => app(PlatformController::class)->approveSubscriptionRequest(
                 $request,
-                SubscriptionRequest::findOrFail((int) $recordId)
+                SubscriptionRequest::findOrFail((int) $subscriptionRequestId)
+            ),
+            'subscription-payment' => app(PlatformController::class)->storeSubscriptionPayment(
+                $request,
+                Shop::findOrFail((int) $recordId)
             ),
             'subscription-create' => app(SubscriptionRequestController::class)->store($request),
             'pickup' => app(JobOrderController::class)->markPickedUp(

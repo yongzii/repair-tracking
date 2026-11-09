@@ -21,8 +21,8 @@ class AppointmentController extends Controller
             abort(404, 'Shop not found.');
         }
 
-        if (!$shop->hasActiveAccess()) {
-            abort(402, 'This shop is not accepting new consultation requests until its subscription is renewed.');
+        if (!$shop->hasOperationalAccess()) {
+            abort(402, 'This shop is not accepting new consultation requests right now.');
         }
 
         $validated = $request->validate([

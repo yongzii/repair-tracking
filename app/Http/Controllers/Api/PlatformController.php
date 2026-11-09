@@ -197,7 +197,8 @@ class PlatformController extends Controller
             $shop = Shop::query()
                 ->lockForUpdate()
                 ->findOrFail($lockedRequest->shop_id);
-            $start = $shop->trial_ends_at && $shop->trial_ends_at->isFuture()
+            $hasFuturePaidCoverage = $shop->trial_ends_at && $shop->trial_ends_at->isFuture();
+            $start = $hasFuturePaidCoverage
                 ? $shop->trial_ends_at->copy()->addDay()->startOfDay()
                 : now()->startOfDay();
             $end = $start->copy()->addMonths($lockedRequest->duration_months ?: 1)->subDay()->endOfDay();
@@ -218,6 +219,7 @@ class PlatformController extends Controller
                 'subscription_plan' => $lockedRequest->plan_key,
                 'trial_ends_at' => $end,
                 'is_active' => true,
+                'free_trial_eligible' => false,
             ])->save();
 
             $lockedRequest->forceFill([
@@ -371,13 +373,27 @@ class PlatformController extends Controller
             'is_active' => ['required', 'boolean'],
         ]);
 
-        $before = $shop->only(['subscription_plan', 'trial_ends_at', 'is_active']);
+        $before = DB::transaction(function () use ($shop, $validated) {
+            $lockedShop = Shop::query()
+                ->lockForUpdate()
+                ->findOrFail($shop->id);
+            $before = $lockedShop->only(['subscription_plan', 'trial_ends_at', 'is_active']);
 
-        $shop->update([
-            'subscription_plan' => $validated['subscription_plan'],
-            'trial_ends_at' => $validated['trial_ends_at'] ?? null,
-            'is_active' => $validated['is_active'],
-        ]);
+            $lockedShop->forceFill([
+                'subscription_plan' => $validated['subscription_plan'],
+                'trial_ends_at' => $validated['trial_ends_at'] ?? null,
+                'is_active' => $validated['is_active'],
+            ]);
+
+            if ($lockedShop->hasActivePaidAccess()) {
+                $lockedShop->free_trial_eligible = false;
+            }
+
+            $lockedShop->save();
+            $shop->refresh();
+
+            return $before;
+        });
 
         AuditLogger::log(
             request: $request,
@@ -405,12 +421,26 @@ class PlatformController extends Controller
             'subscription_plan' => ['nullable', 'string', 'max:50'],
         ]);
 
-        $before = $shop->only(['subscription_plan', 'is_active']);
+        $before = DB::transaction(function () use ($shop, $validated) {
+            $lockedShop = Shop::query()
+                ->lockForUpdate()
+                ->findOrFail($shop->id);
+            $before = $lockedShop->only(['subscription_plan', 'is_active']);
 
-        $shop->update([
-            'is_active' => $validated['is_active'],
-            'subscription_plan' => $validated['subscription_plan'] ?? $shop->subscription_plan,
-        ]);
+            $lockedShop->forceFill([
+                'is_active' => $validated['is_active'],
+                'subscription_plan' => $validated['subscription_plan'] ?? $lockedShop->subscription_plan,
+            ]);
+
+            if ($lockedShop->hasActivePaidAccess()) {
+                $lockedShop->free_trial_eligible = false;
+            }
+
+            $lockedShop->save();
+            $shop->refresh();
+
+            return $before;
+        });
 
         AuditLogger::log(
             request: $request,
@@ -488,24 +518,39 @@ class PlatformController extends Controller
             'received_at' => ['nullable', 'date'],
         ]);
 
-        $payment = PlatformSubscriptionPayment::create([
-            'shop_id' => $shop->id,
-            'amount' => $validated['amount'],
-            'payment_method' => $validated['payment_method'] ?? null,
-            'reference_number' => $validated['reference_number'] ?? null,
-            'covered_from' => $validated['covered_from'] ?? null,
-            'covered_until' => $validated['covered_until'] ?? null,
-            'notes' => $validated['notes'] ?? null,
-            'received_at' => $validated['received_at'] ?? now(),
-            'received_by' => $user?->name,
-        ]);
+        $payment = DB::transaction(function () use ($shop, $validated, $user) {
+            $lockedShop = Shop::query()
+                ->lockForUpdate()
+                ->findOrFail($shop->id);
+            $payment = PlatformSubscriptionPayment::create([
+                'shop_id' => $lockedShop->id,
+                'amount' => $validated['amount'],
+                'payment_method' => $validated['payment_method'] ?? null,
+                'reference_number' => $validated['reference_number'] ?? null,
+                'covered_from' => $validated['covered_from'] ?? null,
+                'covered_until' => $validated['covered_until'] ?? null,
+                'notes' => $validated['notes'] ?? null,
+                'received_at' => $validated['received_at'] ?? now(),
+                'received_by' => $user?->name,
+            ]);
 
-        if ($payment->covered_until && (!$shop->trial_ends_at || $payment->covered_until->gt($shop->trial_ends_at))) {
-            $shop->forceFill([
-                'trial_ends_at' => $payment->covered_until->copy()->endOfDay(),
-                'is_active' => true,
-            ])->save();
-        }
+            if ($payment->covered_until && (!$lockedShop->trial_ends_at || $payment->covered_until->gt($lockedShop->trial_ends_at))) {
+                $lockedShop->forceFill([
+                    'trial_ends_at' => $payment->covered_until->copy()->endOfDay(),
+                    'is_active' => true,
+                ]);
+
+                if ($lockedShop->hasActivePaidAccess()) {
+                    $lockedShop->free_trial_eligible = false;
+                }
+
+                $lockedShop->save();
+            }
+
+            $shop->refresh();
+
+            return $payment;
+        });
 
         AuditLogger::log(
             request: $request,

@@ -17,6 +17,7 @@ use App\Models\SubscriptionRequest;
 use App\Models\Technician;
 use App\Models\User;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -68,6 +69,145 @@ class WorkflowConcurrencyTest extends TestCase
             ->where('action', 'platform.subscription_request.approved')
             ->where('record_id', $subscriptionRequest->id)
             ->count());
+    }
+
+    public function test_free_trial_activation_racing_subscription_approval_preserves_consistent_entitlements(): void
+    {
+        $shop = $this->createShop();
+        $shop->forceFill([
+            'trial_ends_at' => null,
+            'free_trial_eligible' => true,
+        ])->save();
+        $shopAdmin = $this->createUser(User::ROLE_SHOP_ADMIN, $shop);
+        $platformAdmin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
+        $subscriptionRequest = SubscriptionRequest::create([
+            'shop_id' => $shop->id,
+            'requested_by_id' => $shopAdmin->id,
+            'plan_key' => 'monthly',
+            'plan_name' => 'Monthly',
+            'amount' => 1500,
+            'duration_months' => 1,
+            'payment_method_key' => 'gcash',
+            'payment_method_name' => 'GCash',
+            'reference_number' => 'MYSQL-' . Str::upper(Str::random(10)),
+            'status' => SubscriptionRequest::STATUS_PENDING,
+        ]);
+        $this->subscriptionRequestIds[] = $subscriptionRequest->id;
+
+        $responses = $this->runContenders(
+            [
+                'first' => 'free-trial-activate',
+                'second' => 'subscription-approve',
+            ],
+            'shops',
+            $shop->id,
+            $shopAdmin->id,
+            $platformAdmin->id,
+            (string) $subscriptionRequest->id
+        );
+
+        $this->assertSame(200, $responses['second']['status']);
+        $this->assertContains($responses['first']['status'], [200, 409]);
+        $this->assertSame(SubscriptionRequest::STATUS_APPROVED, $subscriptionRequest->fresh()->status);
+        $this->assertSame(1, PlatformSubscriptionPayment::where('shop_id', $shop->id)->count());
+
+        $payment = PlatformSubscriptionPayment::where('shop_id', $shop->id)->sole();
+        $shop->refresh();
+        $this->assertFalse($shop->free_trial_eligible);
+        $this->assertTrue($shop->hasActivePaidAccess());
+        $this->assertTrue($payment->covered_from->isSameDay($payment->received_at));
+        $this->assertTrue($payment->covered_until->isSameDay($shop->trial_ends_at));
+        $this->assertFalse($shop->accessState()['free_trial_active']);
+
+        if ($responses['first']['status'] === 200) {
+            $trial = json_decode($responses['first']['body'], true, flags: JSON_THROW_ON_ERROR)['trial'];
+            $this->assertTrue($trial['active']);
+            $this->assertTrue($trial['used']);
+            $this->assertFalse($trial['eligible']);
+            $this->assertSame(
+                Shop::FREE_TRIAL_DURATION_HOURS * 60 * 60,
+                $shop->free_trial_ends_at->getTimestamp() - $shop->free_trial_started_at->getTimestamp()
+            );
+            $this->assertSame(
+                Carbon::parse($trial['started_at'])->getTimestamp(),
+                $shop->free_trial_started_at->getTimestamp()
+            );
+            $this->assertSame(
+                Carbon::parse($trial['ends_at'])->getTimestamp(),
+                $shop->free_trial_ends_at->getTimestamp()
+            );
+            $this->assertSame(
+                Carbon::parse($trial['used_at'])->getTimestamp(),
+                $shop->free_trial_used_at->getTimestamp()
+            );
+            $this->assertTrue($payment->covered_from->lt($shop->free_trial_ends_at));
+        } else {
+            $this->assertSame(
+                'This shop already has active subscription coverage.',
+                json_decode($responses['first']['body'], true, flags: JSON_THROW_ON_ERROR)['message']
+            );
+            $this->assertNull($shop->free_trial_started_at);
+            $this->assertNull($shop->free_trial_ends_at);
+            $this->assertNull($shop->free_trial_used_at);
+        }
+    }
+
+    public function test_concurrent_subscription_payments_keep_furthest_coverage_and_forfeit_unused_trial(): void
+    {
+        $shop = $this->createShop();
+        $shop->forceFill([
+            'trial_ends_at' => null,
+            'free_trial_eligible' => true,
+        ])->save();
+        $admin = $this->createUser(User::ROLE_PLATFORM_ADMIN);
+        $firstCoverage = now()->addDays(60)->toDateString();
+        $furthestCoverage = now()->addDays(90)->toDateString();
+
+        $responses = $this->runContenders(
+            'subscription-payment',
+            'shops',
+            $shop->id,
+            $admin->id,
+            $admin->id,
+            json_encode(['covered_until' => $firstCoverage], JSON_THROW_ON_ERROR),
+            secondSparePartId: json_encode(['covered_until' => $furthestCoverage], JSON_THROW_ON_ERROR)
+        );
+
+        $this->assertSame([201, 201], [$responses['first']['status'], $responses['second']['status']]);
+        $shop->refresh();
+        $this->assertSame(Carbon::parse($furthestCoverage)->endOfDay()->getTimestamp(), $shop->trial_ends_at->getTimestamp());
+        $this->assertFalse($shop->free_trial_eligible);
+        $this->assertSame(2, PlatformSubscriptionPayment::where('shop_id', $shop->id)->count());
+    }
+
+    public function test_two_concurrent_free_trial_activations_create_only_one_trial(): void
+    {
+        $shop = $this->createShop();
+        $shop->update([
+            'trial_ends_at' => null,
+            'free_trial_eligible' => true,
+            'free_trial_started_at' => null,
+            'free_trial_ends_at' => null,
+            'free_trial_used_at' => null,
+        ]);
+        $firstAdmin = $this->createUser(User::ROLE_SHOP_ADMIN, $shop);
+        $secondAdmin = $this->createUser(User::ROLE_SHOP_ADMIN, $shop);
+
+        $responses = $this->runContenders(
+            'free-trial-activate',
+            'shops',
+            $shop->id,
+            $firstAdmin->id,
+            $secondAdmin->id
+        );
+
+        $this->assertSortedStatuses($responses, [200, 409]);
+        $shop->refresh();
+        $this->assertFalse($shop->free_trial_eligible);
+        $this->assertNotNull($shop->free_trial_started_at);
+        $this->assertNotNull($shop->free_trial_ends_at);
+        $this->assertNotNull($shop->free_trial_used_at);
+        $this->assertSame(168 * 60 * 60, $shop->free_trial_ends_at->getTimestamp() - $shop->free_trial_started_at->getTimestamp());
     }
 
     public function test_two_concurrent_shop_subscription_submissions_create_one_pending_request(): void
