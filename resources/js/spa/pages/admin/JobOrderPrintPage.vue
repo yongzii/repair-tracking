@@ -18,6 +18,16 @@ const errorMessage = ref('');
 const printData = ref(null);
 const claimQr = ref(null);
 const tagQr = ref(null);
+const claimStub = ref(null);
+const claimInfoGrid = ref(null);
+const claimTermsSection = ref(null);
+const claimTermsList = ref(null);
+const claimFitScale = ref(1);
+const claimFitReady = ref(false);
+const claimContentFits = ref(true);
+const minimumClaimTermsFontSize = 4.6;
+const baseClaimTermsFontSize = 5.15;
+const minimumClaimFitScale = minimumClaimTermsFontSize / baseClaimTermsFontSize;
 
 const isWarrantyMode = computed(() => props.params.mode === 'warranty');
 const title = computed(() => (isWarrantyMode.value ? 'Warranty Slip' : 'Claim Stub and Job Order Slip'));
@@ -55,6 +65,54 @@ const renderQr = async () => {
     });
 };
 
+const doesClaimContentFit = async () => {
+    await nextTick();
+    const infoFits = !claimInfoGrid.value
+        || claimInfoGrid.value.scrollHeight <= claimInfoGrid.value.clientHeight + 1;
+    const termsFit = !claimTermsSection.value
+        || !claimTermsList.value
+        || claimTermsSection.value.scrollHeight <= claimTermsSection.value.clientHeight + 1;
+    const stubFits = !claimStub.value
+        || claimStub.value.scrollHeight <= claimStub.value.clientHeight + 1;
+
+    return infoFits && termsFit && stubFits;
+};
+
+const fitClaimContent = async () => {
+    claimFitReady.value = false;
+    claimFitScale.value = 1;
+
+    if (await doesClaimContentFit()) {
+        claimContentFits.value = true;
+        claimFitReady.value = true;
+        return;
+    }
+
+    claimFitScale.value = minimumClaimFitScale;
+    if (!(await doesClaimContentFit())) {
+        claimContentFits.value = false;
+        claimFitReady.value = true;
+        return;
+    }
+
+    let low = minimumClaimFitScale;
+    let high = 1;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+        const scale = (low + high) / 2;
+        claimFitScale.value = scale;
+
+        if (await doesClaimContentFit()) {
+            low = scale;
+        } else {
+            high = scale;
+        }
+    }
+
+    claimFitScale.value = low;
+    claimContentFits.value = true;
+    claimFitReady.value = true;
+};
+
 const loadPrintData = async () => {
     const auth = await ensureRoles(['admin', 'staff']);
     if (!auth.ok) {
@@ -80,6 +138,7 @@ const loadPrintData = async () => {
 
     if (printData.value && !isWarrantyMode.value) {
         await renderQr();
+        await fitClaimContent();
     }
 };
 
@@ -99,7 +158,17 @@ onMounted(loadPrintData);
           <AppLink :to="`/admin/job-orders/${props.params.id}`" class="rounded-lg bg-slate-100 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-200">Back to Job Order</AppLink>
           <AppLink v-if="!isWarrantyMode && printData.warranty?.is_available" :to="`/admin/job-orders/${props.params.id}/print/warranty`" class="rounded-lg bg-slate-100 px-4 py-2 font-semibold text-slate-700 hover:bg-slate-200">Warranty Slip</AppLink>
         </div>
-        <button type="button" class="rounded-lg bg-slate-950 px-5 py-2 font-bold text-white hover:bg-slate-800" @click="printPage">Print</button>
+        <div class="flex flex-wrap items-center justify-end gap-3">
+          <p v-if="!isWarrantyMode && claimFitReady && !claimContentFits" class="claim-fit-warning" role="alert">
+            This content exceeds the readable capacity of the fixed 8 × 10 cm Claim Stub. Printing is disabled to prevent omitted information. Keep configured Terms & Conditions to about 850 characters or less and shorten unusually long customer/device details; actual capacity depends on wrapping.
+          </p>
+          <button
+            type="button"
+            class="rounded-lg bg-slate-950 px-5 py-2 font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="!isWarrantyMode && (!claimFitReady || !claimContentFits)"
+            @click="printPage"
+          >Print</button>
+        </div>
       </div>
 
       <div v-if="isWarrantyMode" class="print-area">
@@ -173,7 +242,7 @@ onMounted(loadPrintData);
       </div>
 
       <div v-else class="print-area intake-slips">
-        <section class="claim-stab slip">
+        <section ref="claimStub" class="claim-stab slip" :style="{ '--claim-fit-scale': claimFitScale }">
           <header class="document-header">
             <img v-if="printData.shop.logo_url" :src="printData.shop.logo_url" alt="Shop logo" class="print-logo" />
             <h1>{{ printData.shop.name }}</h1>
@@ -191,7 +260,7 @@ onMounted(loadPrintData);
             <span>{{ formatStatus(printData.service.current_status) }}</span>
           </div>
 
-          <div class="info-grid claim-info">
+          <div ref="claimInfoGrid" class="info-grid claim-info">
             <p><span>Customer</span><strong>{{ printData.customer.name }}</strong></p>
             <p><span>Device</span><strong>{{ printData.device.label || printData.device.type }}</strong></p>
             <p><span>Serial Number</span><strong>{{ printData.device.serial_number || 'N/A' }}</strong></p>
@@ -206,9 +275,9 @@ onMounted(loadPrintData);
             <p><span>Target Date</span><strong>{{ printData.service.estimated_completion_formatted || 'To be advised' }}</strong></p>
           </div>
 
-          <div class="terms-section claim-terms-section">
+          <div ref="claimTermsSection" class="terms-section claim-terms-section">
             <h3>Terms & Conditions</h3>
-            <ol class="terms-list claim-terms">
+            <ol ref="claimTermsList" class="terms-list claim-terms">
               <li v-for="term in printData.claim_terms" :key="term">{{ term }}</li>
             </ol>
           </div>
@@ -266,6 +335,7 @@ onMounted(loadPrintData);
           <footer class="tag-footer">Attach securely to the customer device.</footer>
         </section>
       </div>
+
     </div>
   </AdminLayout>
 </template>
@@ -418,11 +488,9 @@ onMounted(loadPrintData);
 }
 
 .claim-info {
+  flex: 1 1 auto;
+  min-height: 0;
   margin-top: 0.08cm;
-}
-
-.claim-info .full-row strong {
-  max-height: 0.48cm;
   overflow: hidden;
 }
 
@@ -446,6 +514,11 @@ onMounted(loadPrintData);
   flex: 1;
 }
 
+.claim-terms-section {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
 .terms-list {
   margin: 0;
   padding-left: 0.34cm;
@@ -460,15 +533,17 @@ onMounted(loadPrintData);
 
 .claim-bottom {
   display: grid;
-  grid-template-columns: 1fr 62px;
+  grid-template-columns: minmax(0, 1fr) 62px;
   gap: 0.12cm;
   align-items: end;
+  flex: 0 0 auto;
   margin-top: 0.08cm;
 }
 
 .claim-release {
   font-size: 5.2px;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .claim-release p {
@@ -649,6 +724,88 @@ onMounted(loadPrintData);
   font-size: 5px;
 }
 
+.claim-fit-warning {
+  max-width: 44rem;
+  color: #b91c1c;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.claim-stab .document-header {
+  padding-bottom: calc(0.08cm * var(--claim-fit-scale));
+}
+
+.claim-stab .document-header h1 {
+  font-size: calc(12px * var(--claim-fit-scale));
+}
+
+.claim-stab .document-header p {
+  margin-top: calc(1px * var(--claim-fit-scale));
+  font-size: calc(5.4px * var(--claim-fit-scale));
+}
+
+.claim-stab > .title-row {
+  gap: calc(4px * var(--claim-fit-scale));
+  margin: calc(0.1cm * var(--claim-fit-scale)) 0;
+}
+
+.claim-stab > .title-row h2 {
+  font-size: calc(11px * var(--claim-fit-scale));
+}
+
+.claim-stab > .title-row > span {
+  font-size: calc(5.3px * var(--claim-fit-scale));
+}
+
+.claim-stab .claim-reference {
+  padding: calc(0.06cm * var(--claim-fit-scale)) calc(0.08cm * var(--claim-fit-scale));
+  font-size: calc(6px * var(--claim-fit-scale));
+}
+
+.claim-stab .claim-reference strong {
+  font-size: calc(7.2px * var(--claim-fit-scale));
+}
+
+.claim-stab .claim-reference span {
+  padding: calc(1px * var(--claim-fit-scale)) calc(3px * var(--claim-fit-scale));
+  font-size: calc(5px * var(--claim-fit-scale));
+}
+
+.claim-stab .info-grid p {
+  padding: calc(0.045cm * var(--claim-fit-scale)) calc(0.06cm * var(--claim-fit-scale));
+}
+
+.claim-stab .info-grid span {
+  margin-bottom: calc(1px * var(--claim-fit-scale));
+  font-size: calc(4.6px * var(--claim-fit-scale));
+}
+
+.claim-stab .info-grid strong {
+  font-size: calc(5.8px * var(--claim-fit-scale));
+  line-height: 1.15;
+}
+
+.claim-stab .claim-info {
+  margin-top: calc(0.08cm * var(--claim-fit-scale));
+}
+
+.claim-stab .claim-terms-section h3 {
+  margin: calc(0.09cm * var(--claim-fit-scale)) 0 calc(0.04cm * var(--claim-fit-scale));
+  padding-bottom: calc(0.03cm * var(--claim-fit-scale));
+  font-size: calc(6.4px * var(--claim-fit-scale));
+}
+
+.claim-stab .claim-terms {
+  padding-left: calc(0.34cm * var(--claim-fit-scale));
+  font-size: calc(5.15px * var(--claim-fit-scale));
+  line-height: 1.18;
+}
+
+.claim-stab .claim-terms li {
+  margin-bottom: calc(1.5px * var(--claim-fit-scale));
+  padding-left: calc(1px * var(--claim-fit-scale));
+}
+
 @media print {
   @page {
     margin: 5mm;
@@ -683,5 +840,6 @@ onMounted(loadPrintData);
     box-shadow: none;
     print-color-adjust: exact;
   }
+
 }
 </style>
