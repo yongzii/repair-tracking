@@ -17,60 +17,59 @@ class FinancialIntegrityCostMutationTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_zero_paid_cost_reduction_succeeds(): void
+    public function test_cost_breakdown_update_does_not_reduce_the_quoted_repair_price(): void
     {
         [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
         $jobOrder = $this->createJobOrder($shop, 5000, 0);
 
         $this->updateCosts($staff, $jobOrder, 4000, 0)->assertOk();
 
-        $this->assertFinancialState($jobOrder, 4000, 0, 'PENDING');
+        $this->assertFinancialState($jobOrder, 5000, 0, 'PENDING');
+        $this->assertSame(4000.0, (float) $jobOrder->fresh()->parts_cost);
     }
 
-    public function test_partial_payment_cost_reduction_above_paid_succeeds(): void
+    public function test_cost_breakdown_update_does_not_change_a_partial_balance(): void
     {
         [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
         $jobOrder = $this->createJobOrder($shop, 5000, 3000);
 
         $this->updateCosts($staff, $jobOrder, 4000, 0)->assertOk();
 
-        $this->assertFinancialState($jobOrder, 4000, 3000, 'PARTIAL');
+        $this->assertFinancialState($jobOrder, 5000, 3000, 'PARTIAL');
     }
 
-    public function test_partial_payment_cost_reduction_to_paid_amount_succeeds(): void
+    public function test_cost_breakdown_equal_to_payments_does_not_settle_the_quoted_price(): void
     {
         [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
         $jobOrder = $this->createJobOrder($shop, 5000, 3000);
 
         $this->updateCosts($staff, $jobOrder, 3000, 0)->assertOk();
 
-        $this->assertFinancialState($jobOrder, 3000, 3000, 'PAID');
+        $this->assertFinancialState($jobOrder, 5000, 3000, 'PARTIAL');
     }
 
-    public function test_cost_reduction_below_partial_payment_is_rejected_without_audit(): void
+    public function test_cost_breakdown_below_partial_payment_does_not_change_the_quoted_total(): void
     {
         [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
         $jobOrder = $this->createJobOrder($shop, 5000, 3000);
 
         $this->updateCosts($staff, $jobOrder, 2000, 0)
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('total_cost');
+            ->assertOk();
 
         $this->assertFinancialState($jobOrder, 5000, 3000, 'PARTIAL');
-        $this->assertDatabaseMissing('audit_logs', [
+        $this->assertDatabaseHas('audit_logs', [
             'action' => 'job_order.costs_updated',
             'record_id' => $jobOrder->id,
         ]);
     }
 
-    public function test_cost_reduction_below_full_payment_is_rejected(): void
+    public function test_cost_breakdown_below_full_payment_does_not_change_the_quoted_total(): void
     {
         [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
         $jobOrder = $this->createJobOrder($shop, 5000, 5000, 'PAID');
 
         $this->updateCosts($staff, $jobOrder, 4000, 0)
-            ->assertUnprocessable()
-            ->assertJsonValidationErrors('total_cost');
+            ->assertOk();
 
         $this->assertFinancialState($jobOrder, 5000, 5000, 'PAID');
     }
@@ -82,7 +81,7 @@ class FinancialIntegrityCostMutationTest extends TestCase
 
         $this->updateCosts($staff, $jobOrder, 7000, 0)->assertOk();
 
-        $this->assertFinancialState($jobOrder, 7000, 3000, 'PARTIAL');
+        $this->assertFinancialState($jobOrder, 5000, 3000, 'PARTIAL');
     }
 
     public function test_cross_shop_cost_update_is_rejected(): void
@@ -94,6 +93,20 @@ class FinancialIntegrityCostMutationTest extends TestCase
         $this->updateCosts($staffA, $jobOrder, 4000, 0)->assertNotFound();
 
         $this->assertFinancialState($jobOrder, 5000, 3000, 'PARTIAL');
+    }
+
+    public function test_cost_breakdown_cannot_be_updated_before_a_quotation_exists(): void
+    {
+        [$shop, $staff] = $this->createShopUser(User::ROLE_STAFF);
+        $jobOrder = $this->createJobOrder($shop, 0, 0, 'PENDING');
+        $jobOrder->update(['estimated_cost' => null]);
+
+        $this->updateCosts($staff, $jobOrder, 500, 100)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors('estimated_cost');
+
+        $this->assertNull($jobOrder->fresh()->estimated_cost);
+        $this->assertFinancialState($jobOrder, 0, 0, 'PENDING');
     }
 
     public function test_technician_cannot_call_admin_cost_update(): void
@@ -539,6 +552,7 @@ class FinancialIntegrityCostMutationTest extends TestCase
             'device_type' => 'Phone',
             'problem_description' => 'Financial integrity test.',
             'current_status' => $currentStatus,
+            'estimated_cost' => $total,
             'parts_cost' => $total,
             'labor_cost' => 0,
             'total_cost' => $total,

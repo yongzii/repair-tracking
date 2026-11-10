@@ -468,6 +468,7 @@ class BusinessWorkflowSafetyTest extends TestCase
             'device_type' => 'Phone',
             'problem_description' => 'Workflow transaction test.',
             'current_status' => $status,
+            'estimated_cost' => $total,
             'parts_cost' => $total,
             'labor_cost' => 0,
             'total_cost' => $total,

@@ -139,8 +139,13 @@ let inventorySearchRequestId = 0;
 const balance = computed(() => {
     if (!jobOrder.value) return 0;
     if (isRtoStatus.value) return 0;
-    return Number(jobOrder.value.total_cost || 0) - Number(jobOrder.value.amount_paid || 0);
+    if (!hasQuotation.value) return 0;
+    const total = Number(jobOrder.value.estimated_cost);
+    return Math.max(total - Number(jobOrder.value.amount_paid || 0), 0);
 });
+
+const hasQuotation = computed(() => jobOrder.value?.estimated_cost !== null
+    && jobOrder.value?.estimated_cost !== undefined);
 
 const isWarrantyServiceJob = computed(() => jobOrder.value?.service_type === 'WARRANTY_SERVICE');
 
@@ -849,12 +854,18 @@ onBeforeUnmount(() => {
                 <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="paymentStatusClass(jobOrder.payment_status)">{{ (jobOrder.payment_status || 'PENDING').replaceAll('_', ' ') }}</span>
               </div>
               <div>
+                <p class="text-slate-500">Quotation</p>
+                <p class="font-semibold" :class="hasQuotation ? 'text-slate-900' : 'text-amber-700'">
+                  {{ hasQuotation ? formatCurrency(jobOrder.estimated_cost) : 'Not Yet Quoted' }}
+                </p>
+              </div>
+              <div>
                 <p class="text-slate-500">Amount Paid</p>
                 <p class="font-semibold text-slate-900">{{ formatCurrency(jobOrder.amount_paid) }}</p>
               </div>
               <div>
                 <p class="text-slate-500">Balance</p>
-                <p class="font-semibold text-slate-900">{{ formatCurrency(balance) }}</p>
+                <p class="font-semibold" :class="hasQuotation ? 'text-slate-900' : 'text-amber-700'">{{ hasQuotation ? formatCurrency(balance) : 'Not Yet Quoted' }}</p>
               </div>
               <div class="md:col-span-2">
                 <p class="text-slate-500">Problem</p>
@@ -1150,7 +1161,7 @@ onBeforeUnmount(() => {
             <h4 class="text-lg font-semibold text-slate-900 mb-4">Release RTO Unit</h4>
             <div class="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
               <p class="font-bold">No repair balance is due for an unsuccessful repair</p>
-              <p class="mt-1">Total: {{ formatCurrency(jobOrder.total_cost) }} · Paid: {{ formatCurrency(jobOrder.amount_paid) }} · Balance: {{ formatCurrency(balance) }}</p>
+              <p class="mt-1">Total: {{ hasQuotation ? formatCurrency(jobOrder.estimated_cost) : 'Not Yet Quoted' }} · Paid: {{ formatCurrency(jobOrder.amount_paid) }} · Balance: {{ hasQuotation ? formatCurrency(balance) : 'Not Yet Quoted' }}</p>
               <p class="mt-1">Pending refunds: {{ formatCurrency(pendingRefundTotal) }} · Issued refunds: {{ formatCurrency(issuedRefundTotal) }}</p>
             </div>
             <form class="space-y-3" @submit.prevent="releaseRto">
@@ -1183,11 +1194,18 @@ onBeforeUnmount(() => {
           <div class="card p-6" v-if="activeAction === 'release' && jobOrder.current_status === 'READY_FOR_PICKUP' && !jobOrder.picked_up_at">
             <h4 class="text-lg font-semibold text-slate-900 mb-4">Release Unit</h4>
             <div class="mb-4 grid grid-cols-1 gap-3 text-sm">
-              <div class="rounded-lg border p-3" :class="balance > 0 ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'">
-                <p class="font-bold">{{ balance > 0 ? 'Balance required before release' : 'Ready for release' }}</p>
-                <p class="mt-1">Total: {{ formatCurrency(jobOrder.total_cost) }} · Paid: {{ formatCurrency(jobOrder.amount_paid) }} · Balance: {{ formatCurrency(balance) }}</p>
+              <div class="rounded-lg border p-3" :class="!hasQuotation || balance > 0 ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-emerald-200 bg-emerald-50 text-emerald-900'">
+                <p class="font-bold">{{ !hasQuotation ? 'Quotation required before release' : balance > 0 ? 'Balance required before release' : 'Ready for release' }}</p>
+                <p class="mt-1">
+                  Total: {{ hasQuotation ? formatCurrency(jobOrder.estimated_cost) : 'Not Yet Quoted' }}
+                  · Paid: {{ formatCurrency(jobOrder.amount_paid) }}
+                  · Balance: {{ hasQuotation ? formatCurrency(balance) : 'Not Yet Quoted' }}
+                </p>
               </div>
             </div>
+            <p v-if="!hasQuotation" class="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              Update this Job Order with a quotation before releasing the device.
+            </p>
             <form class="space-y-3" @submit.prevent="markPickedUp">
               <input v-model="pickupForm.picked_up_by" type="text" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Released to / claimed by" required />
               <div v-if="balance > 0" class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
@@ -1205,7 +1223,7 @@ onBeforeUnmount(() => {
                 placeholder="Required override reason"
                 required
               ></textarea>
-              <button type="submit" :disabled="markingPickedUp" class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-semibold py-2 rounded-lg">
+              <button type="submit" :disabled="markingPickedUp || !hasQuotation" class="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-400 text-white font-semibold py-2 rounded-lg">
                 {{ markingPickedUp ? 'Releasing...' : 'Confirm Release' }}
               </button>
             </form>
@@ -1319,6 +1337,9 @@ onBeforeUnmount(() => {
 
           <div v-if="activeAction === 'payment'" class="card p-6">
             <h4 class="text-lg font-semibold text-slate-900 mb-4">Record Payment</h4>
+            <p v-if="!hasQuotation" class="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              This Job Order is Not Yet Quoted. Enter a total repair price before recording payment.
+            </p>
             <form class="space-y-3" @submit.prevent="recordPayment">
               <input v-model="paymentForm.amount_paid" type="number" min="0.01" step="0.01" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Amount paid" required />
               <select v-model="paymentForm.payment_type" class="w-full px-4 py-2 border border-slate-300 rounded-lg">
@@ -1334,7 +1355,7 @@ onBeforeUnmount(() => {
               </select>
               <input v-model="paymentForm.reference_number" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Reference number (optional)" />
               <textarea v-model="paymentForm.payment_notes" rows="2" class="w-full px-4 py-2 border border-slate-300 rounded-lg" placeholder="Payment notes"></textarea>
-              <button type="submit" :disabled="recordingPayment" class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-semibold py-2 rounded-lg">
+              <button type="submit" :disabled="recordingPayment || !hasQuotation" class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-400 text-white font-semibold py-2 rounded-lg">
                 {{ recordingPayment ? 'Recording...' : 'Record' }}
               </button>
             </form>

@@ -612,9 +612,6 @@ class JobOrderPartOrderController extends Controller
 
             $unitPrice = (float) $lockedOrder->estimated_unit_price;
             $total = round((int) $lockedOrder->quantity * $unitPrice, 2);
-            $partsTotal = (float) $lockedJob->parts()->sum('total_cost') + $total;
-            $newTotal = $partsTotal + (float) $lockedJob->labor_cost;
-            $this->ensureTotalCoversCollectedAmount($newTotal, $lockedJob->amount_paid);
 
             $jobOrderPart = JobOrderPart::create([
                 'shop_id' => $shopId,
@@ -642,13 +639,6 @@ class JobOrderPartOrderController extends Controller
                 'created_by' => $user->name,
             ]);
 
-            $lockedJob->update([
-                'parts_cost' => $partsTotal,
-                'total_cost' => $newTotal,
-                'payment_status' => (float) $lockedJob->amount_paid <= 0
-                    ? 'PENDING'
-                    : ((float) $lockedJob->amount_paid >= $newTotal ? 'PAID' : 'PARTIAL'),
-            ]);
             $lockedOrder->update([
                 'issued_at' => now(),
                 'issued_by_user_id' => $user->id,
@@ -818,12 +808,4 @@ class JobOrderPartOrderController extends Controller
         }
     }
 
-    private function ensureTotalCoversCollectedAmount(float $totalCost, float $amountPaid): void
-    {
-        if ($totalCost < $amountPaid) {
-            throw ValidationException::withMessages([
-                'total_cost' => 'The agreed parts price would make the Job Order total lower than the amount already paid.',
-            ]);
-        }
-    }
 }

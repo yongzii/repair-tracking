@@ -361,7 +361,7 @@ class WarrantyAssessmentWorkflowTest extends TestCase
             ->assertJsonPath('costs.estimated_cost', '600.00')
             ->assertJsonPath('costs.total_cost', '700.00')
             ->assertJsonPath('costs.amount_paid', '0.00')
-            ->assertJsonPath('costs.balance', 700)
+            ->assertJsonPath('costs.balance', 600)
             ->assertJsonPath('costs.payment_status', 'PENDING')
             ->assertJsonPath('tracking.claim_code', $jobOrder->job_order_number);
 

@@ -106,6 +106,7 @@ class DashboardController extends Controller
                 'device_type' => $job->device_type,
                 'current_status' => $job->current_status,
                 'payment_status' => $job->payment_status,
+                'estimated_cost' => $job->estimated_cost,
                 'balance' => $job->balance,
                 'technician_name' => $job->technician?->name,
                 'estimated_completion_formatted' => $job->estimated_completion?->format('M d, Y h:i A'),

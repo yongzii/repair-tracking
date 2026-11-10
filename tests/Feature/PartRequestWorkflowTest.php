@@ -873,6 +873,7 @@ class PartRequestWorkflowTest extends TestCase
         [$shop, $technician, $jobOrder] = $this->createTechnicianWithJob();
         [, $admin] = $this->createShopUser(User::ROLE_SHOP_ADMIN, $shop);
         $order = $this->createOrderReadyToReceive($shop, $jobOrder, $technician, $admin);
+        $initialJobCosts = $jobOrder->fresh()->only(['estimated_cost', 'parts_cost', 'labor_cost', 'total_cost', 'amount_paid']);
         $inventoryPart = SparePart::create([
             'shop_id' => $shop->id,
             'name' => 'Laptop LCD',
@@ -936,6 +937,10 @@ class PartRequestWorkflowTest extends TestCase
         $this->assertSame(0, (int) $inventoryPart->fresh()->stock_quantity);
         $this->assertSame('IN_PROGRESS', $jobOrder->fresh()->current_status);
         $this->assertDatabaseCount('stock_movements', 2);
+        $this->assertSame(
+            $initialJobCosts,
+            $jobOrder->fresh()->only(['estimated_cost', 'parts_cost', 'labor_cost', 'total_cost', 'amount_paid'])
+        );
         $this->actingAs($admin)
             ->getJson('/api/admin/job-order-part-orders')
             ->assertOk()

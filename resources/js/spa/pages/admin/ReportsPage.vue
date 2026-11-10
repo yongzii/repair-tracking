@@ -279,23 +279,19 @@ onMounted(loadReport);
       <section class="space-y-4">
         <div>
           <h3 class="flex items-center gap-2 text-xl font-bold text-slate-950"><i class="fas fa-chart-pie text-sm text-teal-700" aria-hidden="true"></i>Business Overview</h3>
-          <p class="mt-1 text-sm text-slate-500">Core figures use their stated transaction, job-order, or current-snapshot basis.</p>
         </div>
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div class="metric-card">
             <p class="text-slate-500 text-sm">Repair Value</p>
             <p class="mt-1 text-2xl font-bold text-slate-900">{{ formatCurrency(report.totalRevenue) }}</p>
-            <p class="mt-1 text-xs text-slate-500">Job estimates in the selected job-order scope.</p>
           </div>
           <div class="metric-card">
             <p class="text-slate-500 text-sm">Payments Received</p>
             <p class="mt-1 text-2xl font-bold text-teal-700">{{ formatCurrency(report.paymentSummary.total_amount) }}</p>
-            <p class="mt-1 text-xs text-slate-500">Payment transactions by received_at; not verified bank settlements.</p>
           </div>
           <div class="metric-card">
             <p class="text-slate-500 text-sm">Unpaid Balances</p>
             <p class="mt-1 text-2xl font-bold text-amber-700">{{ formatCurrency(report.paymentSummary.current_pending_balances) }}</p>
-            <p class="mt-1 text-xs text-slate-500">{{ report.paymentSummary.current_pending_balance_jobs }} jobs · current snapshot, independent of report dates.</p>
           </div>
         </div>
       </section>
@@ -306,8 +302,6 @@ onMounted(loadReport);
         <div class="admin-panel overflow-hidden">
           <div class="border-b border-slate-200 p-5">
             <h3 class="flex items-center gap-2 text-lg font-bold text-slate-950"><i class="fas fa-users text-sm text-teal-700" aria-hidden="true"></i>Technician Performance (Current Assignment)</h3>
-            <p class="mt-1 text-sm text-slate-500">Results reflect each job's currently stored technician assignment, not historical assignment.</p>
-            <p class="mt-1 text-xs text-slate-500">Successful jobs use pickup date (picked_up_at); RTO outcomes use job creation date (created_at). Date scope: applied date range when provided; otherwise, all dates.</p>
           </div>
           <div class="overflow-x-auto">
             <table v-if="technicianPerformance.length" class="data-table">
@@ -347,7 +341,6 @@ onMounted(loadReport);
         <div class="admin-panel overflow-hidden">
           <div class="border-b border-slate-200 p-5">
             <h3 class="flex items-center gap-2 text-lg font-bold text-slate-950"><i class="fas fa-clipboard-list text-sm text-teal-700" aria-hidden="true"></i>Current Technician Workload</h3>
-            <p class="mt-1 text-sm text-slate-500">Current snapshot; excludes picked-up and both RTO terminal statuses. Date filters do not apply.</p>
           </div>
           <div class="overflow-x-auto">
             <table v-if="technicianWorkload.length" class="data-table">
@@ -577,8 +570,8 @@ onMounted(loadReport);
                 <td class="px-4 py-3 text-slate-700">{{ job.technician_name || 'Unassigned' }}</td>
                 <td class="px-4 py-3 text-slate-700">{{ job.estimated_completion_formatted || 'Not set' }}</td>
                 <td class="px-4 py-3">
-                  <p class="font-semibold text-slate-900">{{ formatCurrency(job.balance) }}</p>
-                  <p class="text-xs text-slate-500">Paid {{ formatCurrency(job.amount_paid) }} / {{ formatCurrency(job.total_cost) }}</p>
+                  <p class="font-semibold text-slate-900">{{ job.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(job.balance) }}</p>
+                  <p class="text-xs text-slate-500">Paid {{ formatCurrency(job.amount_paid) }} / {{ job.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(job.estimated_cost) }}</p>
                 </td>
               </tr>
               <tr v-if="!report.filteredJobOrders.length">
@@ -671,29 +664,24 @@ onMounted(loadReport);
       <section v-if="report && activeTab === 'payments'" class="space-y-4" role="tabpanel" id="reports-panel-payments" aria-labelledby="reports-tab-payments">
         <div>
           <h3 class="flex items-center gap-2 text-xl font-bold text-slate-950"><i class="fas fa-receipt text-sm text-teal-700" aria-hidden="true"></i>Transaction Summary</h3>
-          <p class="mt-1 text-sm text-slate-500">Payments use received_at; issued refunds use issued_at; pending obligations use initiated_at. Refund status reflects shop records, not external settlement.</p>
         </div>
 
         <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <div class="metric-card">
             <p class="text-sm text-slate-500">Payments Received</p>
             <p class="mt-1 text-xl font-bold text-slate-950">{{ formatCurrency(report.paymentSummary.total_amount) }}</p>
-            <p class="mt-1 text-xs text-slate-500">Gross receipts · received_at</p>
           </div>
           <div class="metric-card">
             <p class="text-sm text-slate-500">Refunds Issued</p>
             <p class="mt-1 text-xl font-bold text-slate-950">{{ formatCurrency(report.paymentSummary.issued_refunds) }}</p>
-            <p class="mt-1 text-xs text-slate-500">Recorded issuance · issued_at</p>
           </div>
           <div class="metric-card">
             <p class="text-sm text-slate-500">Net Retained</p>
             <p class="mt-1 text-xl font-bold text-slate-950">{{ formatCurrency(report.paymentSummary.net_cash_retained) }}</p>
-            <p class="mt-1 text-xs text-slate-500">Payments received minus refunds issued</p>
           </div>
           <div class="metric-card">
             <p class="text-sm text-slate-500">Pending Refunds</p>
             <p class="mt-1 text-xl font-bold text-amber-700">{{ formatCurrency(report.paymentSummary.pending_refund_obligations) }}</p>
-            <p class="mt-1 text-xs text-slate-500">Obligations · initiated_at; not deducted</p>
           </div>
         </div>
 

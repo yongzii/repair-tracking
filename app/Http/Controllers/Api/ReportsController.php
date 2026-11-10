@@ -158,9 +158,9 @@ class ReportsController extends Controller
                         $jobOrder['service_type_label'],
                         $jobOrder['technician_name'],
                         $jobOrder['estimated_completion_formatted'],
-                        $jobOrder['total_cost'],
+                        $jobOrder['estimated_cost'] === null ? 'Not Yet Quoted' : $jobOrder['estimated_cost'],
                         $jobOrder['amount_paid'],
-                        $jobOrder['balance'],
+                        $jobOrder['estimated_cost'] === null ? 'Not Yet Quoted' : $jobOrder['balance'],
                     ]);
                 }
                 fputcsv($handle, []);
@@ -1158,6 +1158,7 @@ class ReportsController extends Controller
             'priority' => $jobOrder->priority,
             'technician_name' => $jobOrder->technician?->name,
             'estimated_completion_formatted' => $jobOrder->estimated_completion?->format('M d, Y h:i A'),
+            'estimated_cost' => $jobOrder->estimated_cost,
             'total_cost' => (float) $jobOrder->total_cost,
             'amount_paid' => (float) $jobOrder->amount_paid,
             'balance' => (float) $jobOrder->balance,

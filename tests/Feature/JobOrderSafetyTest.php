@@ -1194,6 +1194,7 @@ class JobOrderSafetyTest extends TestCase
             'current_status' => 'READY_FOR_PICKUP',
             'repair_approved_at' => now(),
             'repair_approved_by_customer' => 'Customer Name',
+            'estimated_cost' => 1000,
             'total_cost' => 1000,
             'amount_paid' => 0,
         ]);

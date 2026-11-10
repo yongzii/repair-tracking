@@ -30,6 +30,8 @@ use Symfony\Component\HttpFoundation\Response;
 
 class JobOrderController extends Controller
 {
+    private const SERVICE_TO_BE_DIAGNOSED = 'to_be_diagnosed';
+
     public function index(Request $request)
     {
         $this->authorizeStaffOrAdmin($request);
@@ -178,7 +180,7 @@ class JobOrderController extends Controller
             'customer_phone' => 'required|string|max:30',
             'device_type' => 'required|string|max:50',
             'service_category_id' => ['nullable', 'integer'],
-            'service_item_id' => ['nullable', 'integer'],
+            'service_item_id' => ['nullable'],
             'brand' => 'nullable|string|max:50',
             'model' => 'nullable|string|max:50',
             'serial_number' => 'nullable|string|max:100',
@@ -194,14 +196,27 @@ class JobOrderController extends Controller
                 Rule::exists('technicians', 'id')->where(fn ($query) => $query->where('shop_id', $shopId)),
             ],
         ]);
+        $toBeDiagnosed = ($validated['service_item_id'] ?? null) === self::SERVICE_TO_BE_DIAGNOSED;
         $validated = $this->normalizeServiceSelection($shopId, $validated);
+        if ($toBeDiagnosed) {
+            if (!$validated['service_category_id']) {
+                throw ValidationException::withMessages([
+                    'service_category_id' => 'Select a device category for a Job Order marked To Be Diagnosed.',
+                ]);
+            }
+            if (($validated['estimated_cost'] ?? null) !== null) {
+                throw ValidationException::withMessages([
+                    'estimated_cost' => 'A quotation cannot be entered while the Job Order is marked To Be Diagnosed.',
+                ]);
+            }
+        }
 
         $estimatedCost = (float) ($validated['estimated_cost'] ?? 0);
         $partialPayment = (float) ($validated['partial_payment'] ?? $validated['down_payment'] ?? 0);
 
         if ($partialPayment > 0 && $estimatedCost <= 0) {
             throw ValidationException::withMessages([
-                'estimated_cost' => 'Estimated cost is required when initial payment is entered.',
+                'estimated_cost' => 'A valid quotation is required when an initial payment is entered.',
             ]);
         }
 
@@ -287,13 +302,14 @@ class JobOrderController extends Controller
                 'device_type',
                 'service_category_id',
                 'service_item_id',
+                'estimated_cost',
+                'total_cost',
                 'brand',
                 'model',
                 'current_status',
                 'priority',
                 'payment_status',
                 'amount_paid',
-                'total_cost',
                 'technician_id',
             ])
         );
@@ -461,6 +477,9 @@ class JobOrderController extends Controller
             'device_type',
             'service_category_id',
             'service_item_id',
+            'estimated_cost',
+            'total_cost',
+            'payment_status',
             'brand',
             'model',
             'serial_number',
@@ -478,7 +497,9 @@ class JobOrderController extends Controller
             'customer_phone' => 'required|string|max:30',
             'device_type' => 'required|string|max:50',
             'service_category_id' => ['nullable', 'integer'],
-            'service_item_id' => ['nullable', 'integer'],
+            'service_item_id' => ['nullable'],
+            'estimated_cost' => 'nullable|numeric|min:0',
+            'quotation_change_reason' => 'nullable|string|max:1000',
             'brand' => 'nullable|string|max:50',
             'model' => 'nullable|string|max:50',
             'serial_number' => 'nullable|string|max:100',
@@ -492,7 +513,42 @@ class JobOrderController extends Controller
                 Rule::exists('technicians', 'id')->where(fn ($query) => $query->where('shop_id', $shopId)),
             ],
         ]);
-        $validated = $this->normalizeServiceSelection($shopId, $validated);
+        $toBeDiagnosed = ($validated['service_item_id'] ?? null) === self::SERVICE_TO_BE_DIAGNOSED;
+        $validated = $this->normalizeServiceSelection($shopId, $validated, $jobOrder);
+        $quotationChangeReason = trim((string) ($validated['quotation_change_reason'] ?? ''));
+        unset($validated['quotation_change_reason']);
+
+        if ($toBeDiagnosed) {
+            if (!$validated['service_category_id']) {
+                throw ValidationException::withMessages([
+                    'service_category_id' => 'Select a device category for a Job Order marked To Be Diagnosed.',
+                ]);
+            }
+            if (($validated['estimated_cost'] ?? null) !== null) {
+                throw ValidationException::withMessages([
+                    'estimated_cost' => 'A quotation cannot be entered while the Job Order is marked To Be Diagnosed.',
+                ]);
+            }
+            $validated['estimated_cost'] = null;
+        }
+
+        if (array_key_exists('estimated_cost', $validated)) {
+            $newEstimate = $validated['estimated_cost'] === null
+                ? null
+                : (float) $validated['estimated_cost'];
+            $newTotal = $newEstimate ?? 0;
+
+            if ($newTotal < (float) $jobOrder->amount_paid) {
+                throw ValidationException::withMessages([
+                    'estimated_cost' => 'The quotation cannot be lower than the amount already paid.',
+                ]);
+            }
+
+            $validated['total_cost'] = $newTotal;
+            $validated['payment_status'] = (float) $jobOrder->amount_paid <= 0
+                ? 'PENDING'
+                : ((float) $jobOrder->amount_paid >= $newTotal ? 'PAID' : 'PARTIAL');
+        }
 
         if (
             array_key_exists('warranty_days', $validated)
@@ -512,7 +568,8 @@ class JobOrderController extends Controller
             action: 'job_order.updated',
             module: 'job_orders',
             record: $jobOrder,
-            description: "Updated job order {$jobOrder->job_order_number}.",
+            description: "Updated job order {$jobOrder->job_order_number}."
+                . ($quotationChangeReason !== '' ? " Quotation change reason: {$quotationChangeReason}" : ''),
             oldValues: $before,
             newValues: $jobOrder->fresh()->only(array_keys($before))
         );
@@ -1181,6 +1238,12 @@ class JobOrderController extends Controller
                 ]);
             }
 
+            if ($lockedJobOrder->estimated_cost === null) {
+                throw ValidationException::withMessages([
+                    'picked_up_by' => 'This Job Order is Not Yet Quoted and cannot be released.',
+                ]);
+            }
+
             $hasUnpaidBalance = $lockedJobOrder->balance > 0;
             $isAdmin = $user->hasAnyRole(User::adminRoles());
             $isOverride = $request->boolean('override_unpaid_balance');
@@ -1515,6 +1578,12 @@ class JobOrderController extends Controller
                 return [$lockedJobOrder->fresh(), $existingPayment->fresh(), $lockedJobOrder->payment_status, (float) $existingPayment->amount];
             }
 
+            if ($lockedJobOrder->estimated_cost === null) {
+                throw ValidationException::withMessages([
+                    'amount_paid' => 'A valid quotation is required before recording payment.',
+                ]);
+            }
+
             if ($lockedJobOrder->balance <= 0) {
                 throw ValidationException::withMessages([
                     'amount_paid' => 'Payment already settled. No balance remaining.',
@@ -1530,10 +1599,11 @@ class JobOrderController extends Controller
             $amountPaid = (float) $validated['amount_paid'];
             $newAmountPaid = (float) $lockedJobOrder->amount_paid + $amountPaid;
             $paymentStatus = 'PARTIAL';
+            $payableTotal = (float) $lockedJobOrder->estimated_cost;
 
-            if ($newAmountPaid >= $lockedJobOrder->total_cost) {
+            if ($newAmountPaid >= $payableTotal) {
                 $paymentStatus = 'PAID';
-                $newAmountPaid = $lockedJobOrder->total_cost;
+                $newAmountPaid = $payableTotal;
             }
 
             $paymentType = $paymentStatus === 'PAID' ? 'FINAL_PAYMENT' : 'PARTIAL_PAYMENT';
@@ -1611,10 +1681,16 @@ class JobOrderController extends Controller
                 ->findOrFail($jobOrder->id);
             $this->ensureJobOrderIsNotRto($lockedJobOrder);
             $before = $lockedJobOrder->only(['parts_cost', 'labor_cost', 'total_cost', 'payment_status']);
+            if ($lockedJobOrder->estimated_cost === null) {
+                throw ValidationException::withMessages([
+                    'estimated_cost' => 'A quotation is required before updating the cost breakdown.',
+                ]);
+            }
+
             $partsTotal = $lockedJobOrder->parts()->exists()
                 ? $lockedJobOrder->parts()->sum('total_cost')
                 : $validated['parts_cost'];
-            $totalCost = $partsTotal + $validated['labor_cost'];
+            $totalCost = (float) $lockedJobOrder->estimated_cost;
 
             $this->ensureTotalCoversCollectedAmount($totalCost, $lockedJobOrder->amount_paid);
 
@@ -2171,6 +2247,7 @@ class JobOrderController extends Controller
             'current_status' => $job->current_status,
             'priority' => $job->priority,
             'payment_status' => $job->payment_status,
+            'estimated_cost' => $job->estimated_cost,
             'total_cost' => $job->total_cost,
             'amount_paid' => $job->amount_paid,
             'balance' => $job->balance,
@@ -2185,17 +2262,39 @@ class JobOrderController extends Controller
         ];
     }
 
-    private function normalizeServiceSelection(int $shopId, array $validated): array
+    private function normalizeServiceSelection(
+        int $shopId,
+        array $validated,
+        ?JobOrder $existingJobOrder = null,
+    ): array
     {
         $categoryId = $validated['service_category_id'] ?? null;
         $serviceId = $validated['service_item_id'] ?? null;
         $service = null;
+        $toBeDiagnosed = $serviceId === self::SERVICE_TO_BE_DIAGNOSED;
 
-        if ($serviceId) {
-            $service = ServiceItem::query()
+        if ($toBeDiagnosed) {
+            $serviceId = null;
+        } elseif (
+            $serviceId !== null
+            && $serviceId !== ''
+            && filter_var($serviceId, FILTER_VALIDATE_INT) === false
+        ) {
+            throw ValidationException::withMessages([
+                'service_item_id' => 'Select a service configured for this shop or choose To Be Diagnosed.',
+            ]);
+        }
+
+        if ($serviceId !== null && $serviceId !== '') {
+            $serviceQuery = ServiceItem::query()
                 ->where('shop_id', $shopId)
-                ->where('is_active', true)
-                ->find($serviceId);
+                ->whereKey($serviceId);
+
+            if ((int) $serviceId !== (int) $existingJobOrder?->service_item_id) {
+                $serviceQuery->where('is_active', true);
+            }
+
+            $service = $serviceQuery->first();
 
             if (!$service) {
                 throw ValidationException::withMessages([
@@ -2228,6 +2327,11 @@ class JobOrderController extends Controller
             $validated['service_item_id'] = $service?->id;
             $validated['device_type'] = $category->name;
         } else {
+            if ($toBeDiagnosed) {
+                throw ValidationException::withMessages([
+                    'service_category_id' => 'Select a device category for a Job Order marked To Be Diagnosed.',
+                ]);
+            }
             $validated['service_category_id'] = null;
             $validated['service_item_id'] = null;
         }
@@ -2507,14 +2611,17 @@ class JobOrderController extends Controller
     private function recalculateCosts(JobOrder $jobOrder): void
     {
         $partsTotal = $jobOrder->parts()->sum('total_cost');
-        $laborCost = $jobOrder->labor_cost;
+        $hasQuotation = $jobOrder->estimated_cost !== null;
+        $payableTotal = $hasQuotation ? (float) $jobOrder->estimated_cost : (float) $jobOrder->total_cost;
 
         $jobOrder->update([
             'parts_cost' => $partsTotal,
-            'total_cost' => $partsTotal + $laborCost,
-            'payment_status' => $jobOrder->amount_paid <= 0
-                ? 'PENDING'
-                : ($jobOrder->amount_paid >= ($partsTotal + $laborCost) ? 'PAID' : 'PARTIAL'),
+            'total_cost' => $payableTotal,
+            'payment_status' => !$hasQuotation
+                ? $jobOrder->payment_status
+                : ($jobOrder->amount_paid <= 0
+                    ? 'PENDING'
+                    : ($jobOrder->amount_paid >= $payableTotal ? 'PAID' : 'PARTIAL')),
         ]);
     }
 

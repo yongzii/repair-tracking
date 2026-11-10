@@ -156,7 +156,10 @@ class JobOrder extends Model
             return 0;
         }
 
-        $balance = (float) $this->total_cost - (float) $this->amount_paid;
+        $payableTotal = $this->estimated_cost !== null
+            ? (float) $this->estimated_cost
+            : (float) $this->total_cost;
+        $balance = $payableTotal - (float) $this->amount_paid;
         return $balance > 0 ? $balance : 0;
     }
 

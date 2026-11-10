@@ -100,6 +100,13 @@ const resetForm = () => {
     form.open_intake_packet = true;
 };
 
+const handleServiceSelectionChange = () => {
+    if (form.service_item_id === 'to_be_diagnosed') {
+        form.estimated_cost = '';
+        form.partial_payment = '';
+    }
+};
+
 const isCreatePath = computed(() => location.path === '/admin/job-orders/create');
 
 const currentPage = computed(() => {
@@ -294,8 +301,8 @@ const submit = async () => {
         const shouldOpenIntakePacket = form.open_intake_packet;
         const payload = {
             ...form,
-            estimated_cost: form.estimated_cost || null,
-            partial_payment: form.partial_payment || null,
+            estimated_cost: form.estimated_cost === '' ? null : Number(form.estimated_cost),
+            partial_payment: form.partial_payment === '' ? null : Number(form.partial_payment),
             estimated_completion: form.estimated_completion || null,
             technician_id: form.technician_id || null,
         };
@@ -516,11 +523,14 @@ watch(
                 <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">Device</p>
                 <p class="mt-1 truncate font-semibold text-slate-800">{{ [job.brand, job.model].filter(Boolean).join(' ') || job.device_type }}</p>
                 <p class="truncate text-xs text-slate-500">{{ job.service_item_name ? `${job.device_type} - ${job.service_item_name}` : job.device_type }}</p>
+                <p class="text-xs font-semibold" :class="job.estimated_cost === null ? 'text-amber-700' : 'text-slate-500'">
+                  {{ job.estimated_cost === null ? 'Not Yet Quoted' : `Quoted: ${formatCurrency(job.estimated_cost)}` }}
+                </p>
               </div>
               <div>
                 <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">Payment</p>
                 <span class="mt-1 inline-flex rounded-full px-2 py-1 text-[11px] font-bold ring-1" :class="paymentStatusClass(job.payment_status)">{{ job.payment_status }}</span>
-                <p class="text-xs text-slate-500">Balance: {{ formatCurrency(job.balance) }}</p>
+                <p class="text-xs text-slate-500">Balance: {{ job.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(job.balance) }}</p>
               </div>
               <div>
                 <p class="text-[11px] font-bold uppercase tracking-wide text-slate-400">Due</p>
@@ -586,6 +596,9 @@ watch(
               <td class="px-6 py-4">
                 <p class="font-semibold text-slate-800">{{ [job.brand, job.model].filter(Boolean).join(' ') || job.device_type }}</p>
                 <p class="text-xs text-slate-500">{{ job.service_item_name ? `${job.device_type} - ${job.service_item_name}` : job.device_type }}</p>
+                <p class="text-xs font-semibold" :class="job.estimated_cost === null ? 'text-amber-700' : 'text-slate-500'">
+                  {{ job.estimated_cost === null ? 'Not Yet Quoted' : `Quoted: ${formatCurrency(job.estimated_cost)}` }}
+                </p>
                 <p v-if="job.technician_name" class="text-xs text-slate-500">Tech: {{ job.technician_name }}</p>
               </td>
               <td class="px-6 py-4">
@@ -600,7 +613,7 @@ watch(
                 <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="paymentStatusClass(job.payment_status)">
                   {{ job.payment_status }}
                 </span>
-                <p class="mt-2 text-xs text-slate-500">Balance: {{ formatCurrency(job.balance) }}</p>
+                <p class="mt-2 text-xs text-slate-500">Balance: {{ job.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(job.balance) }}</p>
               </td>
               <td class="px-6 py-4">
                 <p class="font-semibold text-slate-700">{{ job.estimated_completion_formatted || 'Not set' }}</p>
@@ -661,8 +674,9 @@ watch(
               <option value="">Device category</option>
               <option v-for="category in filterOptions.serviceCatalog" :key="category.id" :value="category.id">{{ category.name }}</option>
             </select>
-            <select v-model="form.service_item_id" class="px-4 py-2 border border-slate-300 rounded-lg" :disabled="!form.service_category_id">
+            <select v-model="form.service_item_id" class="px-4 py-2 border border-slate-300 rounded-lg" :disabled="!form.service_category_id" @change="handleServiceSelectionChange">
               <option value="">Service needed</option>
+              <option value="to_be_diagnosed">To Be Diagnosed</option>
               <option v-for="service in selectedCategoryServices" :key="service.id" :value="service.id">{{ service.name }}</option>
             </select>
             <input v-model="form.brand" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Brand" />
@@ -673,10 +687,10 @@ watch(
               <option value="EXPRESS">EXPRESS</option>
               <option value="EMERGENCY">EMERGENCY</option>
             </select>
-            <input v-model="form.estimated_cost" type="number" step="0.01" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Estimated cost" />
+            <input v-model="form.estimated_cost" type="number" step="0.01" min="0" class="px-4 py-2 border border-slate-300 rounded-lg" placeholder="Total repair price" :disabled="form.service_item_id === 'to_be_diagnosed'" />
             <label class="block">
               <span class="mb-1 block text-sm font-semibold text-slate-700">Initial Partial Payment</span>
-              <input v-model="form.partial_payment" type="number" step="0.01" min="0" class="w-full px-4 py-2 border border-slate-300 rounded-lg" />
+              <input v-model="form.partial_payment" type="number" step="0.01" min="0" class="w-full px-4 py-2 border border-slate-300 rounded-lg" :disabled="form.service_item_id === 'to_be_diagnosed'" />
             </label>
             <label class="block">
               <span class="mb-1 block text-sm font-semibold text-slate-700">Estimated Completion Date &amp; Time</span>

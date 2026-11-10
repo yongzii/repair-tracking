@@ -623,14 +623,17 @@ class TechnicianPortalController extends Controller
     private function recalculateCosts(JobOrder $jobOrder): void
     {
         $partsTotal = $jobOrder->parts()->sum('total_cost');
-        $laborCost = $jobOrder->labor_cost;
+        $hasQuotation = $jobOrder->estimated_cost !== null;
+        $payableTotal = $hasQuotation ? (float) $jobOrder->estimated_cost : (float) $jobOrder->total_cost;
 
         $jobOrder->update([
             'parts_cost' => $partsTotal,
-            'total_cost' => $partsTotal + $laborCost,
-            'payment_status' => $jobOrder->amount_paid <= 0
-                ? 'PENDING'
-                : ($jobOrder->amount_paid >= ($partsTotal + $laborCost) ? 'PAID' : 'PARTIAL'),
+            'total_cost' => $payableTotal,
+            'payment_status' => !$hasQuotation
+                ? $jobOrder->payment_status
+                : ($jobOrder->amount_paid <= 0
+                    ? 'PENDING'
+                    : ($jobOrder->amount_paid >= $payableTotal ? 'PAID' : 'PARTIAL')),
         ]);
     }
 }

@@ -267,10 +267,10 @@ onMounted(loadPrintData);
             <p class="full-row"><span>Reported Problem</span><strong>{{ printData.device.problem_description }}</strong></p>
             <p class="full-row"><span>Accessories Received</span><strong>{{ printData.device.included_accessories || 'None recorded' }}</strong></p>
             <p><span>Date Received</span><strong>{{ printData.service.received_at_formatted }}</strong></p>
-            <p><span>Estimated Cost</span><strong>{{ formatCurrency(printData.costs.estimated_cost) }}</strong></p>
-            <p><span>Current Repair Total</span><strong>{{ formatCurrency(printData.costs.total_cost) }}</strong></p>
+            <p><span>Estimated Cost</span><strong>{{ printData.costs.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(printData.costs.estimated_cost) }}</strong></p>
+            <p><span>Current Repair Total</span><strong>{{ printData.costs.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(printData.costs.estimated_cost) }}</strong></p>
             <p><span>Amount Paid</span><strong>{{ formatCurrency(printData.costs.amount_paid) }}</strong></p>
-            <p><span>Outstanding Balance</span><strong>{{ formatCurrency(printData.costs.balance) }}</strong></p>
+            <p><span>Outstanding Balance</span><strong>{{ printData.costs.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(printData.costs.balance) }}</strong></p>
             <p><span>Payment Status</span><strong>{{ printData.costs.payment_status || 'PENDING' }}</strong></p>
             <p><span>Target Date</span><strong>{{ printData.service.estimated_completion_formatted || 'To be advised' }}</strong></p>
           </div>

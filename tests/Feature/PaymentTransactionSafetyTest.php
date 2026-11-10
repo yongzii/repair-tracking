@@ -191,6 +191,7 @@ class PaymentTransactionSafetyTest extends TestCase
             'device_type' => 'Phone',
             'problem_description' => 'Payment transaction test.',
             'current_status' => 'DIAGNOSING',
+            'estimated_cost' => $totalCost,
             'total_cost' => $totalCost,
             'amount_paid' => $amountPaid,
             'payment_status' => $amountPaid > 0 ? 'PARTIAL' : 'PENDING',

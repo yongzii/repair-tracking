@@ -201,7 +201,7 @@ onMounted(loadDashboard);
                   </td>
                   <td class="px-4 py-4">
                     <span class="inline-flex rounded-full px-3 py-1 text-xs font-bold ring-1" :class="paymentStatusClass(job.payment_status)">{{ job.payment_status }}</span>
-                    <p class="text-xs text-slate-500">Balance: {{ formatCurrency(job.balance) }}</p>
+                    <p class="text-xs text-slate-500">Balance: {{ job.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(job.balance) }}</p>
                   </td>
                   <td class="px-4 py-4">
                     <AppLink :to="`/admin/job-orders/${job.id}`" class="font-bold text-teal-700 hover:text-teal-800">View</AppLink>
