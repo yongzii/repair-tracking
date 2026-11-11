@@ -19,15 +19,20 @@ const printData = ref(null);
 const claimQr = ref(null);
 const tagQr = ref(null);
 const claimStub = ref(null);
+const claimHeader = ref(null);
+const claimTitleRow = ref(null);
+const claimReference = ref(null);
 const claimInfoGrid = ref(null);
 const claimTermsSection = ref(null);
 const claimTermsList = ref(null);
+const claimBottom = ref(null);
 const claimFitScale = ref(1);
 const claimFitReady = ref(false);
 const claimContentFits = ref(true);
 const minimumClaimTermsFontSize = 4.6;
 const baseClaimTermsFontSize = 5.15;
 const minimumClaimFitScale = minimumClaimTermsFontSize / baseClaimTermsFontSize;
+let latestClaimFitChecks = [];
 
 const isWarrantyMode = computed(() => props.params.mode === 'warranty');
 const title = computed(() => (isWarrantyMode.value ? 'Warranty Slip' : 'Claim Stub and Job Order Slip'));
@@ -49,12 +54,12 @@ const renderQr = async () => {
     if (!printData.value?.tracking?.qr_value || !window.QRCode) return;
 
     [
-        { node: claimQr.value, size: 62 },
+        { node: claimQr.value, size: 40, preserveQuietZone: true },
         { node: tagQr.value, size: 68 },
     ].forEach(({ node, size }) => {
         if (!node) return;
         node.innerHTML = '';
-        new window.QRCode(node, {
+        const qrCode = new window.QRCode(node, {
             text: printData.value.tracking.qr_value,
             width: size,
             height: size,
@@ -62,20 +67,239 @@ const renderQr = async () => {
             colorLight: '#ffffff',
             correctLevel: window.QRCode.CorrectLevel.M,
         });
+        if (node === claimQr.value) {
+            const moduleCount = qrCode._oQRCode?.getModuleCount?.();
+            const quietZone = moduleCount ? Math.ceil((size * 4) / moduleCount) : 5;
+            node.style.setProperty('--claim-qr-quiet-zone', `${quietZone}px`);
+        }
     });
+};
+
+const doesClaimTitleFit = () => {
+    const titleRow = claimTitleRow.value;
+    if (!titleRow) return true;
+
+    const rowRect = titleRow.getBoundingClientRect();
+    return Array.from(titleRow.children)
+        .filter((child) => window.getComputedStyle(child).display !== 'none')
+        .every((child) => {
+            const childRect = child.getBoundingClientRect();
+            return childRect.top >= rowRect.top - 1 && childRect.bottom <= rowRect.bottom + 1;
+        });
 };
 
 const doesClaimContentFit = async () => {
     await nextTick();
-    const infoFits = !claimInfoGrid.value
-        || claimInfoGrid.value.scrollHeight <= claimInfoGrid.value.clientHeight + 1;
-    const termsFit = !claimTermsSection.value
-        || !claimTermsList.value
-        || claimTermsSection.value.scrollHeight <= claimTermsSection.value.clientHeight + 1;
-    const stubFits = !claimStub.value
-        || claimStub.value.scrollHeight <= claimStub.value.clientHeight + 1;
+    const stub = claimStub.value;
+    const measure = (name, selector, element, fits, children = []) => {
+        const rect = element?.getBoundingClientRect();
+        const style = element ? window.getComputedStyle(element) : null;
+        const visible = Boolean(element)
+            && style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && Number(style.opacity) !== 0
+            && rect.width > 0
+            && rect.height > 0;
 
-    return infoFits && termsFit && stubFits;
+        return {
+            name,
+            selector,
+            fits,
+            present: Boolean(element),
+            connected: Boolean(element?.isConnected),
+            insideClaimStub: Boolean(stub && element && stub.contains(element)),
+            selectorMatchesRef: Boolean(element && document.querySelector(selector) === element),
+            visible,
+            scrollHeight: element?.scrollHeight ?? null,
+            clientHeight: element?.clientHeight ?? null,
+            rectHeight: rect?.height ?? null,
+            children,
+        };
+    };
+    const visibleChildRects = (element) => Array.from(element?.children || [], (child) => {
+        const rect = child.getBoundingClientRect();
+        const style = window.getComputedStyle(child);
+        return {
+            tag: child.tagName,
+            className: child.className,
+            text: child.textContent?.trim().slice(0, 80),
+            visible: style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && Number(style.opacity) !== 0
+                && rect.width > 0
+                && rect.height > 0,
+            rectTop: rect.top,
+            rectBottom: rect.bottom,
+            rectHeight: rect.height,
+            scrollHeight: child.scrollHeight,
+            clientHeight: child.clientHeight,
+        };
+    });
+    const scrollFits = (element) => !element || element.scrollHeight <= element.clientHeight + 1;
+    const checks = [
+        measure('Header overflow', '.claim-stab > .claim-header', claimHeader.value,
+            scrollFits(claimHeader.value), visibleChildRects(claimHeader.value)),
+        measure('Title child layout', '.claim-stab > .title-row', claimTitleRow.value,
+            doesClaimTitleFit(), visibleChildRects(claimTitleRow.value)),
+        measure('Reference overflow', '.claim-stab > .claim-reference', claimReference.value,
+            scrollFits(claimReference.value), visibleChildRects(claimReference.value)),
+        measure('Information grid overflow', '.claim-stab > .claim-info', claimInfoGrid.value,
+            scrollFits(claimInfoGrid.value), visibleChildRects(claimInfoGrid.value)),
+        measure('Terms section overflow', '.claim-stab > .claim-terms-section', claimTermsSection.value,
+            !claimTermsSection.value || !claimTermsList.value || scrollFits(claimTermsSection.value),
+            visibleChildRects(claimTermsSection.value)),
+        measure('Signature area overflow', '.claim-stab > .claim-bottom', claimBottom.value,
+            scrollFits(claimBottom.value), visibleChildRects(claimBottom.value)),
+        measure('Claim Stub overflow', '.claim-stab', stub,
+            scrollFits(stub), visibleChildRects(stub)),
+    ];
+
+    if (stub) {
+        const style = window.getComputedStyle(stub);
+        const stubRect = stub.getBoundingClientRect();
+        const contentTop = stubRect.top
+            + parseFloat(style.borderTopWidth)
+            + parseFloat(style.paddingTop);
+        const contentBottom = stubRect.bottom
+            - parseFloat(style.borderBottomWidth)
+            - parseFloat(style.paddingBottom);
+        const children = Array.from(stub.children);
+
+        children.forEach((child, index) => {
+            const rect = child.getBoundingClientRect();
+            const previousBottom = index > 0
+                ? children[index - 1].getBoundingClientRect().bottom
+                : contentTop;
+            const fits = rect.top >= previousBottom - 1 && rect.bottom <= contentBottom + 1;
+            checks.push(measure(
+                `Claim Stub flow child ${index + 1}`,
+                `.claim-stab > ${child.tagName.toLowerCase()}.${Array.from(child.classList).join('.')}`,
+                child,
+                fits,
+                visibleChildRects(child),
+            ));
+        });
+    } else {
+        checks.push(measure('Claim Stub flow', '.claim-stab', null, true));
+    }
+
+    latestClaimFitChecks = checks;
+    return checks.every(({ fits }) => fits);
+};
+
+const logClaimFitDiagnostics = async () => {
+    await nextTick();
+
+    const describeElement = (name, selector, element, clipBoundary = null) => {
+        if (!element) {
+            return { name, selector, present: false };
+        }
+
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        const boundaryRect = clipBoundary?.getBoundingClientRect();
+        const visible = style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && Number(style.opacity) !== 0
+            && rect.width > 0
+            && rect.height > 0;
+
+        return {
+            name,
+            selector,
+            present: true,
+            scrollHeight: element.scrollHeight,
+            clientHeight: element.clientHeight,
+            rectHeight: rect.height,
+            overflowPx: Math.max(0, element.scrollHeight - element.clientHeight),
+            outsideBoundaryPx: boundaryRect ? Math.max(0, rect.bottom - boundaryRect.bottom) : null,
+            fontSize: style.fontSize,
+            lineHeight: style.lineHeight,
+            padding: style.padding,
+            margin: style.margin,
+            visible,
+            display: style.display,
+            visibility: style.visibility,
+            opacity: style.opacity,
+            computedHeight: style.height,
+            flex: style.flex,
+            flexShrink: style.flexShrink,
+        };
+    };
+
+    const stub = claimStub.value;
+    const entries = [
+        describeElement('Claim Stub', '.claim-stab', stub),
+        describeElement('Shop and QR header', '.claim-stab > .claim-header', claimHeader.value),
+        describeElement('Shop identity column', '.claim-stab .claim-header-shop', stub?.querySelector('.claim-header-shop'), claimHeader.value),
+        describeElement('Shop logo', '.claim-stab .claim-header .print-logo', stub?.querySelector('.claim-header .print-logo'), claimHeader.value),
+        describeElement('Shop name', '.claim-stab .claim-header h1', stub?.querySelector('.claim-header h1'), claimHeader.value),
+        ...Array.from(stub?.querySelectorAll('.claim-header-shop p') || [], (element, index) => describeElement(
+            `Shop header text ${index + 1}`,
+            `.claim-stab .claim-header-shop p:nth-of-type(${index + 1})`,
+            element,
+            claimHeader.value,
+        )),
+        describeElement('Header QR block', '.claim-stab .claim-header-qr', stub?.querySelector('.claim-header-qr'), claimHeader.value),
+        describeElement('Header QR element', '.claim-stab .claim-header-qr .claim-qr', claimQr.value, claimHeader.value),
+        describeElement('Claim title', '.claim-stab > .title-row', claimTitleRow.value),
+        describeElement('Claim reference', '.claim-stab > .claim-reference', claimReference.value),
+        describeElement('Information grid', '.claim-stab > .claim-info', claimInfoGrid.value),
+        ...Array.from(claimInfoGrid.value?.children || [], (element, index) => describeElement(
+            `Information row ${index + 1}`,
+            `.claim-stab .claim-info > p:nth-child(${index + 1})`,
+            element,
+            claimInfoGrid.value,
+        )),
+        describeElement('Terms section', '.claim-stab > .claim-terms-section', claimTermsSection.value),
+        describeElement('Terms list', '.claim-stab .claim-terms', claimTermsList.value, claimTermsSection.value),
+        ...Array.from(claimTermsList.value?.children || [], (element, index) => describeElement(
+            `Terms item ${index + 1}`,
+            `.claim-stab .claim-terms > li:nth-child(${index + 1})`,
+            element,
+            claimTermsSection.value,
+        )),
+        describeElement('Claim signature footer', '.claim-stab > .claim-bottom', claimBottom.value),
+        describeElement('Claim release / signature area', '.claim-stab .claim-release', stub?.querySelector('.claim-release')),
+        describeElement('Signature line', '.claim-stab .claim-signature', stub?.querySelector('.claim-signature')),
+        describeElement('Claim instructions', '.claim-stab .claim-release p', stub?.querySelector('.claim-release p')),
+        ...Array.from(claimQr.value?.children || [], (element, index) => describeElement(
+            `Rendered Claim QR child ${index + 1}`,
+            `.claim-stab .claim-header-qr .claim-qr > :nth-child(${index + 1})`,
+            element,
+            claimHeader.value,
+        )),
+    ];
+    const directChildren = stub
+        ? Array.from(stub.children, (element, index) => describeElement(
+            `Claim Stub child ${index + 1}`,
+            `.claim-stab > ${element.tagName.toLowerCase()}.${Array.from(element.classList).join('.')}`,
+            element,
+            stub,
+        ))
+        : [];
+
+    console.groupCollapsed('[Claim Stub] Fit diagnostics at minimum typography scale');
+    console.log('Typography scale:', {
+        current: claimFitScale.value,
+        minimum: minimumClaimFitScale,
+        minimumTermsFontSize: minimumClaimTermsFontSize,
+        atMinimum: claimFitScale.value === minimumClaimFitScale,
+    });
+    console.table(latestClaimFitChecks);
+    console.log('Failed fit checks:', latestClaimFitChecks.filter(({ fits }) => !fits));
+    console.table(entries);
+    console.log('Fixed/content child dimensions:', directChildren);
+    console.log('Title row layout fit (child boxes, excluding glyph paint overflow):', {
+        fits: doesClaimTitleFit(),
+        scrollHeight: claimTitleRow.value?.scrollHeight,
+        clientHeight: claimTitleRow.value?.clientHeight,
+        children: Array.from(claimTitleRow.value?.children || [], (element) => {
+            const rect = element.getBoundingClientRect();
+            return { text: element.textContent, top: rect.top, bottom: rect.bottom, height: rect.height };
+        }),
+    });
+    console.groupEnd();
 };
 
 const fitClaimContent = async () => {
@@ -90,6 +314,7 @@ const fitClaimContent = async () => {
 
     claimFitScale.value = minimumClaimFitScale;
     if (!(await doesClaimContentFit())) {
+        await logClaimFitDiagnostics();
         claimContentFits.value = false;
         claimFitReady.value = true;
         return;
@@ -109,7 +334,8 @@ const fitClaimContent = async () => {
     }
 
     claimFitScale.value = low;
-    claimContentFits.value = true;
+    await nextTick();
+    claimContentFits.value = await doesClaimContentFit();
     claimFitReady.value = true;
 };
 
@@ -160,7 +386,7 @@ onMounted(loadPrintData);
         </div>
         <div class="flex flex-wrap items-center justify-end gap-3">
           <p v-if="!isWarrantyMode && claimFitReady && !claimContentFits" class="claim-fit-warning" role="alert">
-            This content exceeds the readable capacity of the fixed 8 × 10 cm Claim Stub. Printing is disabled to prevent omitted information. Keep configured Terms & Conditions to about 850 characters or less and shorten unusually long customer/device details; actual capacity depends on wrapping.
+            This content exceeds the readable capacity of the fixed 8 × 10 cm Claim Stub. Printing is disabled to prevent omitted information. Review unusually long customer/device details; configured terms are retained in full and need enough space to remain readable.
           </p>
           <button
             type="button"
@@ -243,36 +469,41 @@ onMounted(loadPrintData);
 
       <div v-else class="print-area intake-slips">
         <section ref="claimStub" class="claim-stab slip" :style="{ '--claim-fit-scale': claimFitScale }">
-          <header class="document-header">
-            <img v-if="printData.shop.logo_url" :src="printData.shop.logo_url" alt="Shop logo" class="print-logo" />
-            <h1>{{ printData.shop.name }}</h1>
-            <p>{{ printData.shop.tagline }}</p>
-            <p>{{ printData.shop.address || '' }}</p>
+          <header ref="claimHeader" class="document-header claim-header">
+            <div class="claim-header-shop">
+              <img v-if="printData.shop.logo_url" :src="printData.shop.logo_url" alt="Shop logo" class="print-logo" />
+              <div class="claim-shop-details">
+                <h1>{{ printData.shop.name }}</h1>
+                <p>{{ printData.shop.tagline }}</p>
+                <p>{{ printData.shop.address || '' }}</p>
+                <p>{{ printData.shop.phone || 'Contact number not set' }}</p>
+              </div>
+            </div>
+            <div class="qr-block claim-header-qr">
+              <div ref="claimQr" class="claim-qr"></div>
+              <p>Scan to track repair</p>
+            </div>
           </header>
 
-          <div class="title-row">
+          <div ref="claimTitleRow" class="title-row">
             <h2>Claim Stub</h2>
-            <span>{{ printData.service.received_at_formatted }}</span>
           </div>
 
-          <div class="claim-reference">
+          <div ref="claimReference" class="claim-reference">
             <strong>{{ printData.jobOrder.job_order_number }}</strong>
             <span>{{ formatStatus(printData.service.current_status) }}</span>
           </div>
 
           <div ref="claimInfoGrid" class="info-grid claim-info">
             <p><span>Customer</span><strong>{{ printData.customer.name }}</strong></p>
-            <p><span>Device</span><strong>{{ printData.device.label || printData.device.type }}</strong></p>
-            <p><span>Serial Number</span><strong>{{ printData.device.serial_number || 'N/A' }}</strong></p>
-            <p class="full-row"><span>Reported Problem</span><strong>{{ printData.device.problem_description }}</strong></p>
-            <p class="full-row"><span>Accessories Received</span><strong>{{ printData.device.included_accessories || 'None recorded' }}</strong></p>
+            <p><span>Device / Model</span><strong>{{ printData.device.label || printData.device.type }}</strong></p>
+            <p class="full-row claim-problem-row"><span>Reported Problem</span><strong>{{ printData.device.problem_description }}</strong></p>
+            <p class="full-row claim-accessories-row"><span>Accessories Received</span><strong>{{ printData.device.included_accessories || 'None recorded' }}</strong></p>
             <p><span>Date Received</span><strong>{{ printData.service.received_at_formatted }}</strong></p>
-            <p><span>Estimated Cost</span><strong>{{ printData.costs.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(printData.costs.estimated_cost) }}</strong></p>
-            <p><span>Current Repair Total</span><strong>{{ printData.costs.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(printData.costs.estimated_cost) }}</strong></p>
+            <p><span>Repair Total</span><strong>{{ formatCurrency(printData.costs.total_cost) }}</strong></p>
             <p><span>Amount Paid</span><strong>{{ formatCurrency(printData.costs.amount_paid) }}</strong></p>
             <p><span>Outstanding Balance</span><strong>{{ printData.costs.estimated_cost === null ? 'Not Yet Quoted' : formatCurrency(printData.costs.balance) }}</strong></p>
-            <p><span>Payment Status</span><strong>{{ printData.costs.payment_status || 'PENDING' }}</strong></p>
-            <p><span>Target Date</span><strong>{{ printData.service.estimated_completion_formatted || 'To be advised' }}</strong></p>
+            <p class="full-row"><span>Target Date</span><strong>{{ printData.service.estimated_completion_formatted || 'To be advised' }}</strong></p>
           </div>
 
           <div ref="claimTermsSection" class="terms-section claim-terms-section">
@@ -282,15 +513,10 @@ onMounted(loadPrintData);
             </ol>
           </div>
 
-          <div class="claim-bottom">
+          <div ref="claimBottom" class="claim-bottom">
             <div class="claim-release">
               <div class="claim-signature">Signature over printed name</div>
               <p>Present this claim stub when claiming the device.</p>
-              <strong>{{ printData.shop.phone || 'Contact number not set' }}</strong>
-            </div>
-            <div class="qr-block">
-              <div ref="claimQr" class="claim-qr"></div>
-              <p>Scan to track repair</p>
             </div>
           </div>
         </section>
@@ -367,6 +593,12 @@ onMounted(loadPrintData);
   padding: 0.22cm;
 }
 
+.claim-stab {
+  overflow-wrap: anywhere;
+  word-break: normal;
+  white-space: normal;
+}
+
 .claim-stab,
 .job-order-slip,
 .warranty-slip {
@@ -409,6 +641,45 @@ onMounted(loadPrintData);
   line-height: 1.15;
 }
 
+.claim-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.1cm;
+  text-align: left;
+}
+
+.claim-header-shop {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 0;
+  align-items: flex-start;
+  gap: 0.08cm;
+}
+
+.claim-header-shop .print-logo {
+  flex: 0 0 0.62cm;
+  margin: 0;
+}
+
+.claim-shop-details {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+.claim-shop-details h1 {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.claim-header-qr {
+  flex: 0 0 50px;
+}
+
+.claim-header-qr .claim-qr {
+  margin: 0 auto;
+}
+
 .title-row {
   display: flex;
   align-items: end;
@@ -441,6 +712,11 @@ onMounted(loadPrintData);
 
 .claim-reference strong {
   font-size: 7.2px;
+}
+
+.claim-stab .claim-reference > *,
+.claim-stab .claim-info > p > * {
+  min-width: 0;
 }
 
 .claim-reference span,
@@ -532,12 +808,9 @@ onMounted(loadPrintData);
 }
 
 .claim-bottom {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 62px;
-  gap: 0.12cm;
-  align-items: end;
+  display: block;
   flex: 0 0 auto;
-  margin-top: 0.08cm;
+  margin-top: auto;
 }
 
 .claim-release {
@@ -561,13 +834,16 @@ onMounted(loadPrintData);
 
 .qr-block p {
   margin: 1px 0 0;
-  font-size: 4.5px;
+  font-size: 4.6px;
   font-weight: 900;
 }
 
 .claim-qr {
-  width: 62px;
-  height: 62px;
+  box-sizing: content-box;
+  width: 40px;
+  height: 40px;
+  padding: var(--claim-qr-quiet-zone, 5px);
+  background: #fff;
 }
 
 .job-title {
@@ -732,7 +1008,7 @@ onMounted(loadPrintData);
 }
 
 .claim-stab .document-header {
-  padding-bottom: calc(0.08cm * var(--claim-fit-scale));
+  padding-bottom: calc(0.04cm * var(--claim-fit-scale));
 }
 
 .claim-stab .document-header h1 {
@@ -744,9 +1020,17 @@ onMounted(loadPrintData);
   font-size: calc(5.4px * var(--claim-fit-scale));
 }
 
+.claim-stab .claim-header {
+  gap: calc(0.1cm * var(--claim-fit-scale));
+}
+
+.claim-stab .claim-header-shop {
+  gap: calc(0.08cm * var(--claim-fit-scale));
+}
+
 .claim-stab > .title-row {
   gap: calc(4px * var(--claim-fit-scale));
-  margin: calc(0.1cm * var(--claim-fit-scale)) 0;
+  margin: calc(0.04cm * var(--claim-fit-scale)) 0;
 }
 
 .claim-stab > .title-row h2 {
@@ -768,16 +1052,51 @@ onMounted(loadPrintData);
 
 .claim-stab .claim-reference span {
   padding: calc(1px * var(--claim-fit-scale)) calc(3px * var(--claim-fit-scale));
-  font-size: calc(5px * var(--claim-fit-scale));
+  font-size: max(4.6px, calc(5px * var(--claim-fit-scale)));
 }
 
-.claim-stab .info-grid p {
-  padding: calc(0.045cm * var(--claim-fit-scale)) calc(0.06cm * var(--claim-fit-scale));
+.claim-stab .claim-info p {
+  box-sizing: border-box;
+  padding: calc(0.005cm * var(--claim-fit-scale)) calc(0.06cm * var(--claim-fit-scale));
+}
+
+.claim-stab .claim-info {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  border: 1px solid #000;
+  background: #000;
+}
+
+.claim-stab .claim-info > p {
+  border: 0;
+  background: #fff;
+}
+
+.claim-stab .claim-info p:not(.full-row) {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: calc(3px * var(--claim-fit-scale));
+}
+
+.claim-stab .claim-info p:not(.full-row) > span {
+  margin-bottom: 0;
+}
+
+.claim-stab .claim-info p:not(.full-row) > strong {
+  min-width: 0;
+}
+
+.claim-stab .claim-info > .claim-problem-row,
+.claim-stab .claim-info > .claim-accessories-row {
+  min-height: calc(0.8cm * var(--claim-fit-scale));
+  align-content: start;
+  padding: calc(0.1cm * var(--claim-fit-scale)) calc(0.08cm * var(--claim-fit-scale));
 }
 
 .claim-stab .info-grid span {
   margin-bottom: calc(1px * var(--claim-fit-scale));
-  font-size: calc(4.6px * var(--claim-fit-scale));
+  font-size: max(4.6px, calc(4.6px * var(--claim-fit-scale)));
 }
 
 .claim-stab .info-grid strong {
@@ -786,23 +1105,23 @@ onMounted(loadPrintData);
 }
 
 .claim-stab .claim-info {
-  margin-top: calc(0.08cm * var(--claim-fit-scale));
+  margin-top: calc(0.04cm * var(--claim-fit-scale));
 }
 
 .claim-stab .claim-terms-section h3 {
-  margin: calc(0.09cm * var(--claim-fit-scale)) 0 calc(0.04cm * var(--claim-fit-scale));
-  padding-bottom: calc(0.03cm * var(--claim-fit-scale));
+  margin: calc(0.02cm * var(--claim-fit-scale)) 0 0;
+  padding-bottom: 0;
   font-size: calc(6.4px * var(--claim-fit-scale));
 }
 
 .claim-stab .claim-terms {
   padding-left: calc(0.34cm * var(--claim-fit-scale));
-  font-size: calc(5.15px * var(--claim-fit-scale));
-  line-height: 1.18;
+  font-size: max(4.6px, calc(5.15px * var(--claim-fit-scale)));
+  line-height: 1.12;
 }
 
 .claim-stab .claim-terms li {
-  margin-bottom: calc(1.5px * var(--claim-fit-scale));
+  margin-bottom: 0;
   padding-left: calc(1px * var(--claim-fit-scale));
 }
 
